@@ -56,15 +56,22 @@ También están disponibles los scripts equivalentes `scripts/dev-api.sh` y `scr
 | --- | --- | --- |
 | `GET` | `/health` | `{"status":"ok"}` |
 | `GET` | `/api/hello` | Mensaje de conexión entre la web y la API |
+| `POST` | `/ask` | Stream SSE de tokens generado por el provider configurado |
 
 La web usa `/api/hello` al cargar y muestra un mensaje de error si el backend no está disponible.
 
 ## Configuración
 
-Los ejemplos están en `backend/.env.example` y `frontend/.env.example`:
+El backend carga automáticamente el archivo `.env` ubicado en la raíz del repositorio. Usa `.env.example` como plantilla:
 
 - `FRONTEND_ORIGIN`: origen permitido por CORS en la API. Por defecto, `http://localhost:18473`.
 - `PUBLIC_API_URL`: URL base que usa la web para llamar a la API. Por defecto, `http://localhost:18474`.
+- `APP_ENV`: entorno LLM, `test` o `production`. Por defecto, `test`.
+- `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`: credenciales de providers; no se versionan.
+
+Los modelos están hardcodeados en `backend/app/config.py`. En `test` el fallback circular es Gemini → MiniMax vía OpenRouter → Llama vía Groq, con tres intentos por modelo y nueve intentos globales. En `production` el orden es GPT-5.6 Luna vía OpenAI → Gemini, con tres intentos por modelo.
+
+`POST /ask` recibe `{"prompt":"..."}` y responde con `text/event-stream`, emitiendo eventos `token`, `done` o `error`. Los códigos HTTP documentados son `200` (stream iniciado), `422` (prompt inválido), `500` (APP_ENV inválido), `502` (fallo de providers antes del primer token) y `503` (sin API keys). Un fallo después del primer token no puede cambiar el código HTTP porque la respuesta ya empezó; en ese caso se emite un evento SSE `error` sin reiniciar la respuesta.
 
 Puedes exportar las variables antes de iniciar cada proceso, por ejemplo:
 
@@ -90,6 +97,8 @@ El smoke test consulta `http://127.0.0.1:18474/health`. Puedes cambiar la URL co
 ```bash
 API_URL=http://127.0.0.1:18474 make smoke
 ```
+
+El smoke también comprueba que `/ask` responde. Para exigir una respuesta LLM completada con credenciales reales, ejecuta `SMOKE_LLM=1 API_URL=http://127.0.0.1:18474 make smoke`.
 
 ## Estructura
 
