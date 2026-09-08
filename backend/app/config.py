@@ -27,6 +27,7 @@ class ModelConfig:
 
 MODEL_CHAINS: dict[AppEnv, tuple[tuple[Provider, str], ...]] = {
     AppEnv.TEST: (
+        (Provider.OPENAI, "gpt-4o-mini"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7"),
         (Provider.GROQ, "llama-3.3-70b-versatile"),

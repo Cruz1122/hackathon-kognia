@@ -27,6 +27,7 @@ def test_model_catalog_is_hardcoded_by_environment(monkeypatch: pytest.MonkeyPat
     production_chain = get_model_chain(AppEnv.PRODUCTION)
 
     assert [(item.provider, item.model) for item in test_chain] == [
+        (Provider.OPENAI, "gpt-4o-mini"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7"),
         (Provider.GROQ, "llama-3.3-70b-versatile"),
@@ -51,12 +52,15 @@ async def test_test_environment_fallback_is_circular_and_bounded(monkeypatch: py
     chunks = [chunk async for chunk in main._ask_stream("hello")]
 
     assert attempts == [
+        Provider.OPENAI,
         Provider.GEMINI,
         Provider.OPENROUTER,
         Provider.GROQ,
+        Provider.OPENAI,
         Provider.GEMINI,
         Provider.OPENROUTER,
         Provider.GROQ,
+        Provider.OPENAI,
         Provider.GEMINI,
         Provider.OPENROUTER,
         Provider.GROQ,
@@ -96,7 +100,7 @@ async def test_partial_stream_does_not_fallback_or_duplicate(monkeypatch: pytest
     monkeypatch.setattr(main, "stream_provider", emits_then_fails)
     chunks = [chunk async for chunk in main._ask_stream("hello")]
 
-    assert attempts == [Provider.GEMINI]
+    assert attempts == [Provider.OPENAI]
     assert event_names(chunks) == ["token", "error"]
     assert event_payload(chunks[0]) == {"text": "partial"}
 
@@ -151,7 +155,9 @@ async def test_gemini_stream_uses_header_auth_and_native_payload() -> None:
         )
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
 
-    base_config = get_model_chain(AppEnv.TEST)[0]
+    base_config = next(
+        item for item in get_model_chain(AppEnv.TEST) if item.provider is Provider.GEMINI
+    )
     config = base_config.__class__(
         base_config.provider, base_config.model, "secret", base_config.base_url
     )
@@ -183,15 +189,18 @@ async def test_permanent_failure_skips_provider_for_remaining_circular_attempts(
     chunks = [chunk async for chunk in main._ask_stream("hello")]
 
     assert attempts == [
+        Provider.OPENAI,
         Provider.GEMINI,
         Provider.OPENROUTER,
         Provider.GROQ,
+        Provider.OPENAI,
         Provider.OPENROUTER,
         Provider.GROQ,
+        Provider.OPENAI,
         Provider.OPENROUTER,
         Provider.GROQ,
     ]
-    assert Provider.GEMINI not in attempts[1:]
+    assert attempts.count(Provider.GEMINI) == 1
     assert event_names(chunks) == ["error"]
 
 

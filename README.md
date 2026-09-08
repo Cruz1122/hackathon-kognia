@@ -69,7 +69,7 @@ El backend carga automáticamente el archivo `.env` ubicado en la raíz del repo
 - `APP_ENV`: entorno LLM, `test` o `production`. Por defecto, `test`.
 - `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`: credenciales de providers; no se versionan.
 
-Los modelos están hardcodeados en `backend/app/config.py`. En `test` el fallback circular es Gemini → MiniMax vía OpenRouter → Llama vía Groq, con tres intentos por modelo y nueve intentos globales. En `production` el orden es GPT-5.6 Luna vía OpenAI → Gemini, con tres intentos por modelo.
+Los modelos están hardcodeados en `backend/app/config.py`. En `test` se prioriza `gpt-4o-mini` vía OpenAI por su baja latencia y soporte de tool calling y streaming por tokens; el fallback circular continúa con Gemini → MiniMax vía OpenRouter → Llama vía Groq, con tres intentos por modelo y doce intentos globales. En `production` el orden es GPT-5.6 Luna vía OpenAI → Gemini, con tres intentos por modelo.
 
 `POST /ask` recibe `{"prompt":"..."}` y responde con `text/event-stream`, emitiendo eventos `token`, `done` o `error`. Los códigos HTTP documentados son `200` (stream iniciado), `422` (prompt inválido), `500` (APP_ENV inválido), `502` (fallo de providers antes del primer token) y `503` (sin API keys). Un fallo después del primer token no puede cambiar el código HTTP porque la respuesta ya empezó; en ese caso se emite un evento SSE `error` sin reiniciar la respuesta.
 
