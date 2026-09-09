@@ -86,6 +86,7 @@ async def stream_provider(
     config: ModelConfig,
     prompt: str,
     client: httpx.AsyncClient | None = None,
+    messages: list[dict[str, str]] | None = None,
 ) -> AsyncIterator[str]:
     owns_client = client is None
     http_client = client or httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
@@ -95,7 +96,16 @@ async def stream_provider(
         if config.provider is Provider.GEMINI:
             url = f"{config.base_url}/models/{config.model}:streamGenerateContent"
             params = {"alt": "sse"}
-            body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+            source_messages = messages or [{"role": "user", "content": prompt}]
+            body = {
+                "contents": [
+                    {
+                        "role": "model" if message["role"] == "assistant" else "user",
+                        "parts": [{"text": message["content"]}],
+                    }
+                    for message in source_messages
+                ]
+            }
             headers = {"Content-Type": "application/json", "x-goog-api-key": config.api_key}
             parser = _gemini_text
         else:
@@ -103,7 +113,7 @@ async def stream_provider(
             params = None
             body = {
                 "model": config.model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages or [{"role": "user", "content": prompt}],
                 "stream": True,
             }
             headers = {"Authorization": f"Bearer {config.api_key}"}

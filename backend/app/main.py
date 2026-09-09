@@ -1,15 +1,23 @@
+import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import AppEnv, Provider, get_app_env, get_model_chain
+from .features.agent.service import stream_agent
+from .features.chat.schemas import AskRequest
+from .features.transcription.schemas import TranscriptionResponse
+from .features.transcription.service import preload_model, transcribe_audio
+from .features.synthesis.schemas import SynthesisRequest
+from .features.synthesis.service import synthesize_text
 from .providers import ProviderError, stream_provider
 
 
@@ -23,13 +31,30 @@ def load_repository_environment(env_file: Path | None = None) -> None:
 
 load_repository_environment()
 
-app = FastAPI(title="Hackathon API", version="0.1.0")
+transcription_lock = asyncio.Semaphore(1)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Warm Whisper before serving requests without blocking the event loop."""
+    try:
+        await asyncio.to_thread(preload_model)
+    except ImportError:
+        # Keep the API available for text-only fallback when dependencies are absent.
+        pass
+    yield
+
+
+app = FastAPI(title="Hackathon API", version="0.1.0", lifespan=lifespan)
 
 frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:18473")
+allowed_frontend_origins = list(
+    dict.fromkeys([frontend_origin, "http://localhost:18473", "http://127.0.0.1:18473"])
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_origin],
+    allow_origins=allowed_frontend_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,13 +71,36 @@ def hello() -> dict[str, str]:
     return {"message": "FastAPI + Astro funcionando"}
 
 
-class AskRequest(BaseModel):
-    prompt: str = Field(
-        min_length=1,
-        max_length=10_000,
-        description="Pregunta que se enviará al modelo seleccionado.",
-        examples=["Explica qué es el streaming de tokens."],
-    )
+@app.post("/transcribe", response_model=TranscriptionResponse)
+async def transcribe(request: Request) -> TranscriptionResponse:
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(status_code=422, detail="El audio está vacío.")
+    if len(audio) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="El audio supera el límite permitido.")
+    try:
+        async with transcription_lock:
+            text = await asyncio.to_thread(
+                transcribe_audio,
+                audio,
+                request.headers.get("content-type", "audio/webm"),
+            )
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Whisper local no está instalado.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="No se pudo transcribir el audio.") from exc
+    return TranscriptionResponse(text=text)
+
+
+@app.post("/synthesize", response_class=Response)
+async def synthesize(request: SynthesisRequest) -> Response:
+    try:
+        audio = await asyncio.to_thread(synthesize_text, request.text)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="espeak-ng no está instalado.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="No se pudo sintetizar el texto.") from exc
+    return Response(content=audio, media_type="audio/wav")
 
 
 class ErrorResponse(BaseModel):
@@ -63,44 +111,16 @@ def _event(name: str, payload: dict[str, str]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-async def _ask_stream(prompt: str) -> AsyncIterator[str]:
-    chain = get_model_chain()
-    attempts_per_model = 3
-    total_attempts = len(chain) * attempts_per_model
-    environment = get_app_env()
-    configs = (
-        [chain[index % len(chain)] for index in range(total_attempts)]
-        if environment is AppEnv.TEST
-        else [config for config in chain for _ in range(attempts_per_model)]
-    )
-
-    attempt = 0
-    permanent_failures: set[Provider] = set()
-    while attempt < len(configs):
-        config = configs[attempt]
-        attempt += 1
-        if config.provider in permanent_failures:
-            continue
-        emitted_tokens = False
-        try:
-            async for token in stream_provider(config, prompt):
-                emitted_tokens = True
-                yield _event("token", {"text": token})
-            if not emitted_tokens:
-                raise ProviderError("Provider returned an empty stream")
-            yield _event("done", {"provider": config.provider.value, "model": config.model})
-            return
-        except ProviderError as exc:
-            if emitted_tokens:
-                yield _event("error", {"message": "La respuesta del proveedor se interrumpió"})
-                return
-            if not exc.retryable:
-                permanent_failures.add(config.provider)
-            if attempt >= total_attempts:
-                yield _event("error", {"message": "No hay proveedores disponibles"})
-                return
-
-    yield _event("error", {"message": "No hay proveedores disponibles"})
+async def _ask_stream(
+    prompt: str,
+    messages: list[dict[str, str]] | None = None,
+) -> AsyncIterator[str]:
+    async for name, payload in stream_agent(
+        prompt,
+        messages=messages,
+        provider_stream=stream_provider,
+    ):
+        yield _event(name, payload)
 
 
 async def _replay_stream(first_chunk: str, stream: AsyncIterator[str]) -> AsyncIterator[str]:
@@ -148,7 +168,8 @@ async def ask(request: AskRequest) -> Response:
             content={"detail": "No hay API keys configuradas para el entorno seleccionado."},
         )
 
-    stream = _ask_stream(request.prompt)
+    history = [message.model_dump() for message in request.messages]
+    stream = _ask_stream(request.prompt, history or None)
     try:
         first_chunk = await anext(stream)
     except StopAsyncIteration:

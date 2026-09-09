@@ -238,6 +238,70 @@ async def test_ask_validates_prompt_and_streams_sse(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+async def test_ask_forwards_voice_history_to_the_shared_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    captured: list[dict[str, str]] = []
+
+    async def fake_stream(config, prompt, *, messages):
+        captured.extend(messages)
+        yield "respuesta"
+
+    monkeypatch.setattr(main, "stream_provider", fake_stream)
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/ask",
+            json={
+                "prompt": "¿Y después?",
+                "messages": [{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "Hola, ¿cómo estás?"}],
+                "channel": "voice-demo",
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured == [
+        {"role": "user", "content": "Hola"},
+        {"role": "assistant", "content": "Hola, ¿cómo estás?"},
+        {"role": "user", "content": "¿Y después?"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_transcribe_accepts_raw_browser_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_transcribe(audio: bytes, content_type: str) -> str:
+        captured.update(audio=audio, content_type=content_type)
+        return "transcripción local"
+
+    monkeypatch.setattr(main, "transcribe_audio", fake_transcribe)
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/transcribe",
+            content=b"browser-audio",
+            headers={"Content-Type": "audio/webm;codecs=opus"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"text": "transcripción local"}
+    assert captured == {"audio": b"browser-audio", "content_type": "audio/webm;codecs=opus"}
+
+
+@pytest.mark.asyncio
+async def test_synthesize_returns_local_wav(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main, "synthesize_text", lambda text: b"RIFF-local-wav")
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/synthesize", json={"text": "Hola"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFF-local-wav"
+
+
+@pytest.mark.asyncio
 async def test_ask_returns_502_when_all_providers_fail_before_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

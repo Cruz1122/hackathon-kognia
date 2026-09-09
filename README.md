@@ -57,8 +57,23 @@ También están disponibles los scripts equivalentes `scripts/dev-api.sh` y `scr
 | `GET` | `/health` | `{"status":"ok"}` |
 | `GET` | `/api/hello` | Mensaje de conexión entre la web y la API |
 | `POST` | `/ask` | Stream SSE de tokens generado por el provider configurado |
+| `POST` | `/transcribe` | Transcripción local de audio con faster-whisper |
+| `POST` | `/synthesize` | Audio WAV local con espeak-ng |
 
-La web usa `/api/hello` al cargar y muestra un mensaje de error si el backend no está disponible.
+La web incluye una demo de llamada por voz en `index.astro`: captura audio con `MediaRecorder`, lo transcribe localmente con `faster-whisper` (modelo `tiny`, CPU/int8), consume `/ask` mediante SSE y reproduce chunks semánticos con el TTS del navegador. Si el TTS de Brave falla, usa automáticamente `/synthesize` con `espeak-ng` local. Si Whisper no está instalado o falla, el mismo flujo puede probarse con el input textual.
+
+El historial de la demo vive en memoria del navegador durante la llamada. Cada turno envía `channel: "voice-demo"` y el historial al mismo agente compartido; no se añade persistencia. El request acepta opcionalmente:
+
+```json
+{
+  "prompt": "¿Y después?",
+  "messages": [
+    {"role": "user", "content": "Hola"},
+    {"role": "assistant", "content": "Hola, ¿cómo estás?"}
+  ],
+  "channel": "voice-demo"
+}
+```
 
 ## Configuración
 
@@ -107,7 +122,8 @@ backend/
   app/main.py       API FastAPI, CORS y endpoints iniciales
   requirements.txt  Dependencias Python
 frontend/
-  src/pages/index.astro  Página inicial y llamada al backend
+  src/pages/index.astro  Pantalla de llamada
+  src/features/voice-call/  STT, streaming, chunking, TTS y cancelación
   package.json           Scripts y dependencias Astro
 assets/
   kognia-logo.svg        Logo del proyecto
