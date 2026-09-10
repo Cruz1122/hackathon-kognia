@@ -57,10 +57,12 @@ También están disponibles los scripts equivalentes `scripts/dev-api.sh` y `scr
 | `GET` | `/health` | `{"status":"ok"}` |
 | `GET` | `/api/hello` | Mensaje de conexión entre la web y la API |
 | `POST` | `/ask` | Stream SSE de tokens generado por el provider configurado |
+| `POST` | `/voice` | Recibe audio y devuelve únicamente audio PCM generado por el agente |
 | `POST` | `/transcribe` | Transcripción local de audio con faster-whisper |
 | `POST` | `/synthesize` | Audio WAV local con espeak-ng |
+| `POST` | `/synthesize/stream` | Audio PCM de Pocket TTS por chunks |
 
-La web incluye una demo de llamada por voz en `index.astro`: captura audio con `MediaRecorder`, lo transcribe localmente con `faster-whisper` (modelo `tiny`, CPU/int8), consume `/ask` mediante SSE y reproduce chunks semánticos con el TTS del navegador. Si el TTS de Brave falla, usa automáticamente `/synthesize` con `espeak-ng` local. Si Whisper no está instalado o falla, el mismo flujo puede probarse con el input textual.
+La web incluye una demo de llamada por voz en `index.astro`: captura audio con `MediaRecorder` y lo envía a `/voice`. El backend lo transcribe con `faster-whisper`, consume el stream del agente y pasa cada chunk semántico a Pocket TTS mediante una tubería, reproduciendo el PCM conforme se genera sin esperar la respuesta completa. Pocket TTS se carga una sola vez y el backend serializa la generación con un único worker. Si Pocket TTS no está instalado o falla, el mismo flujo puede probarse con el input textual.
 
 El historial de la demo vive en memoria del navegador durante la llamada. Cada turno envía `channel: "voice-demo"` y el historial al mismo agente compartido; no se añade persistencia. El request acepta opcionalmente:
 

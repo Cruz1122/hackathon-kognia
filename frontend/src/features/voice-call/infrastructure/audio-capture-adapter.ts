@@ -1,5 +1,6 @@
 type CaptureHandlers = {
   onResult: (result: { transcript: string; isFinal: boolean }) => void;
+  onAudio?: (audio: Blob, mimeType: string) => void;
   onEnd: () => void;
   onError: (message: string) => void;
 };
@@ -50,7 +51,16 @@ export class AudioCaptureAdapter {
       };
       recorder.onerror = () => this.handleRecorderError(generation, recorder);
       this.recorder.onstop = () => {
-        if (!this.discarding && generation === this.captureGeneration && recorder === this.recorder) void this.transcribe(handlers, mimeType, generation, chunks);
+        if (!this.discarding && generation === this.captureGeneration && recorder === this.recorder) {
+          const blob = new Blob(chunks, { type: mimeType });
+          if (handlers.onAudio) {
+            this.recorder = undefined;
+            this.stopSilenceDetection();
+            this.cleanupTracks();
+            if (blob.size) handlers.onAudio(blob, mimeType);
+            else handlers.onEnd();
+          } else void this.transcribe(handlers, mimeType, generation, chunks);
+        }
       };
       this.recorder.start(100);
       this.startSilenceDetection(handlers);

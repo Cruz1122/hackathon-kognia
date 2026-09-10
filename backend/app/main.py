@@ -1,6 +1,10 @@
 import asyncio
 import json
+import logging
 import os
+import queue
+import re
+import time
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -17,16 +21,27 @@ from .features.chat.schemas import AskRequest
 from .features.transcription.schemas import TranscriptionResponse
 from .features.transcription.service import preload_model, transcribe_audio
 from .features.synthesis.schemas import SynthesisRequest
-from .features.synthesis.service import synthesize_text
+from .features.synthesis.service import (
+    pocket_sample_rate,
+    preload_pocket_tts,
+    stream_pocket_audio,
+    synthesize_text,
+)
 from .providers import ProviderError, stream_provider
 
+
+logger = logging.getLogger("hackathon.voice")
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_repository_environment(env_file: Path | None = None) -> None:
-    """Load the repository-root environment without overriding shell variables."""
-    load_dotenv(env_file or REPOSITORY_ROOT / ".env", override=False)
+    """Load repository and backend environments without overriding shell variables."""
+    if env_file is not None:
+        load_dotenv(env_file, override=False)
+        return
+    load_dotenv(REPOSITORY_ROOT / ".env", override=False)
+    load_dotenv(REPOSITORY_ROOT / "backend" / ".env", override=False)
 
 
 load_repository_environment()
@@ -41,6 +56,11 @@ async def lifespan(_app: FastAPI):
         await asyncio.to_thread(preload_model)
     except ImportError:
         # Keep the API available for text-only fallback when dependencies are absent.
+        pass
+    try:
+        await asyncio.to_thread(preload_pocket_tts)
+    except ImportError:
+        # Text-only development environments can still use the existing TTS endpoint.
         pass
     yield
 
@@ -101,6 +121,226 @@ async def synthesize(request: SynthesisRequest) -> Response:
     except Exception as exc:
         raise HTTPException(status_code=502, detail="No se pudo sintetizar el texto.") from exc
     return Response(content=audio, media_type="audio/wav")
+
+
+@app.post("/synthesize/stream", response_class=StreamingResponse)
+async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
+    """Stream Pocket TTS as mono signed-int16 PCM, using one model worker."""
+    try:
+        sample_rate = await asyncio.to_thread(pocket_sample_rate)
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Pocket TTS no está instalado.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="No se pudo cargar Pocket TTS.") from exc
+    return StreamingResponse(
+        stream_pocket_audio(request.text),
+        media_type=f"audio/L16; rate={sample_rate}; channels=1",
+        headers={
+            "X-Audio-Sample-Rate": str(sample_rate),
+            "X-Audio-Encoding": "signed-int16-le",
+        },
+    )
+
+
+def _take_semantic_chunk(buffer: str, flush: bool = False) -> tuple[str, str]:
+    words = buffer.strip().split()
+    if flush:
+        return buffer.strip(), ""
+    sentence = re.search(r"[.!?](?:[\"'»”)]*)?(?=\s|$)", buffer)
+    if sentence and len(buffer[: sentence.end()].split()) >= 3:
+        return buffer[: sentence.end()].strip(), buffer[sentence.end() :].lstrip()
+    clause = re.search(r"[;:](?:\s|$)", buffer)
+    if clause and len(buffer[: clause.end()].split()) >= 8:
+        return buffer[: clause.end()].strip(), buffer[clause.end() :].lstrip()
+    if len(words) >= 20:
+        match = list(re.finditer(r"\S+", buffer))[19]
+        return buffer[: match.end()].strip(), buffer[match.end() :].lstrip()
+    return "", buffer
+
+
+async def _stream_tts_chunk(text: str):
+    """Bridge the blocking Pocket generator without buffering its audio."""
+    audio_queue: queue.Queue[bytes | BaseException | None] = queue.Queue()
+
+    def generate() -> None:
+        try:
+            for chunk in stream_pocket_audio(text):
+                audio_queue.put(chunk)
+        except BaseException as exc:
+            audio_queue.put(exc)
+        finally:
+            audio_queue.put(None)
+
+    worker = asyncio.create_task(asyncio.to_thread(generate))
+    try:
+        while True:
+            chunk = await asyncio.to_thread(audio_queue.get)
+            if chunk is None:
+                break
+            if isinstance(chunk, BaseException):
+                raise chunk
+            yield chunk
+    finally:
+        if not worker.done():
+            worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
+async def _voice_audio_stream(
+    prompt: str,
+    history: list[dict[str, str]] | None,
+    timings: dict[str, float],
+):
+    chunks: asyncio.Queue[str | BaseException | None] = asyncio.Queue()
+
+    async def produce_text_chunks() -> None:
+        buffer = ""
+        try:
+            async for name, payload in stream_agent(
+                prompt,
+                messages=history,
+                provider_stream=stream_provider,
+            ):
+                if name == "error":
+                    raise ProviderError(payload["message"])
+                if name != "token":
+                    continue
+                if "llm_first_token" not in timings:
+                    timings["llm_first_token"] = time.perf_counter()
+                    print(
+                        f"[voice_timing] llm_first_token={timings['llm_first_token'] - timings['request_received']:.3f}s",
+                        flush=True,
+                    )
+                buffer += payload["text"]
+                while True:
+                    chunk, buffer = _take_semantic_chunk(buffer)
+                    if not chunk:
+                        break
+                    if "first_semantic_chunk" not in timings:
+                        timings["first_semantic_chunk"] = time.perf_counter()
+                        print(
+                            f"[voice_timing] first_semantic={timings['first_semantic_chunk'] - timings['request_received']:.3f}s",
+                            flush=True,
+                        )
+                    await chunks.put(chunk)
+            if buffer.strip():
+                if "first_semantic_chunk" not in timings:
+                    timings["first_semantic_chunk"] = time.perf_counter()
+                    print(
+                        f"[voice_timing] first_semantic={timings['first_semantic_chunk'] - timings['request_received']:.3f}s",
+                        flush=True,
+                    )
+                await chunks.put(buffer.strip())
+        except BaseException as exc:
+            await chunks.put(exc)
+        finally:
+            await chunks.put(None)
+
+    producer = asyncio.create_task(produce_text_chunks())
+    try:
+        while True:
+            text_chunk = await chunks.get()
+            if text_chunk is None:
+                break
+            if isinstance(text_chunk, BaseException):
+                raise text_chunk
+            timings.setdefault("tts_first_chunk_start", time.perf_counter())
+            async for audio_chunk in _stream_tts_chunk(text_chunk):
+                if "tts_first_audio" not in timings:
+                    timings["tts_first_audio"] = time.perf_counter()
+                    print(
+                        f"[voice_timing] tts_first_audio={timings['tts_first_audio'] - timings['request_received']:.3f}s",
+                        flush=True,
+                    )
+                timings["audio_chunks"] = timings.get("audio_chunks", 0) + 1
+                yield audio_chunk
+    finally:
+        if not producer.done():
+            producer.cancel()
+        await asyncio.gather(producer, return_exceptions=True)
+
+
+@app.post("/voice", response_class=StreamingResponse)
+async def voice(request: Request) -> StreamingResponse:
+    """Receive browser audio and return only the generated PCM audio stream."""
+    started_at = time.perf_counter()
+    timings: dict[str, float] = {"request_received": started_at}
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(status_code=422, detail="El audio está vacío.")
+    if len(audio) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="El audio supera el límite permitido.")
+    try:
+        timings["transcription_start"] = time.perf_counter()
+        async with transcription_lock:
+            prompt = await asyncio.to_thread(
+                transcribe_audio,
+                audio,
+                request.headers.get("content-type", "audio/webm"),
+            )
+        timings["transcription_end"] = time.perf_counter()
+        print(
+            f"[voice_timing] transcription={timings['transcription_end'] - timings['transcription_start']:.3f}s",
+            flush=True,
+        )
+        history_header = request.headers.get("X-Chat-History", "[]")
+        history = json.loads(history_header)
+        if not isinstance(history, list):
+            history = []
+        chain = get_model_chain()
+        if not any(config.api_key for config in chain):
+            raise HTTPException(status_code=503, detail="No hay API keys configuradas.")
+        sample_rate = await asyncio.to_thread(pocket_sample_rate)
+        timings["tts_model_ready"] = time.perf_counter()
+    except HTTPException:
+        raise
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="El servicio de voz no está instalado.") from exc
+    except (ProviderError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="No se pudo procesar la conversación.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="No se pudo procesar el audio.") from exc
+
+    async def timed_stream():
+        try:
+            async for chunk in _voice_audio_stream(prompt, history or None, timings):
+                yield chunk
+        finally:
+            timings["response_finished"] = time.perf_counter()
+            elapsed = timings["response_finished"] - started_at
+            logger.info(
+                "voice_timing total=%.3fs transcribe=%.3fs llm_first_token=%.3fs "
+                "first_semantic=%.3fs tts_model=%.3fs tts_first_audio=%.3fs "
+                "audio_stream=%.3fs audio_chunks=%d",
+                elapsed,
+                timings.get("transcription_end", started_at) - timings.get("transcription_start", started_at),
+                timings.get("llm_first_token", started_at) - started_at,
+                timings.get("first_semantic_chunk", started_at) - started_at,
+                timings.get("tts_model_ready", started_at) - started_at,
+                timings.get("tts_first_audio", started_at) - started_at,
+                timings["response_finished"] - timings.get("tts_first_audio", started_at),
+                int(timings.get("audio_chunks", 0)),
+            )
+            print(
+                "[voice_timing] "
+                f"total={elapsed:.3f}s "
+                f"transcribe={timings.get('transcription_end', started_at) - timings.get('transcription_start', started_at):.3f}s "
+                f"llm_first_token={timings.get('llm_first_token', started_at) - started_at:.3f}s "
+                f"first_semantic={timings.get('first_semantic_chunk', started_at) - started_at:.3f}s "
+                f"tts_model={timings.get('tts_model_ready', started_at) - started_at:.3f}s "
+                f"tts_first_audio={timings.get('tts_first_audio', started_at) - started_at:.3f}s "
+                f"audio_chunks={int(timings.get('audio_chunks', 0))}",
+                flush=True,
+            )
+
+    return StreamingResponse(
+        timed_stream(),
+        media_type=f"audio/L16; rate={sample_rate}; channels=1",
+        headers={
+            "X-Audio-Sample-Rate": str(sample_rate),
+            "X-Audio-Encoding": "signed-int16-le",
+        },
+    )
 
 
 class ErrorResponse(BaseModel):

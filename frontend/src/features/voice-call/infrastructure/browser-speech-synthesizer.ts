@@ -5,6 +5,8 @@ export class BrowserSpeechSynthesizer {
   private fallbackRequest?: AbortController;
   private fallbackAudio?: HTMLAudioElement;
   private fallbackObjectUrl?: string;
+  private fallbackContext?: AudioContext;
+  private fallbackSources: AudioBufferSourceNode[] = [];
 
   constructor(private readonly lang = 'es-CO', private readonly fallbackUrl?: string) {
     this.refreshVoices();
@@ -20,6 +22,12 @@ export class BrowserSpeechSynthesizer {
   }
 
   speak(text: string, onStart: () => void, onEnd: () => void, voiceName?: string, onError?: (message: string) => void): void {
+    if (this.fallbackUrl) {
+      this.cancel();
+      const generation = ++this.generation;
+      void this.speakFallbackStream(text, onStart, onEnd, onError, generation);
+      return;
+    }
     if (!this.available) {
       onError?.('Este navegador no tiene síntesis de voz disponible.');
       onEnd();
@@ -41,6 +49,12 @@ export class BrowserSpeechSynthesizer {
     this.fallbackAudio = undefined;
     if (this.fallbackObjectUrl) URL.revokeObjectURL(this.fallbackObjectUrl);
     this.fallbackObjectUrl = undefined;
+    this.fallbackSources.forEach((source) => {
+      try { source.stop(); } catch { /* The source may have already ended. */ }
+    });
+    this.fallbackSources = [];
+    void this.fallbackContext?.close();
+    this.fallbackContext = undefined;
     this.speaking = false;
   }
 
@@ -80,6 +94,69 @@ export class BrowserSpeechSynthesizer {
       onEnd();
     };
     window.speechSynthesis.speak(utterance);
+  }
+
+  private async speakFallbackStream(
+    text: string,
+    onStart: () => void,
+    onEnd: () => void,
+    onError: ((message: string) => void) | undefined,
+    generation: number,
+  ): Promise<void> {
+    const request = new AbortController();
+    this.fallbackRequest = request;
+    let context: AudioContext | undefined;
+    let nextTime = 0;
+    let started = false;
+    try {
+      const response = await fetch(this.fallbackUrl!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: request.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      const sampleRate = Number(response.headers.get('X-Audio-Sample-Rate') ?? 24000);
+      context = new AudioContext({ sampleRate });
+      this.fallbackContext = context;
+      const reader = response.body.getReader();
+      let remainder = new Uint8Array(0);
+      while (generation === this.generation) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        const bytes = new Uint8Array(remainder.length + value.length);
+        bytes.set(remainder);
+        bytes.set(value, remainder.length);
+        const usableLength = bytes.length - (bytes.length % 2);
+        remainder = bytes.slice(usableLength);
+        if (usableLength === 0) continue;
+        const samples = new Int16Array(bytes.buffer, bytes.byteOffset, usableLength / 2);
+        const buffer = context.createBuffer(1, samples.length, sampleRate);
+        const channel = buffer.getChannelData(0);
+        for (let index = 0; index < samples.length; index += 1) channel[index] = samples[index] / 32768;
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        const startAt = Math.max(context.currentTime + 0.03, nextTime);
+        source.start(startAt);
+        nextTime = startAt + buffer.duration;
+        this.fallbackSources.push(source);
+        if (!started) { started = true; this.speaking = true; onStart(); }
+      }
+      if (generation !== this.generation) return;
+      const wait = Math.max(0, (nextTime - context.currentTime) * 1000);
+      window.setTimeout(() => {
+        if (generation === this.generation) { this.speaking = false; onEnd(); }
+      }, wait);
+    } catch (error) {
+      if (generation !== this.generation || (error instanceof DOMException && error.name === 'AbortError')) return;
+      this.speaking = false;
+      onError?.('No se pudo reproducir el audio de Pocket TTS.');
+      onEnd();
+    } finally {
+      if (this.fallbackRequest === request) this.fallbackRequest = undefined;
+    }
   }
 
   private async speakFallback(

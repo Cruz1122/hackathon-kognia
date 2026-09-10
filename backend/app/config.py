@@ -45,6 +45,8 @@ API_KEY_ENV: dict[Provider, str] = {
     Provider.OPENAI: "OPENAI_API_KEY",
 }
 
+PLACEHOLDER_KEYS = {"", "tu_clave_de_openrouter", "tu_clave_de_groq", "tu_clave_de_openai"}
+
 BASE_URLS: dict[Provider, str] = {
     Provider.GEMINI: "https://generativelanguage.googleapis.com/v1beta",
     Provider.OPENROUTER: "https://openrouter.ai/api/v1",
@@ -67,8 +69,13 @@ def get_model_chain(app_env: AppEnv | str | None = None) -> tuple[ModelConfig, .
         ModelConfig(
             provider=provider,
             model=model,
-            api_key=os.getenv(API_KEY_ENV[provider], ""),
+            api_key=_api_key_for(provider),
             base_url=BASE_URLS[provider],
         )
         for provider, model in MODEL_CHAINS[environment]
     )
+
+
+def _api_key_for(provider: Provider) -> str:
+    value = os.getenv(API_KEY_ENV[provider], "").strip()
+    return "" if value.lower() in PLACEHOLDER_KEYS else value

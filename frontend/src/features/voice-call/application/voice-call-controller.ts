@@ -6,6 +6,7 @@ import { CancellationController } from '../infrastructure/cancellation-controlle
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { SpeechQueue } from '../infrastructure/speech-queue';
 import { SemanticChunker } from '../services/semantic-chunker';
+import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 
 type Listener = (snapshot: VoiceSnapshot) => void;
 
@@ -17,6 +18,7 @@ export class VoiceCallController {
   private readonly cancellation = new CancellationController();
   private readonly listeners = new Set<Listener>();
   private readonly chunker = new SemanticChunker();
+  private readonly pcmQueue = new PcmAudioQueue();
   private bargeInTurn?: number;
   private retryTimer?: number;
 
@@ -42,6 +44,7 @@ export class VoiceCallController {
     this.cancellation.cancel('call-ended');
     this.recognition.abort();
     this.queue.cancel();
+    this.pcmQueue.cancel();
     this.patch({ state: 'ended' });
   }
 
@@ -52,6 +55,7 @@ export class VoiceCallController {
       if (this.snapshot.state === 'processing' || this.snapshot.state === 'speaking') {
         this.cancellation.cancel('microphone-muted');
         this.queue.cancel();
+        this.pcmQueue.cancel();
         this.chunker.reset();
       }
     }
@@ -63,6 +67,7 @@ export class VoiceCallController {
     if (this.snapshot.state !== 'speaking' && this.snapshot.state !== 'processing') return;
     this.cancellation.cancel('user-interrupted');
     this.queue.cancel();
+    this.pcmQueue.cancel();
     this.chunker.reset();
     this.patch({ state: 'interrupted', metrics: { ...this.snapshot.metrics, interrupted: true, cancellationReason: 'user-interrupted' } });
     void this.listen();
@@ -79,12 +84,13 @@ export class VoiceCallController {
     if (this.snapshot.muted || this.snapshot.state === 'ended') return;
     this.patch({ state: 'listening', partialTranscript: '' });
     const started = await this.recognition.start({
-      onResult: (result) => {
+        onResult: (result) => {
         if (result.isFinal) {
           this.patch({ lastUserMessage: result.transcript.trim(), partialTranscript: '', metrics: { ...this.snapshot.metrics, transcriptFinalAt: performance.now() } });
           void this.processTurn(result.transcript);
         } else this.patch({ partialTranscript: result.transcript });
-      },
+        },
+      onAudio: (audio, mimeType) => { void this.processAudioTurn(audio, mimeType); },
       onEnd: () => undefined,
       onError: (message) => {
         this.patch({ warning: message });
@@ -132,6 +138,44 @@ export class VoiceCallController {
     } catch (error) {
       if (!this.cancellation.isCurrent(turn.id)) return;
       if (turn.signal.aborted) return;
+      this.patch({ state: 'error', error: error instanceof Error ? error.message : 'Error inesperado del agente' });
+    }
+  }
+
+  private async processAudioTurn(audio: Blob, mimeType: string): Promise<void> {
+    const history = [...this.snapshot.history];
+    const metrics: VoiceMetrics = { ...emptyMetrics(), speechEndedAt: performance.now() };
+    this.patch({ state: 'processing', assistantText: '', metrics });
+    this.queue.cancel();
+    this.pcmQueue.cancel();
+    const turn = this.cancellation.begin();
+    this.patch({ metrics: { ...metrics, agentSentAt: performance.now() } });
+    let started = false;
+    try {
+      for await (const event of this.agent.streamAudio(audio, mimeType, history, turn.signal)) {
+        if (!this.cancellation.isCurrent(turn.id)) return;
+        if (event.type === 'audio' && event.chunk) {
+          if (!started) {
+            this.pcmQueue.start(event.sampleRate ?? 24000);
+            started = true;
+          }
+          const current = this.snapshot.metrics;
+          this.patch({ state: 'speaking', metrics: { ...current, firstChunkAt: current.firstChunkAt ?? performance.now(), chunks: current.chunks + 1 } });
+          this.pcmQueue.enqueue(event.chunk, () => {
+            if (this.cancellation.isCurrent(turn.id)) this.patch({ state: 'speaking', metrics: { ...this.snapshot.metrics, speechStartedAt: this.snapshot.metrics.speechStartedAt ?? performance.now() } });
+          }, () => {
+            if (this.cancellation.isCurrent(turn.id)) void this.listen();
+          });
+        }
+      }
+      if (!started) throw new Error('El backend no devolvió audio');
+      this.pcmQueue.finish(() => {
+        if (this.cancellation.isCurrent(turn.id)) void this.listen();
+      });
+      this.patch({ metrics: { ...this.snapshot.metrics, completedAt: performance.now() } });
+    } catch (error) {
+      if (!this.cancellation.isCurrent(turn.id) || turn.signal.aborted) return;
+      this.pcmQueue.cancel();
       this.patch({ state: 'error', error: error instanceof Error ? error.message : 'Error inesperado del agente' });
     }
   }
