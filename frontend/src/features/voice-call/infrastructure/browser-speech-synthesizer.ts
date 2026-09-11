@@ -152,7 +152,7 @@ export class BrowserSpeechSynthesizer {
     } catch (error) {
       if (generation !== this.generation || (error instanceof DOMException && error.name === 'AbortError')) return;
       this.speaking = false;
-      onError?.('No se pudo reproducir el audio de Pocket TTS.');
+      onError?.('No se pudo reproducir el audio de Qwen3-TTS.');
       onEnd();
     } finally {
       if (this.fallbackRequest === request) this.fallbackRequest = undefined;
@@ -206,7 +206,7 @@ export class BrowserSpeechSynthesizer {
     } catch (error) {
       if (objectUrl) this.releaseFallbackAudio(objectUrl);
       if (generation !== this.generation || (error instanceof DOMException && error.name === 'AbortError')) return;
-      finish(() => { onError?.('No se pudo usar el TTS local de espeak-ng.'); onEnd(); });
+      finish(() => { onError?.('No se pudo usar el TTS local de Qwen3-TTS.'); onEnd(); });
     } finally {
       if (this.fallbackRequest === request) this.fallbackRequest = undefined;
     }

@@ -30,10 +30,10 @@ from .features.transcription.service import (
 )
 from .features.synthesis.schemas import SynthesisRequest
 from .features.synthesis.service import (
-    pocket_sample_rate,
-    preload_pocket_tts,
-    stream_pocket_audio,
+    preload_tts,
+    stream_tts_audio,
     synthesize_text,
+    tts_sample_rate,
 )
 from .providers import ProviderError, stream_provider
 
@@ -67,14 +67,14 @@ async def lifespan(_app: FastAPI):
         # Keep the API available for text-only fallback when dependencies are absent.
         pass
     global tts_status
-    logger.info("Loading Pocket TTS weights before accepting requests")
+    logger.info("Loading Qwen3-TTS weights before accepting requests")
     try:
-        await asyncio.to_thread(preload_pocket_tts)
+        await asyncio.to_thread(preload_tts)
         tts_status = "ready"
-        logger.info("Pocket TTS is ready")
+        logger.info("Qwen3-TTS is ready")
     except Exception:
         tts_status = "error"
-        logger.exception("Pocket TTS failed to load during backend startup")
+        logger.exception("Qwen3-TTS failed to load during backend startup")
     yield
 
 
@@ -129,8 +129,8 @@ async def transcribe(request: Request) -> TranscriptionResponse:
 async def synthesize(request: SynthesisRequest) -> Response:
     try:
         audio = await asyncio.to_thread(synthesize_text, request.text)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail="espeak-ng no está instalado.") from exc
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Qwen3-TTS no está instalado.") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="No se pudo sintetizar el texto.") from exc
     return Response(content=audio, media_type="audio/wav")
@@ -138,15 +138,15 @@ async def synthesize(request: SynthesisRequest) -> Response:
 
 @app.post("/synthesize/stream", response_class=StreamingResponse)
 async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
-    """Stream Pocket TTS as mono signed-int16 PCM, using one model worker."""
+    """Stream Qwen3-TTS as mono signed-int16 PCM, using one resident model worker."""
     try:
-        sample_rate = await asyncio.to_thread(pocket_sample_rate)
+        sample_rate = await asyncio.to_thread(tts_sample_rate)
     except ImportError as exc:
-        raise HTTPException(status_code=503, detail="Pocket TTS no está instalado.") from exc
+        raise HTTPException(status_code=503, detail="Qwen3-TTS no está instalado.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="No se pudo cargar Pocket TTS.") from exc
+        raise HTTPException(status_code=502, detail="No se pudo cargar Qwen3-TTS.") from exc
     return StreamingResponse(
-        stream_pocket_audio(request.text),
+        stream_tts_audio(request.text),
         media_type=f"audio/L16; rate={sample_rate}; channels=1",
         headers={
             "X-Audio-Sample-Rate": str(sample_rate),
@@ -160,24 +160,24 @@ def _take_semantic_chunk(buffer: str, flush: bool = False) -> tuple[str, str]:
     if flush:
         return buffer.strip(), ""
     sentence = re.search(r"[.!?](?:[\"'»”)]*)?(?=\s|$)", buffer)
-    if sentence and len(buffer[: sentence.end()].split()) >= 3:
+    if sentence and len(buffer[: sentence.end()].split()) >= 2:
         return buffer[: sentence.end()].strip(), buffer[sentence.end() :].lstrip()
-    clause = re.search(r"[;:](?:\s|$)", buffer)
-    if clause and len(buffer[: clause.end()].split()) >= 8:
+    clause = re.search(r"[,;:](?:\s|$)", buffer)
+    if clause and len(buffer[: clause.end()].split()) >= 5:
         return buffer[: clause.end()].strip(), buffer[clause.end() :].lstrip()
-    if len(words) >= 20:
-        match = list(re.finditer(r"\S+", buffer))[19]
+    if len(words) >= 8:
+        match = list(re.finditer(r"\S+", buffer))[7]
         return buffer[: match.end()].strip(), buffer[match.end() :].lstrip()
     return "", buffer
 
 
 async def _stream_tts_chunk(text: str):
-    """Bridge the blocking Pocket generator without buffering its audio."""
+    """Bridge the blocking Qwen3-TTS generator without buffering its audio."""
     audio_queue: queue.Queue[bytes | BaseException | None] = queue.Queue()
 
     def generate() -> None:
         try:
-            for chunk in stream_pocket_audio(text):
+            for chunk in stream_tts_audio(text):
                 audio_queue.put(chunk)
         except BaseException as exc:
             audio_queue.put(exc)
@@ -303,7 +303,7 @@ async def voice(request: Request) -> StreamingResponse:
         chain = get_model_chain()
         if not any(config.api_key for config in chain):
             raise HTTPException(status_code=503, detail="No hay API keys configuradas.")
-        sample_rate = await asyncio.to_thread(pocket_sample_rate)
+        sample_rate = await asyncio.to_thread(tts_sample_rate)
         timings["tts_model_ready"] = time.perf_counter()
     except HTTPException:
         raise
@@ -448,7 +448,7 @@ async def _speak_chunk(websocket: WebSocket, text: str) -> None:
     if tts_status != "ready" or not text.strip():
         return
     await websocket.send_json({"type": "tts.started", "text": text})
-    sample_rate = await asyncio.to_thread(pocket_sample_rate)
+    sample_rate = await asyncio.to_thread(tts_sample_rate)
     await websocket.send_json({"type": "tts.format", "sample_rate": sample_rate})
     async for audio_chunk in _stream_tts_chunk(text):
         await websocket.send_bytes(audio_chunk)
@@ -464,6 +464,16 @@ async def _run_call_turn(
     answer = ""
     buffer = ""
     failed = False
+    pending: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def speak_worker() -> None:
+        while True:
+            text = await pending.get()
+            if text is None:
+                return
+            await _speak_chunk(websocket, text)
+
+    speaker = asyncio.create_task(speak_worker())
     try:
         async for name, payload in stream_agent(
             prompt,
@@ -485,9 +495,11 @@ async def _run_call_turn(
             await websocket.send_json({"type": "agent.token", "text": token})
             chunk, buffer = _take_semantic_chunk(buffer)
             if chunk:
-                await _speak_chunk(websocket, chunk)
+                await pending.put(chunk)
         if buffer.strip():
-            await _speak_chunk(websocket, buffer.strip())
+            await pending.put(buffer.strip())
+        await pending.put(None)
+        await speaker
         if not failed and answer.strip():
             history.extend(
                 [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
@@ -495,6 +507,11 @@ async def _run_call_turn(
             del history[:-40]
         await websocket.send_json({"type": "turn.completed", "text": answer})
     except asyncio.CancelledError:
+        speaker.cancel()
+        try:
+            await speaker
+        except asyncio.CancelledError:
+            pass
         try:
             await websocket.send_json({"type": "turn.cancelled"})
         except Exception:
@@ -507,6 +524,9 @@ async def call_socket(websocket: WebSocket) -> None:
     """Live PCM: Sherpa partials, agent tokens and TTS."""
     await websocket.accept()
     await websocket.send_json({"type": "call.connected", "tts": tts_status})
+    if tts_status == "ready":
+        ready_rate = await asyncio.to_thread(tts_sample_rate)
+        await websocket.send_json({"type": "tts.format", "sample_rate": ready_rate})
     history: list[dict[str, str]] = []
     audio_mime = "audio/webm"
     pcm_mode = True

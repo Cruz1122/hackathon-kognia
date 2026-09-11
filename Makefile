@@ -24,7 +24,7 @@ check-venv:
 	@test -x "$(PYTHON)" || { echo "Falta backend/.venv. Ejecuta make setup" >&2; exit 1; }
 
 dev-api: check-venv
-	cd backend && .venv/bin/python -m uvicorn app.main:app --reload --host $(HOST) --port $(API_PORT)
+	cd backend && .venv/bin/python -m uvicorn app.main:app --reload --reload-dir app --host $(HOST) --port $(API_PORT)
 
 dev-web:
 	cd frontend && pnpm run dev

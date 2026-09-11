@@ -1,5 +1,5 @@
 {
-	"pid": 10288,
+	"pid": 221384,
 	"port": 18473,
 	"url": "http://127.0.0.1:18473",
 	"urls": {
@@ -10,5 +10,5 @@
 		"networkInterfaceNames": []
 	},
 	"background": false,
-	"startedAt": "2026-09-10T23:38:17.808Z"
+	"startedAt": "2026-09-11T06:32:37.992Z"
 }

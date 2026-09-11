@@ -49,7 +49,7 @@ export class PcmAudioQueue {
     const merged = new Float32Array(this.tail.length + incoming.length);
     merged.set(this.tail);
     merged.set(incoming, this.tail.length);
-    const minSamples = Math.floor(this.inputRate * 0.08);
+    const minSamples = Math.floor(this.inputRate * 0.02);
     if (!this.finished && merged.length < minSamples) {
       this.tail = merged;
       return;
@@ -67,7 +67,7 @@ export class PcmAudioQueue {
     source.buffer = buffer;
     source.connect(this.analyser);
     const now = this.context.currentTime;
-    if (this.nextTime < now + 0.04) this.nextTime = now + 0.08;
+    if (this.nextTime < now + 0.02) this.nextTime = now + 0.03;
     source.start(this.nextTime);
     this.nextTime += buffer.duration;
     this.pending += 1;
