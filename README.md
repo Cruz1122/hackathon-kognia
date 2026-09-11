@@ -59,15 +59,15 @@ También están disponibles los scripts equivalentes `scripts/dev-api.sh` y `scr
 | `POST` | `/ask` | Stream SSE de tokens generado por el provider configurado |
 | `POST` | `/voice` | Recibe audio y devuelve únicamente audio PCM generado por el agente |
 | `POST` | `/transcribe` | Transcripción local de audio con Sherpa-ONNX |
-| `POST` | `/synthesize` | Audio WAV local con Qwen3-TTS |
-| `POST` | `/synthesize/stream` | Audio PCM de Qwen3-TTS por chunks |
+| `POST` | `/synthesize` | Audio WAV local con Piper TTS |
+| `POST` | `/synthesize/stream` | Audio PCM de Piper TTS por chunks |
 | `WS` | `/ws/call` | Sesión en tiempo real: PCM del mic, parciales Sherpa, agente, tools y TTS |
 
-La web incluye una demo de llamada por voz en `index.astro`: captura PCM 16 kHz y lo envía por `/ws/call`. El backend lo transcribe en streaming con Sherpa-ONNX (Zipformer español), consume el stream del agente y pasa cada chunk semántico a Qwen3-TTS (`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`). El modelo se carga una sola vez, permanece residente en GPU (o CPU si no hay CUDA) y el backend serializa la generación con un único worker. Usa `bfloat16` y FlashAttention 2 solo cuando el hardware es compatible.
+La web incluye una demo de llamada por voz en `index.astro`: captura PCM 16 kHz y lo envía por `/ws/call`. El backend lo transcribe en streaming con Sherpa-ONNX (Zipformer español), consume el stream del agente y pasa cada chunk semántico a Piper TTS con la voz mexicana `es_MX-claude-high`. El modelo se carga una sola vez y usa una configuración determinista para no omitir ni variar palabras entre generaciones. El backend serializa la generación con un único worker.
 
 `make setup` descarga el modelo Sherpa a `backend/models/sherpa-es/` (ignorado por git). También puedes correr `scripts/download-sherpa-model.sh`.
 
-Qwen3-TTS no se descarga ni se prepara desde `scripts/setup.sh`. Al arrancar el backend, el `lifespan` carga automáticamente los pesos y deja el estado disponible en `/health` como `tts: ready` (o `tts: error` si la dependencia/modelo no está disponible). La página `/monitoring` consume el canal WebSocket `/ws/call` para mostrar tokens, tools, estado de TTS y errores en tiempo real.
+`make setup` descarga la voz Piper Claude junto al modelo Sherpa. Al arrancar el backend, el `lifespan` carga la voz y deja el estado disponible en `/health` como `tts: ready` (o `tts: error` si no está disponible). La página `/monitoring` consume el canal WebSocket `/ws/call` para mostrar tokens, tools, estado de TTS y errores en tiempo real.
 
 El historial de la demo vive en memoria del navegador durante la llamada. Cada turno envía `channel: "voice-demo"` y el historial al mismo agente compartido; no se añade persistencia. El request acepta opcionalmente:
 
@@ -90,10 +90,8 @@ El backend carga automáticamente el archivo `.env` ubicado en la raíz del repo
 - `PUBLIC_API_URL`: URL base que usa la web para llamar a la API. Por defecto, `http://localhost:18474`.
 - `APP_ENV`: entorno LLM, `test` o `production`. Por defecto, `test`.
 - `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`: credenciales de providers; no se versionan.
-- `QWEN_TTS_MODEL`: id de Hugging Face. Por defecto, `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`.
-- `QWEN_TTS_LANGUAGE`: idioma de síntesis. Por defecto, `Spanish`.
-- `QWEN_TTS_SPEAKER`: timbre de CustomVoice. Por defecto, `Serena`.
-- `QWEN_TTS_REF_AUDIO` y `QWEN_TTS_REF_TEXT`: audio de referencia y transcripción si usas el modelo Base.
+- `PIPER_MODEL_DIR`: carpeta que contiene la voz Piper. Por defecto, `backend/models/piper-es`.
+- `PIPER_TTS_VOICE`: nombre de la voz local. Por defecto, `es_MX-claude-high`.
 
 Los modelos están hardcodeados en `backend/app/config.py`. En `test` se prioriza `gpt-4o-mini` vía OpenAI por su baja latencia y soporte de tool calling y streaming por tokens; el fallback circular continúa con Gemini → MiniMax vía OpenRouter → Llama vía Groq, con tres intentos por modelo y doce intentos globales. En `production` el orden es GPT-5.6 Luna vía OpenAI → Gemini, con tres intentos por modelo.
 

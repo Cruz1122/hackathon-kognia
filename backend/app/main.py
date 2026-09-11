@@ -67,14 +67,14 @@ async def lifespan(_app: FastAPI):
         # Keep the API available for text-only fallback when dependencies are absent.
         pass
     global tts_status
-    logger.info("Loading Qwen3-TTS weights before accepting requests")
+    logger.info("Loading Piper TTS before accepting requests")
     try:
         await asyncio.to_thread(preload_tts)
         tts_status = "ready"
-        logger.info("Qwen3-TTS is ready")
+        logger.info("Piper TTS is ready")
     except Exception:
         tts_status = "error"
-        logger.exception("Qwen3-TTS failed to load during backend startup")
+        logger.exception("Piper TTS failed to load during backend startup")
     yield
 
 
@@ -130,7 +130,7 @@ async def synthesize(request: SynthesisRequest) -> Response:
     try:
         audio = await asyncio.to_thread(synthesize_text, request.text)
     except ImportError as exc:
-        raise HTTPException(status_code=503, detail="Qwen3-TTS no está instalado.") from exc
+        raise HTTPException(status_code=503, detail="Piper TTS no está instalado.") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="No se pudo sintetizar el texto.") from exc
     return Response(content=audio, media_type="audio/wav")
@@ -138,13 +138,13 @@ async def synthesize(request: SynthesisRequest) -> Response:
 
 @app.post("/synthesize/stream", response_class=StreamingResponse)
 async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
-    """Stream Qwen3-TTS as mono signed-int16 PCM, using one resident model worker."""
+    """Stream Piper TTS as mono signed-int16 PCM, using one resident model worker."""
     try:
         sample_rate = await asyncio.to_thread(tts_sample_rate)
     except ImportError as exc:
-        raise HTTPException(status_code=503, detail="Qwen3-TTS no está instalado.") from exc
+        raise HTTPException(status_code=503, detail="Piper TTS no está instalado.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="No se pudo cargar Qwen3-TTS.") from exc
+        raise HTTPException(status_code=502, detail="No se pudo cargar Piper TTS.") from exc
     return StreamingResponse(
         stream_tts_audio(request.text),
         media_type=f"audio/L16; rate={sample_rate}; channels=1",
@@ -156,23 +156,16 @@ async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
 
 
 def _take_semantic_chunk(buffer: str, flush: bool = False) -> tuple[str, str]:
-    words = buffer.strip().split()
     if flush:
         return buffer.strip(), ""
     sentence = re.search(r"[.!?](?:[\"'»”)]*)?(?=\s|$)", buffer)
     if sentence and len(buffer[: sentence.end()].split()) >= 2:
         return buffer[: sentence.end()].strip(), buffer[sentence.end() :].lstrip()
-    clause = re.search(r"[,;:](?:\s|$)", buffer)
-    if clause and len(buffer[: clause.end()].split()) >= 5:
-        return buffer[: clause.end()].strip(), buffer[clause.end() :].lstrip()
-    if len(words) >= 8:
-        match = list(re.finditer(r"\S+", buffer))[7]
-        return buffer[: match.end()].strip(), buffer[match.end() :].lstrip()
     return "", buffer
 
 
 async def _stream_tts_chunk(text: str):
-    """Bridge the blocking Qwen3-TTS generator without buffering its audio."""
+    """Bridge the blocking Piper TTS generator without buffering its audio."""
     audio_queue: queue.Queue[bytes | BaseException | None] = queue.Queue()
 
     def generate() -> None:
