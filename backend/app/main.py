@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -19,7 +19,15 @@ from .config import AppEnv, Provider, get_app_env, get_model_chain
 from .features.agent.service import stream_agent
 from .features.chat.schemas import AskRequest
 from .features.transcription.schemas import TranscriptionResponse
-from .features.transcription.service import preload_model, transcribe_audio
+from .features.transcription.service import (
+    create_stream,
+    feed_pcm,
+    finish_stream,
+    pcm_wave_level,
+    preload_model,
+    reset_stream,
+    transcribe_audio,
+)
 from .features.synthesis.schemas import SynthesisRequest
 from .features.synthesis.service import (
     pocket_sample_rate,
@@ -47,21 +55,26 @@ def load_repository_environment(env_file: Path | None = None) -> None:
 load_repository_environment()
 
 transcription_lock = asyncio.Semaphore(1)
+tts_status = "starting"
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Warm Whisper before serving requests without blocking the event loop."""
+    """Warm Sherpa-ONNX before serving requests without blocking the event loop."""
     try:
         await asyncio.to_thread(preload_model)
     except ImportError:
         # Keep the API available for text-only fallback when dependencies are absent.
         pass
+    global tts_status
+    logger.info("Loading Pocket TTS weights before accepting requests")
     try:
         await asyncio.to_thread(preload_pocket_tts)
-    except ImportError:
-        # Text-only development environments can still use the existing TTS endpoint.
-        pass
+        tts_status = "ready"
+        logger.info("Pocket TTS is ready")
+    except Exception:
+        tts_status = "error"
+        logger.exception("Pocket TTS failed to load during backend startup")
     yield
 
 
@@ -83,7 +96,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "tts": tts_status}
 
 
 @app.get("/api/hello")
@@ -106,7 +119,7 @@ async def transcribe(request: Request) -> TranscriptionResponse:
                 request.headers.get("content-type", "audio/webm"),
             )
     except ImportError as exc:
-        raise HTTPException(status_code=503, detail="Whisper local no está instalado.") from exc
+        raise HTTPException(status_code=503, detail="Sherpa-ONNX no está instalado.") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="No se pudo transcribir el audio.") from exc
     return TranscriptionResponse(text=text)
@@ -422,3 +435,267 @@ async def ask(request: AskRequest) -> Response:
         return JSONResponse(status_code=502, content={"detail": "Los providers no pudieron responder."})
 
     return StreamingResponse(_replay_stream(first_chunk, stream), media_type="text/event-stream")
+
+
+_TRANSCRIPT_LETTER = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]")
+
+
+def _usable_transcript(text: str) -> bool:
+    return len(_TRANSCRIPT_LETTER.findall(text)) >= 2
+
+
+async def _speak_chunk(websocket: WebSocket, text: str) -> None:
+    if tts_status != "ready" or not text.strip():
+        return
+    await websocket.send_json({"type": "tts.started", "text": text})
+    sample_rate = await asyncio.to_thread(pocket_sample_rate)
+    await websocket.send_json({"type": "tts.format", "sample_rate": sample_rate})
+    async for audio_chunk in _stream_tts_chunk(text):
+        await websocket.send_bytes(audio_chunk)
+    await websocket.send_json({"type": "tts.completed"})
+
+
+async def _run_call_turn(
+    websocket: WebSocket,
+    prompt: str,
+    history: list[dict[str, str]],
+) -> None:
+    await websocket.send_json({"type": "turn.started"})
+    answer = ""
+    buffer = ""
+    failed = False
+    try:
+        async for name, payload in stream_agent(
+            prompt,
+            messages=history or None,
+            provider_stream=stream_provider,
+        ):
+            if name == "error":
+                failed = True
+                await websocket.send_json({"type": "error", "message": payload["message"]})
+                break
+            if name == "tool.started" or name == "tool.completed":
+                await websocket.send_json({"type": name, **payload})
+                continue
+            if name != "token":
+                continue
+            token = payload["text"]
+            answer += token
+            buffer += token
+            await websocket.send_json({"type": "agent.token", "text": token})
+            chunk, buffer = _take_semantic_chunk(buffer)
+            if chunk:
+                await _speak_chunk(websocket, chunk)
+        if buffer.strip():
+            await _speak_chunk(websocket, buffer.strip())
+        if not failed and answer.strip():
+            history.extend(
+                [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
+            )
+            del history[:-40]
+        await websocket.send_json({"type": "turn.completed", "text": answer})
+    except asyncio.CancelledError:
+        try:
+            await websocket.send_json({"type": "turn.cancelled"})
+        except Exception:
+            pass
+        raise
+
+
+@app.websocket("/ws/call")
+async def call_socket(websocket: WebSocket) -> None:
+    """Live PCM: Sherpa partials, agent tokens and TTS."""
+    await websocket.accept()
+    await websocket.send_json({"type": "call.connected", "tts": tts_status})
+    history: list[dict[str, str]] = []
+    audio_mime = "audio/webm"
+    pcm_mode = True
+    sample_rate = 16000
+    stream = None
+    last_partial = ""
+    last_voice_at = 0.0
+    ignore_until = 0.0
+    barge_hits = 0
+    turn_task: asyncio.Task[None] | None = None
+    try:
+        stream = await asyncio.to_thread(create_stream)
+
+        async def _reap_turn() -> None:
+            nonlocal turn_task, last_partial, last_voice_at, ignore_until, barge_hits, stream
+            if turn_task is None or not turn_task.done():
+                return
+            task = turn_task
+            turn_task = None
+            barge_hits = 0
+            last_partial = ""
+            last_voice_at = 0.0
+            ignore_until = time.monotonic() + 0.4
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Call turn failed")
+            if stream is not None:
+                await asyncio.to_thread(reset_stream, stream)
+
+        async def _start_turn(prompt: str) -> None:
+            nonlocal turn_task, last_partial, last_voice_at, stream
+            flushed = ""
+            if stream is not None:
+                try:
+                    flushed = await asyncio.to_thread(finish_stream, stream, sample_rate)
+                except Exception:
+                    logger.exception("Sherpa flush failed")
+                stream = await asyncio.to_thread(create_stream)
+            final = flushed.strip() if _usable_transcript(flushed) else prompt
+            last_partial = ""
+            last_voice_at = 0.0
+            await websocket.send_json({"type": "customer.transcript", "text": final})
+            turn_task = asyncio.create_task(_run_call_turn(websocket, final, history))
+
+        async def _barge_in() -> None:
+            nonlocal turn_task, barge_hits, last_partial, last_voice_at, ignore_until
+            barge_hits = 0
+            if turn_task is None:
+                return
+            task = turn_task
+            turn_task = None
+            if not task.done():
+                task.cancel()
+                try:
+                    await websocket.send_json({"type": "tts.cancel"})
+                except Exception:
+                    pass
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.exception("Call turn cancel failed")
+            last_partial = ""
+            last_voice_at = time.monotonic()
+            ignore_until = 0.0
+
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                if turn_task is not None and not turn_task.done():
+                    turn_task.cancel()
+                    try:
+                        await turn_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                break
+            raw = message.get("bytes")
+            text = message.get("text")
+            if raw is not None:
+                if pcm_mode:
+                    await _reap_turn()
+                    level = pcm_wave_level(raw, sample_rate)
+                    await websocket.send_json({"type": "wave.level", "value": level, "source": "customer"})
+                    now = time.monotonic()
+                    busy = turn_task is not None and not turn_task.done()
+                    speaking = level >= 0.09
+                    if speaking:
+                        last_voice_at = now
+                    if busy:
+                        barge_hits = barge_hits + 1 if level >= 0.16 else 0
+                        if barge_hits >= 3 and now >= ignore_until:
+                            await _barge_in()
+                        continue
+                    if stream is None or now < ignore_until:
+                        continue
+                    try:
+                        partial, _ended = await asyncio.to_thread(feed_pcm, stream, raw, sample_rate)
+                    except Exception:
+                        logger.exception("Call transcription failed")
+                        await websocket.send_json(
+                            {"type": "error", "message": "No se pudo transcribir el audio."}
+                        )
+                        continue
+                    if partial and partial != last_partial:
+                        last_partial = partial
+                        if _usable_transcript(partial):
+                            await websocket.send_json({"type": "customer.partial", "text": partial})
+                    prompt = last_partial.strip()
+                    if (
+                        not prompt
+                        or not _usable_transcript(prompt)
+                        or last_voice_at <= 0
+                        or now - last_voice_at < 1.0
+                    ):
+                        continue
+                    await _start_turn(prompt)
+                    continue
+                try:
+                    async with transcription_lock:
+                        prompt = await asyncio.to_thread(transcribe_audio, raw, audio_mime)
+                except Exception:
+                    logger.exception("Call transcription failed")
+                    await websocket.send_json(
+                        {"type": "error", "message": "No se pudo transcribir el audio."}
+                    )
+                    continue
+                if not prompt.strip():
+                    await websocket.send_json({"type": "transcript.empty"})
+                    continue
+                await websocket.send_json({"type": "customer.transcript", "text": prompt})
+                await _run_call_turn(websocket, prompt, history)
+                continue
+            if not text:
+                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                continue
+            if not isinstance(payload, dict):
+                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                continue
+            if payload.get("type") == "pcm.start":
+                rate = payload.get("sample_rate")
+                if isinstance(rate, int) and rate > 0:
+                    sample_rate = rate
+                pcm_mode = True
+                last_partial = ""
+                last_voice_at = 0.0
+                if stream is not None:
+                    await asyncio.to_thread(reset_stream, stream)
+                else:
+                    stream = await asyncio.to_thread(create_stream)
+                continue
+            if payload.get("type") == "pcm.stop":
+                pcm_mode = False
+                last_partial = ""
+                last_voice_at = 0.0
+                if stream is not None:
+                    await asyncio.to_thread(reset_stream, stream)
+                continue
+            if payload.get("type") == "audio":
+                mime = payload.get("mime")
+                if isinstance(mime, str) and mime.strip():
+                    audio_mime = mime
+                continue
+            if payload.get("type") != "turn":
+                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                continue
+            prompt = payload.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                await websocket.send_json({"type": "error", "message": "El mensaje está vacío."})
+                continue
+            incoming = payload.get("messages", [])
+            if isinstance(incoming, list) and incoming:
+                history = [
+                    message
+                    for message in incoming
+                    if isinstance(message, dict)
+                    and message.get("role") in {"user", "assistant"}
+                    and isinstance(message.get("content"), str)
+                ]
+            await _run_call_turn(websocket, prompt, history)
+    except WebSocketDisconnect:
+        logger.info("Call WebSocket disconnected")
+    except Exception:
+        logger.exception("Call WebSocket failed")

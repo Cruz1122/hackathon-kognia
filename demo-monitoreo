@@ -1,0 +1,1439 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monitoreo de llamadas — Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --ui-graphite: #414141;
+      --ui-amber: #f7c974;
+      --ui-cream: #faeccf;
+      --ui-paper: #f8f8f8;
+      --ui-control: #e8e8e8;
+      --font-ui: "Urbanist", sans-serif;
+      --radius-full: 9999px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
+      font-family: var(--font-ui);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    button { font: inherit; color: inherit; }
+
+    .page {
+      width: min(1080px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 84px;
+    }
+
+    .app-content[hidden], .state-view[hidden] { display: none !important; }
+
+    .topline {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 0 12px 18px;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      font-size: 12px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      opacity: .58;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(26px, 3vw, 38px);
+      line-height: 1.03;
+      letter-spacing: -.035em;
+      font-weight: 800;
+    }
+
+    .call-meta {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 0 14px;
+      border-radius: var(--radius-full);
+      background: rgba(65,65,65,.07);
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .name-chip { min-width: 104px; }
+    .name-value { display: inline-block; transform-origin: 50% 50%; }
+    .name-chip.updating { animation: chip-squish .64s cubic-bezier(.22,.9,.28,1); }
+    .name-chip.updating .name-value { animation: name-swap .64s cubic-bezier(.22,.9,.28,1); }
+
+    @keyframes chip-squish {
+      0% { transform: scaleX(1); }
+      34% { transform: scaleX(.82) scaleY(1.08); }
+      68% { transform: scaleX(1.045) scaleY(.96); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes name-swap {
+      0% { opacity: 1; transform: translateY(0); }
+      35% { opacity: 0; transform: translateY(-8px); }
+      52% { opacity: 0; transform: translateY(8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    .chip.mode-live { background: var(--ui-amber); font-weight: 800; }
+    .chip.mode-recorded { background: var(--ui-cream); font-weight: 800; }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ui-graphite);
+      animation: live-pulse 1.65s ease-in-out infinite;
+    }
+
+    @keyframes live-pulse {
+      0%, 100% { transform: scale(.82); opacity: .48; }
+      50% { transform: scale(1); opacity: 1; }
+    }
+
+    .player-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      padding: 12px 0 14px;
+      background: rgba(248,248,248,.96);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    .player {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 24px;
+      padding: 6px 12px 2px;
+      color: var(--ui-graphite);
+    }
+
+    .monitor {
+      min-width: 0;
+      height: 72px;
+      position: relative;
+      cursor: pointer;
+      user-select: none;
+      touch-action: none;
+      outline: none;
+      --progress: 100%;
+    }
+
+    .monitor:focus-visible .progress-shell { box-shadow: 0 0 0 3px rgba(247,201,116,.58); }
+
+    .wave-window {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 13px;
+      height: 46px;
+      overflow: hidden;
+      pointer-events: none;
+      opacity: 1;
+      transform-origin: 50% 100%;
+      transition: opacity .13s ease, transform .16s cubic-bezier(.2,.8,.2,1);
+    }
+
+    .monitor.seeking .wave-window {
+      opacity: 0;
+      transform: translateY(9px) scaleY(.72);
+    }
+
+    .wave-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .progress-shell {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 5px;
+      height: 10px;
+      border-radius: var(--radius-full);
+      background: rgba(65,65,65,.10);
+      overflow: visible;
+      transition: height .16s ease, bottom .16s ease;
+    }
+
+    .monitor.seeking .progress-shell { height: 12px; bottom: 4px; }
+
+    .progress-fill {
+      width: var(--progress);
+      height: 100%;
+      border-radius: inherit;
+      background: var(--ui-amber);
+    }
+
+    .playhead {
+      position: absolute;
+      left: var(--progress);
+      top: 50%;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--ui-graphite);
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 0 4px rgba(248,248,248,.92);
+      pointer-events: none;
+      transition: left .08s linear;
+    }
+
+    .monitor.at-live-edge .playhead {
+      width: 15px;
+      height: 15px;
+    }
+
+    .transport {
+      display: grid;
+      justify-items: end;
+      align-content: end;
+      gap: 8px;
+      padding-bottom: 2px;
+    }
+
+    .timecode {
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      line-height: 1;
+      font-weight: 700;
+      white-space: nowrap;
+      opacity: .72;
+    }
+
+    .controls { display: flex; align-items: flex-start; gap: 8px; }
+    .control-stack { display: grid; justify-items: center; gap: 3px; }
+
+    .control-caption {
+      font-size: 9px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: .02em;
+      opacity: .48;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .control {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      background: rgba(65,65,65,.09);
+      color: var(--ui-graphite);
+      transition: transform .2s cubic-bezier(.2,.8,.2,1), background .2s ease;
+    }
+
+    .control.primary {
+      width: 48px;
+      height: 48px;
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
+    }
+
+    .control:hover:not(:disabled) { transform: translateY(-1px) scale(1.025); }
+    .control:active:not(:disabled) { transform: translateY(1px) scale(.94,.97); }
+    .control:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 3px; }
+    .control:disabled { opacity: .28; cursor: default; }
+    .control.live-jump:not(:disabled) { background: var(--ui-amber); }
+    .control i, .control svg { width: 19px; height: 19px; stroke-width: 2.5; }
+    .control.primary i, .control.primary svg { width: 22px; height: 22px; }
+
+    .conversation {
+      position: relative;
+      width: min(880px, 100%);
+      margin: 26px auto 0;
+      padding: 8px 10px 32px;
+      min-height: 620px;
+    }
+
+    .conversation-empty {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: min(56vh, 520px);
+      z-index: 5;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+    }
+
+    .conversation-empty[hidden] { display: none !important; }
+
+    .conversation-empty__copy {
+      display: grid;
+      justify-items: center;
+      gap: 11px;
+      text-align: center;
+      color: rgba(65,65,65,.62);
+    }
+
+    .conversation-empty__copy svg {
+      width: 38px;
+      height: 38px;
+      stroke-width: 1.9;
+    }
+
+    .conversation-empty__copy p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.35;
+      font-weight: 600;
+    }
+
+    .timeline-item {
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(10px);
+      pointer-events: none;
+    }
+
+    .timeline-item.visible { visibility: visible; pointer-events: auto; }
+    .timeline-item.enter { animation: item-in .52s cubic-bezier(.2,.82,.2,1) both; }
+    .timeline-item.visible:not(.enter) { opacity: 1; transform: none; }
+
+    @keyframes item-in {
+      0% { opacity: 0; transform: translateY(13px) scale(.985); }
+      72% { opacity: 1; transform: translateY(-1px) scale(1.004); }
+      100% { opacity: 1; transform: none; }
+    }
+
+    .message-row { display: flex; margin: 20px 0; }
+    .message-row.agent { justify-content: flex-start; }
+    .message-row.customer { justify-content: flex-end; }
+
+    .message-wrap { max-width: min(66ch, 76%); display: grid; gap: 7px; }
+
+    .message-meta {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 12px;
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 700;
+      opacity: .55;
+    }
+
+    .customer .message-meta { justify-content: flex-end; }
+    .message-meta i, .message-meta svg { width: 14px; height: 14px; stroke-width: 2.5; }
+
+    .message {
+      width: fit-content;
+      max-width: 100%;
+      border-radius: var(--radius-full);
+      padding: 15px 21px;
+      font-size: 15.5px;
+      line-height: 1.44;
+      letter-spacing: -.005em;
+    }
+
+    .agent .message { background: var(--ui-graphite); color: var(--ui-paper); }
+    .customer .message { margin-left: auto; background: var(--ui-cream); color: var(--ui-graphite); }
+
+    .token {
+      display: inline;
+      opacity: 0;
+      filter: blur(3px);
+      transform: translateY(4px);
+      animation: token-in .34s cubic-bezier(.2,.76,.24,1) forwards;
+    }
+
+    @keyframes token-in { to { opacity: 1; filter: blur(0); transform: translateY(0); } }
+
+    .message-time {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0;
+      font-variant-numeric: tabular-nums;
+      transform: translateY(3px);
+    }
+
+    .message.complete .message-time { animation: timestamp-in .35s ease forwards; }
+    @keyframes timestamp-in { to { opacity: .48; transform: translateY(0); } }
+
+    .system-event {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 14px;
+      margin: 31px 0;
+      color: rgba(65,65,65,.52);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+
+    .system-event::before, .system-event::after {
+      content: "";
+      height: 1px;
+      background: rgba(65,65,65,.16);
+      transform-origin: center;
+    }
+
+    .system-event.enter::before, .system-event.enter::after { animation: line-open .72s cubic-bezier(.2,.8,.2,1) both; }
+    @keyframes line-open { from { transform: scaleX(0); opacity: 0; } to { transform: scaleX(1); opacity: 1; } }
+
+    .reconnect-label {
+      display: inline-flex;
+      align-items: center;
+      padding: 0;
+      background: transparent;
+      border-radius: 0;
+      overflow: visible;
+    }
+
+    /* El evento sigue animado, pero sin superficie tipo badge. */
+    .reconnect-mass,
+    .reconnect-shine { display: none; }
+
+    #reconnectText {
+      display: inline-block;
+      transform-origin: 50% 50%;
+      animation: reconnect-text-pulse 1.22s cubic-bezier(.45,.04,.3,1) infinite;
+    }
+
+    @keyframes reconnect-text-pulse {
+      0%,100% { opacity: .46; transform: scaleX(.97); }
+      48% { opacity: .92; transform: scaleX(1.035); }
+      72% { opacity: .64; transform: scaleX(.992); }
+    }
+
+    .system-event.reconnected #reconnectText { animation: none; opacity: 1; transform: none; }
+
+    .tool-row { display: flex; justify-content: flex-start; margin: 21px 0; }
+
+    .tool-call {
+      position: relative;
+      width: min(520px, 84%);
+      min-height: 82px;
+      border-radius: var(--radius-full);
+      background: var(--ui-control);
+      color: var(--ui-graphite);
+      padding: 15px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      overflow: hidden;
+      transform-origin: 0 50%;
+    }
+
+    .tool-row.enter .tool-call { animation: tool-arrive .72s cubic-bezier(.16,.9,.28,1) both; }
+
+    @keyframes tool-arrive {
+      0% { opacity: 0; transform: translateX(-18px) scaleX(.78) scaleY(.94); }
+      58% { opacity: 1; transform: translateX(2px) scaleX(1.035) scaleY(.985); }
+      78% { transform: translateX(0) scaleX(.988) scaleY(1.025); }
+      100% { opacity: 1; transform: none; }
+    }
+
+    .tool-icon {
+      flex: 0 0 auto;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--ui-graphite);
+      color: var(--ui-control);
+    }
+
+    .tool-row.enter .tool-icon { animation: tool-icon-pop .82s .08s cubic-bezier(.18,.9,.25,1) both; }
+
+    @keyframes tool-icon-pop {
+      0% { transform: scale(.25) rotate(-18deg); opacity: 0; }
+      68% { transform: scale(1.09) rotate(2deg); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .tool-icon i, .tool-icon svg { width: 20px; height: 20px; stroke-width: 2.5; }
+    .tool-copy { min-width: 0; flex: 1; position: relative; z-index: 2; }
+
+    .tool-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 3px;
+      font-size: 12px;
+      font-weight: 700;
+      opacity: .54;
+    }
+
+    .tool-label i, .tool-label svg { width: 13px; height: 13px; stroke-width: 2.5; }
+    .tool-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
+    .tool-status { margin-top: 4px; font-size: 12px; font-weight: 600; opacity: .58; }
+
+    .tool-status.loading::after {
+      content: "";
+      display: inline-block;
+      width: 14px;
+      text-align: left;
+      animation: ellipsis 1.25s steps(4,end) infinite;
+    }
+
+    @keyframes ellipsis {
+      0% { content: ""; }
+      25% { content: "."; }
+      50% { content: ".."; }
+      75%,100% { content: "..."; }
+    }
+
+    .loader {
+      position: relative;
+      flex: 0 0 auto;
+      width: 54px;
+      height: 54px;
+      filter: url(#ui-goo);
+      -webkit-filter: url(#ui-goo);
+      animation: ring-drift 15s linear infinite;
+    }
+
+    .loader-dot, .loader-runner {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      border-radius: 50%;
+      background: var(--ui-graphite);
+      transform-origin: 0 0;
+    }
+
+    .loader-dot {
+      width: 7px;
+      height: 7px;
+      margin: -3.5px;
+      transform: rotate(var(--angle)) translateY(-19px);
+      opacity: .76;
+    }
+
+    .loader-runner {
+      width: 10px;
+      height: 10px;
+      margin: -5px;
+      animation: runner-orbit 7.8s cubic-bezier(.55,.02,.45,.98) infinite;
+    }
+
+    @keyframes ring-drift { to { transform: rotate(360deg); } }
+    @keyframes runner-orbit { to { transform: rotate(360deg) translateY(-19px); } }
+
+    .tool-call.done .loader { animation: loader-out .34s ease forwards; }
+    @keyframes loader-out { to { opacity: 0; transform: scale(.35); } }
+
+    .done-mark {
+      display: grid;
+      flex: 0 0 auto;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--ui-graphite);
+      color: var(--ui-control);
+      place-items: center;
+      opacity: 0;
+      transform: scale(.3);
+    }
+
+    .done-mark i, .done-mark svg { width: 19px; height: 19px; stroke-width: 2.5; }
+    .tool-call.done .done-mark { animation: done-pop .54s .18s cubic-bezier(.16,.9,.25,1) forwards; }
+
+    @keyframes done-pop {
+      66% { opacity: 1; transform: scale(1.12); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    .system-event.call-ended {
+      color: var(--ui-graphite);
+      font-weight: 800;
+    }
+
+    .call-ended-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .call-ended-label svg {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.5;
+    }
+
+    .mode-end-icon {
+      display: inline-grid;
+      place-items: center;
+    }
+
+    .mode-end-icon svg {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.5;
+    }
+
+    .state-view {
+      min-height: calc(100vh - 116px);
+      display: grid;
+      place-items: center;
+    }
+
+    .state-copy {
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+      text-align: center;
+      max-width: 360px;
+      padding: 24px;
+    }
+
+    .state-copy svg {
+      width: 46px;
+      height: 46px;
+      stroke-width: 1.8;
+      color: var(--ui-graphite);
+    }
+
+    .state-copy p {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.4;
+      font-weight: 600;
+      color: rgba(65,65,65,.70);
+    }
+
+    .demo-switcher {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 60;
+      display: flex;
+      gap: 5px;
+      padding: 5px;
+      border-radius: var(--radius-full);
+      background: var(--ui-control);
+      box-shadow: 0 6px 24px rgba(65,65,65,.10);
+    }
+
+    .demo-switcher button {
+      border: 0;
+      border-radius: var(--radius-full);
+      background: transparent;
+      padding: 8px 11px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .demo-switcher button.active { background: var(--ui-graphite); color: var(--ui-control); }
+    .demo-switcher button:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
+
+    @media (max-width: 760px) {
+      .page { width: min(100% - 20px, 1080px); padding-top: 20px; }
+      .topline { align-items: flex-start; flex-direction: column; gap: 14px; }
+      .call-meta { justify-content: flex-start; }
+      .player { grid-template-columns: 1fr; gap: 9px; }
+      .monitor { height: 65px; }
+      .transport { width: 100%; display: flex; justify-content: space-between; align-items: flex-start; }
+      .message-wrap { max-width: 88%; }
+      .message { font-size: 15px; }
+      .tool-call { width: 92%; }
+      .conversation { margin-top: 18px; padding-inline: 2px; }
+      .demo-switcher { right: 10px; bottom: 10px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <defs>
+      <filter id="ui-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+        <feColorMatrix in="blur" type="matrix" values="
+          1 0 0 0 0
+          0 1 0 0 0
+          0 0 1 0 0
+          0 0 0 22 -10" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+      </filter>
+    </defs>
+  </svg>
+
+  <main class="page">
+    <div class="app-content" id="appContent">
+      <header class="topline">
+        <div>
+          <p class="eyebrow">Monitoreo</p>
+          <h1 id="screenTitle">Llamada en tiempo real</h1>
+        </div>
+        <div class="call-meta" aria-label="Estado de la llamada">
+          <span class="chip name-chip" id="nameChip"><span class="name-value" id="nameValue">Sin nombre</span></span>
+          <span class="chip">+57 310 ••• ••42</span>
+          <span class="chip mode-live" id="modeChip"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span class="mode-end-icon" id="endIconWrap" hidden aria-hidden="true"><i data-lucide="phone-off"></i></span><span id="modeChipText">EN VIVO</span></span>
+        </div>
+      </header>
+
+      <div class="player-wrap">
+        <section class="player" aria-label="Reproductor de llamada">
+          <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+            <div class="wave-window" aria-hidden="true">
+              <canvas class="wave-canvas" id="waveCanvas"></canvas>
+            </div>
+            <div class="progress-shell" aria-hidden="true">
+              <div class="progress-fill"></div>
+              <div class="playhead"></div>
+            </div>
+          </div>
+
+          <div class="transport">
+            <div class="timecode"><span id="currentTime">00:00</span> <span style="opacity:.34">/</span> <span id="duration">00:00</span></div>
+            <div class="controls" aria-label="Controles de reproducción">
+              <div class="control-stack">
+                <button class="control" type="button" id="startBtn" aria-label="Volver al inicio de la llamada" title="Volver al inicio"><i data-lucide="skip-back" aria-hidden="true"></i></button>
+                <span class="control-caption">Inicio</span>
+              </div>
+              <div class="control-stack">
+                <button class="control" type="button" id="rewindBtn" aria-label="Retroceder 10 segundos" title="Retroceder 10 s"><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>
+                <span class="control-caption">10s</span>
+              </div>
+              <button class="control primary" type="button" id="playBtn" aria-label="Pausar"><i data-lucide="pause" aria-hidden="true"></i></button>
+              <div class="control-stack">
+                <button class="control" type="button" id="forwardBtn" aria-label="Adelantar 10 segundos" title="Adelantar 10 s"><i data-lucide="rotate-cw" aria-hidden="true"></i></button>
+                <span class="control-caption">10s</span>
+              </div>
+              <div class="control-stack">
+                <button class="control live-jump" type="button" id="liveBtn" aria-label="Volver al borde en vivo" title="Volver a en vivo"><i data-lucide="radio" aria-hidden="true"></i></button>
+                <span class="control-caption">En vivo</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="conversation" id="conversation" aria-label="Transcripción de la llamada">
+        <div class="conversation-empty" id="conversationEmpty" role="status">
+          <div class="conversation-empty__copy"><i data-lucide="message-circle" aria-hidden="true"></i><p>Aún no hay mensajes.</p></div>
+        </div>
+
+        <div class="message-row customer timeline-item" data-at="1.0" id="m1"><div class="message-wrap"><div class="message-meta"><span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i></div><div class="message" data-text="Hola, llamaba porque hice una reserva para mañana, pero necesito cambiar la hora de llegada." data-time="00:01"></div></div></div>
+        <div class="message-row agent timeline-item" data-at="5.2" id="m2"><div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message" data-text="Claro. Puedo revisarlo. ¿Me confirmas por favor el nombre con el que hiciste la reserva?" data-time="00:05"></div></div></div>
+        <div class="message-row customer timeline-item" data-at="9.2" id="m3"><div class="message-wrap"><div class="message-meta"><span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i></div><div class="message" data-text="Sofía Martínez. La reserva es para dos personas." data-time="00:09"></div></div></div>
+
+        <div class="system-event timeline-item" data-at="12.6" id="reconnect" role="status"><span class="reconnect-label"><span class="reconnect-mass" aria-hidden="true"></span><span class="reconnect-shine" aria-hidden="true"></span><span id="reconnectText">Reconectando</span></span></div>
+
+        <div class="tool-row timeline-item" data-at="15.6" id="tool1Row"><div class="tool-call" id="tool1"><div class="tool-icon" aria-hidden="true"><i data-lucide="search"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title" id="tool1Title">Consultando la reserva de Sofía Martínez</div><div class="tool-status loading" id="tool1Status">Buscando disponibilidad y condiciones</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></div></div>
+
+        <div class="message-row agent timeline-item" data-at="20.3" id="m4"><div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message" data-text="Ya encontré tu reserva. La llegada estaba programada para las 3:00 p. m.; todavía puedo moverla a las 5:30 p. m. sin costo adicional." data-time="00:20"></div></div></div>
+        <div class="message-row customer timeline-item" data-at="25.8" id="m5"><div class="message-wrap"><div class="message-meta"><span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i></div><div class="message" data-text="Perfecto, a las 5:30 está bien." data-time="00:26"></div></div></div>
+        <div class="system-event timeline-item" data-at="28.0" id="changeEvent">Cambio de reserva solicitado</div>
+
+        <div class="tool-row timeline-item" data-at="29.0" id="tool2Row"><div class="tool-call" id="tool2"><div class="tool-icon" aria-hidden="true"><i data-lucide="calendar-sync"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title" id="tool2Title">Actualizando hora de llegada</div><div class="tool-status loading" id="tool2Status">Guardando el cambio</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></div></div>
+
+        <div class="message-row agent timeline-item" data-at="32.2" id="m6"><div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message" data-text="Listo. Ya quedó actualizada para mañana a las 5:30 p. m. ¿Necesitas que revise algo más de la reserva?" data-time="00:32"></div></div></div>
+
+        <div class="system-event call-ended timeline-item" data-at="36" id="callEndedEvent" role="status"><span class="call-ended-label"><i data-lucide="phone-off" aria-hidden="true"></i><span>Llamada finalizada · 00:36</span></span></div>
+
+
+      </section>
+    </div>
+
+    <section class="state-view" id="emptyState" hidden aria-label="Sin llamadas">
+      <div class="state-copy"><i data-lucide="phone-off" aria-hidden="true"></i><p>No hay llamadas para monitorear.</p></div>
+    </section>
+
+    <section class="state-view" id="errorState" hidden aria-label="Error de monitoreo">
+      <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
+    </section>
+  </main>
+
+  <nav class="demo-switcher" aria-label="Cambiar estado de la demo">
+    <button type="button" class="active" data-mode="live">En vivo</button>
+    <button type="button" data-mode="recorded">Grabada</button>
+    <button type="button" data-mode="empty">Vacío</button>
+    <button type="button" data-mode="error">Error</button>
+  </nav>
+
+  <script>
+    const DEMO_DURATION = 36;
+    const SAMPLE_INTERVAL = 1 / 30;
+    const VISUAL_SAMPLES = 128;
+
+    let mode = 'live';
+    let current = 0;
+    let liveEdge = 0;
+    let playing = true;
+    let last = performance.now();
+    let previousTimelineTime = 0;
+    let seeking = false;
+    let sampleAccumulator = 0;
+    let externalAnalyser = null;
+    let externalSampleRate = 16000;
+    let analyserBins = null;
+    let callEnded = false;
+    let waveDpr = 1;
+    let waveWidth = 1;
+    let waveHeight = 1;
+
+    const liveSamples = [];
+    const recordedSamples = [];
+
+    const appContent = document.getElementById('appContent');
+    const emptyState = document.getElementById('emptyState');
+    const errorState = document.getElementById('errorState');
+    const screenTitle = document.getElementById('screenTitle');
+    const modeChip = document.getElementById('modeChip');
+    const modeChipText = document.getElementById('modeChipText');
+    const liveDot = document.getElementById('liveDot');
+    const endIconWrap = document.getElementById('endIconWrap');
+    const waveShell = document.getElementById('waveShell');
+    const currentTimeEl = document.getElementById('currentTime');
+    const durationEl = document.getElementById('duration');
+    const playBtn = document.getElementById('playBtn');
+    const startBtn = document.getElementById('startBtn');
+    const liveBtn = document.getElementById('liveBtn');
+    const conversationEmpty = document.getElementById('conversationEmpty');
+    const waveCanvas = document.getElementById('waveCanvas');
+    const waveCtx = waveCanvas.getContext('2d', { alpha: true });
+    const nameChip = document.getElementById('nameChip');
+    const nameValue = document.getElementById('nameValue');
+    const reconnect = document.getElementById('reconnect');
+    const reconnectText = document.getElementById('reconnectText');
+    const timelineItems = [...document.querySelectorAll('.timeline-item')];
+    const messages = [...document.querySelectorAll('.message[data-text]')];
+    const tokenTimers = new Map();
+
+    function formatTime(total) {
+      const m = Math.floor(Math.max(0, total) / 60);
+      const s = Math.floor(Math.max(0, total) % 60);
+      return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+
+    function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+    function resample(values, count) {
+      if (!values.length) return Array(count).fill(.04);
+      if (values.length === 1) return Array(count).fill(values[0]);
+      return Array.from({ length: count }, (_, i) => {
+        const pos = i * (values.length - 1) / Math.max(1, count - 1);
+        const lo = Math.floor(pos);
+        const hi = Math.min(values.length - 1, lo + 1);
+        const f = pos - lo;
+        return values[lo] * (1 - f) + values[hi] * f;
+      });
+    }
+
+    function resizeWaveCanvas() {
+      const rect = waveCanvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
+      if (w === waveWidth && h === waveHeight && dpr === waveDpr) return;
+      waveWidth = w;
+      waveHeight = h;
+      waveDpr = dpr;
+      waveCanvas.width = Math.round(w * dpr);
+      waveCanvas.height = Math.round(h * dpr);
+      waveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function drawWaveShape(samples, from, to, fillStyle) {
+      if (!samples.length || to <= from) return;
+      const baseline = waveHeight - 1;
+      const minHeight = 2;
+      const maxHeight = Math.max(8, waveHeight - 5);
+      const last = samples.length - 1;
+      const startIndex = Math.max(0, Math.floor(from * last));
+      const endIndex = Math.min(last, Math.ceil(to * last));
+      const denom = Math.max(1, last);
+
+      waveCtx.beginPath();
+      const firstX = startIndex / denom * waveWidth;
+      waveCtx.moveTo(firstX, baseline);
+
+      let prevX = firstX;
+      let prevY = baseline - (minHeight + clamp01(samples[startIndex]) * (maxHeight - minHeight));
+      waveCtx.lineTo(prevX, prevY);
+
+      for (let i = startIndex + 1; i <= endIndex; i++) {
+        const x = i / denom * waveWidth;
+        const y = baseline - (minHeight + clamp01(samples[i]) * (maxHeight - minHeight));
+        const mx = (prevX + x) * .5;
+        const my = (prevY + y) * .5;
+        waveCtx.quadraticCurveTo(prevX, prevY, mx, my);
+        prevX = x;
+        prevY = y;
+      }
+      waveCtx.lineTo(prevX, prevY);
+      waveCtx.lineTo(prevX, baseline);
+      waveCtx.closePath();
+      waveCtx.fillStyle = fillStyle;
+      waveCtx.fill();
+    }
+
+    function renderWave() {
+      resizeWaveCanvas();
+      waveCtx.clearRect(0, 0, waveWidth, waveHeight);
+
+      const raw = mode === 'recorded' ? recordedSamples : liveSamples.slice(-VISUAL_SAMPLES);
+      const samples = resample(raw, VISUAL_SAMPLES);
+      if (!samples.length) return;
+
+      const available = Math.max(.001, maxSeekTime());
+      const ratio = clamp01(current / available);
+      drawWaveShape(samples, 0, 1, 'rgba(65,65,65,.14)');
+      drawWaveShape(samples, 0, ratio, '#f7c974');
+    }
+
+    // Pitch por autocorrelación (f0) + energía RMS. No usa bins FFT.
+    function voiceLevelFromAnalyser(analyser, _frequencies, sampleRate) {
+      const frame = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(frame);
+
+      let energy = 0;
+      for (let i = 0; i < frame.length; i++) energy += frame[i] * frame[i];
+      const rms = Math.sqrt(energy / Math.max(1, frame.length));
+      if (rms < .008) return clamp01(rms * 3);
+
+      const minLag = Math.max(2, Math.floor(sampleRate / 500));
+      const maxLag = Math.min(frame.length - 2, Math.floor(sampleRate / 70));
+      let bestLag = minLag;
+      let bestCorr = -1;
+      const mean = energy / Math.max(1, frame.length);
+
+      for (let lag = minLag; lag <= maxLag; lag++) {
+        let corr = 0;
+        const count = frame.length - lag;
+        for (let i = 0; i < count; i++) corr += frame[i] * frame[i + lag];
+        corr /= count;
+        if (corr > bestCorr) {
+          bestCorr = corr;
+          bestLag = lag;
+        }
+      }
+
+      const clarity = mean > 1e-8 ? bestCorr / mean : 0;
+      const hz = sampleRate / bestLag;
+      const voiced = clarity > .25 && hz >= 70 && hz <= 500;
+      const pitch = voiced ? clamp01((hz - 70) / 430) : .35;
+      return clamp01(rms * 7.4 * (.42 + .58 * (voiced ? .3 + .7 * pitch : .2)));
+    }
+
+    // Convierte un frame de frecuencias real en una amplitud visual de voz.
+    // Los bins se ponderan principalmente entre 80 Hz y 3.8 kHz, rango útil para voz telefónica.
+    function amplitudeFromFrequencyFrame(frequencies, sampleRate = 16000) {
+      if (!frequencies || !frequencies.length) return .05;
+      const nyquist = sampleRate / 2;
+      let energy = 0;
+      let weightSum = 0;
+
+      for (let i = 0; i < frequencies.length; i++) {
+        const hz = i / Math.max(1, frequencies.length - 1) * nyquist;
+        if (hz < 80 || hz > 3800) continue;
+        const speechWeight = hz < 300 ? .7 : hz < 2600 ? 1 : .72;
+        const normalized = frequencies[i] / 255;
+        energy += normalized * normalized * speechWeight;
+        weightSum += speechWeight;
+      }
+
+      if (!weightSum) return .05;
+      return clamp01(Math.sqrt(energy / weightSum) * 1.7);
+    }
+
+    function pushAmplitude(value) {
+      if (callEnded || (mode === 'live' && liveEdge >= DEMO_DURATION)) return;
+      liveSamples.push(clamp01(value));
+      if (liveSamples.length > 1080) liveSamples.shift();
+    }
+
+    function pushFrequencyFrame(frequencies, sampleRate = 16000) {
+      pushAmplitude(amplitudeFromFrequencyFrame(frequencies, sampleRate));
+    }
+
+    const SPEECH_SEGMENTS = [
+      [1.0, 4.7, 'customer'],
+      [5.2, 8.9, 'agent'],
+      [9.2, 11.9, 'customer'],
+      [20.3, 25.3, 'agent'],
+      [25.8, 27.5, 'customer'],
+      [32.2, 35.5, 'agent']
+    ];
+
+    function speechEnvelope(t) {
+      const segment = SPEECH_SEGMENTS.find(([start, end]) => t >= start && t <= end);
+      if (!segment) return .025;
+      const [start, end] = segment;
+      const local = (t - start) / Math.max(.001, end - start);
+      const attack = Math.min(1, local / .08);
+      const release = Math.min(1, (1 - local) / .08);
+      const syllables = .42 + .58 * Math.max(0, Math.sin(t * 8.4) * .55 + Math.sin(t * 4.15 + .7) * .35 + .28);
+      return clamp01(syllables * Math.min(attack, release));
+    }
+
+    function demoFrequencyFrame(t) {
+      const bins = new Uint8Array(128);
+      const sampleRate = 16000;
+      const nyquist = sampleRate / 2;
+      const voice = speechEnvelope(t);
+      const formants = [150, 620, 1180, 2250, 3150];
+      const widths = [110, 260, 360, 520, 480];
+
+      for (let i = 0; i < bins.length; i++) {
+        const hz = i / (bins.length - 1) * nyquist;
+        let mag = voice > .04 ? 4 : 1;
+        formants.forEach((f, idx) => {
+          const drift = Math.sin(t * (.8 + idx * .17) + idx) * (idx === 0 ? 35 : 90);
+          const z = (hz - (f + drift)) / widths[idx];
+          mag += Math.exp(-z * z) * voice * (idx === 0 ? 195 : 145 - idx * 13);
+        });
+        mag += voice * (Math.sin(i * .91 + t * 11) * .5 + .5) * 8;
+        bins[i] = Math.max(0, Math.min(255, Math.round(mag)));
+      }
+      return bins;
+    }
+
+    // API preparada para conectar audio real sin cambiar el componente visual.
+    window.callMonitorAudio = {
+      pushAmplitude,
+      pushFrequencyFrame,
+      connectAnalyser(analyser, sampleRate = 16000) {
+        externalAnalyser = analyser;
+        externalSampleRate = sampleRate;
+        analyserBins = new Uint8Array(analyser.frequencyBinCount);
+        void analyser.context?.resume?.();
+      },
+      disconnectAnalyser() {
+        externalAnalyser = null;
+        analyserBins = null;
+      },
+      setRecordedWaveform(values) {
+        recordedSamples.length = 0;
+        values.forEach(v => recordedSamples.push(clamp01(v)));
+        if (mode === 'recorded') renderWave();
+      }
+    };
+
+    function seedRecordedWaveform() {
+      recordedSamples.length = 0;
+      for (let i = 0; i < 430; i++) {
+        const t = i / 430 * DEMO_DURATION;
+        recordedSamples.push(amplitudeFromFrequencyFrame(demoFrequencyFrame(t), 16000));
+      }
+    }
+
+    function replacePlayIcon(name) {
+      const existing = playBtn.querySelector('svg, i');
+      if (existing) existing.remove();
+      const node = document.createElement('i');
+      node.setAttribute('data-lucide', name);
+      node.setAttribute('aria-hidden', 'true');
+      playBtn.appendChild(node);
+      lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    }
+
+    function setPlaying(next) {
+      if (playing === next) return;
+      playing = next;
+      replacePlayIcon(playing ? 'pause' : 'play');
+      playBtn.setAttribute('aria-label', playing ? 'Pausar' : 'Reproducir');
+    }
+
+    function clearTokenTimers(message) {
+      const timers = tokenTimers.get(message) || [];
+      timers.forEach(clearTimeout);
+      tokenTimers.delete(message);
+    }
+
+    function renderMessageInstant(message) {
+      clearTokenTimers(message);
+      message.textContent = message.dataset.text;
+      const stamp = document.createElement('span');
+      stamp.className = 'message-time';
+      stamp.textContent = message.dataset.time;
+      stamp.style.opacity = '.48';
+      stamp.style.transform = 'none';
+      message.appendChild(stamp);
+      message.classList.add('complete');
+      message.dataset.rendered = '1';
+    }
+
+    function animateMessage(message) {
+      clearTokenTimers(message);
+      message.textContent = '';
+      message.classList.remove('complete');
+      message.dataset.rendered = '1';
+
+      const parts = message.dataset.text.split(/(\s+)/).filter(Boolean);
+      const tokenDelay = Math.min(92, Math.max(48, 1450 / parts.length));
+      let visibleTokenIndex = 0;
+
+      parts.forEach(part => {
+        if (/^\s+$/.test(part)) { message.appendChild(document.createTextNode(part)); return; }
+        const token = document.createElement('span');
+        token.className = 'token';
+        token.textContent = part;
+        token.style.animationDelay = `${visibleTokenIndex * tokenDelay}ms`;
+        message.appendChild(token);
+        visibleTokenIndex++;
+      });
+
+      const stamp = document.createElement('span');
+      stamp.className = 'message-time';
+      stamp.textContent = message.dataset.time;
+      message.appendChild(stamp);
+      const timer = setTimeout(() => message.classList.add('complete'), visibleTokenIndex * tokenDelay + 260);
+      tokenTimers.set(message, [timer]);
+    }
+
+    function resetMessage(message) {
+      clearTokenTimers(message);
+      message.textContent = '';
+      message.classList.remove('complete');
+      delete message.dataset.rendered;
+    }
+
+    function showItem(item, animate) {
+      if (item.classList.contains('visible')) return;
+      item.classList.add('visible');
+      if (animate) {
+        item.classList.remove('enter');
+        void item.offsetWidth;
+        item.classList.add('enter');
+        setTimeout(() => item.classList.remove('enter'), 900);
+      }
+      const message = item.querySelector('.message[data-text]');
+      if (message) animate ? animateMessage(message) : renderMessageInstant(message);
+      if (animate && mode === 'live' && !seeking) setTimeout(() => item.scrollIntoView({ behavior: 'smooth', block: 'center' }), 180);
+    }
+
+    function hideItem(item) {
+      if (!item.classList.contains('visible')) return;
+      item.classList.remove('visible', 'enter');
+      const message = item.querySelector('.message[data-text]');
+      if (message) resetMessage(message);
+    }
+
+    function setNameResolved(resolved, animate) {
+      const target = resolved ? 'Sofía Martínez' : 'Sin nombre';
+      if (nameValue.textContent === target) return;
+      if (!animate) { nameValue.textContent = target; nameChip.classList.remove('updating'); return; }
+      nameChip.classList.remove('updating');
+      void nameChip.offsetWidth;
+      nameChip.classList.add('updating');
+      setTimeout(() => { nameValue.textContent = target; }, 300);
+      setTimeout(() => nameChip.classList.remove('updating'), 720);
+    }
+
+    function setToolState(id, done, instant = false) {
+      const tool = document.getElementById(id);
+      if (!tool) return;
+      const desired = done ? '1' : '0';
+      if (!instant && tool.dataset.done === desired) return;
+      tool.dataset.done = desired;
+
+      const status = document.getElementById(id + 'Status');
+      const title = document.getElementById(id + 'Title');
+      tool.classList.toggle('done', done);
+      if (status) status.classList.toggle('loading', !done);
+
+      if (id === 'tool1') {
+        title.textContent = done ? 'Reserva encontrada' : 'Consultando la reserva de Sofía Martínez';
+        status.textContent = done ? 'Disponibilidad consultada · completado' : 'Buscando disponibilidad y condiciones';
+      } else {
+        title.textContent = done ? 'Reserva actualizada a las 5:30 p. m.' : 'Actualizando hora de llegada';
+        status.textContent = done ? 'Cambio guardado · completado' : 'Guardando el cambio';
+      }
+
+      const loader = tool.querySelector('.loader');
+      const mark = tool.querySelector('.done-mark');
+      if (instant) {
+        if (loader) loader.style.display = done ? 'none' : '';
+        if (mark) { mark.style.opacity = done ? '1' : '0'; mark.style.transform = done ? 'scale(1)' : 'scale(.3)'; }
+      } else {
+        if (loader) loader.style.display = '';
+        if (mark) { mark.style.opacity = ''; mark.style.transform = ''; }
+        if (done) setTimeout(() => { if (tool.dataset.done === '1' && loader) loader.style.display = 'none'; }, 420);
+      }
+    }
+
+    function syncTimeline(now, animateCrossings = true) {
+      const movingForward = now >= previousTimelineTime;
+      timelineItems.forEach(item => {
+        const at = Number(item.dataset.at || 0);
+        const shouldShow = now >= at;
+        if (shouldShow) {
+          const crossed = movingForward && previousTimelineTime < at && now >= at;
+          showItem(item, animateCrossings && crossed);
+        } else hideItem(item);
+      });
+
+      const crossedName = movingForward && previousTimelineTime < 11.2 && now >= 11.2;
+      setNameResolved(now >= 11.2, animateCrossings && crossedName);
+
+      const reconnected = now >= 14.9;
+      reconnect.classList.toggle('reconnected', reconnected);
+      reconnectText.textContent = reconnected ? 'Reconectado · 2 s' : 'Reconectando';
+      setToolState('tool1', now >= 19.2, !animateCrossings);
+      setToolState('tool2', now >= 31.5, !animateCrossings);
+
+      const hasMessages = [...document.querySelectorAll('.message-row.timeline-item')].some(item => now >= Number(item.dataset.at || 0));
+      conversationEmpty.hidden = hasMessages;
+      previousTimelineTime = now;
+    }
+
+    function maxSeekTime() { return mode === 'live' && !callEnded ? liveEdge : DEMO_DURATION; }
+
+    function renderPlayer() {
+      const available = Math.max(.001, maxSeekTime());
+      const ratio = mode === 'live' && liveEdge < .001 ? 1 : clamp01(current / available);
+      const atLiveEdge = mode === 'live' && Math.abs(current - liveEdge) < .14;
+
+      waveShell.style.setProperty('--progress', `${ratio * 100}%`);
+      currentTimeEl.textContent = formatTime(current);
+      durationEl.textContent = formatTime(maxSeekTime());
+      waveShell.setAttribute('aria-valuemax', Math.round(maxSeekTime()));
+      waveShell.setAttribute('aria-valuenow', Math.round(current));
+      waveShell.classList.toggle('at-live-edge', atLiveEdge);
+      startBtn.disabled = current <= .01;
+      liveBtn.disabled = mode !== 'live' || callEnded || atLiveEdge;
+      liveBtn.hidden = mode !== 'live' || callEnded;
+      renderWave();
+    }
+
+    function seek(value) {
+      current = Math.max(0, Math.min(maxSeekTime(), value));
+      const old = previousTimelineTime;
+      previousTimelineTime = Math.min(old, current);
+      syncTimeline(current, false);
+      renderPlayer();
+    }
+
+    function jumpToLive() {
+      if (mode !== 'live' || callEnded) return;
+      const old = previousTimelineTime;
+      current = liveEdge;
+      previousTimelineTime = Math.min(old, current);
+      syncTimeline(current, false);
+      renderPlayer();
+    }
+
+    function seekFromPointer(clientX) {
+      const rect = waveShell.getBoundingClientRect();
+      const ratio = clamp01((clientX - rect.left) / rect.width);
+      seek(ratio * maxSeekTime());
+    }
+
+    function beginSeek(e) {
+      seeking = true;
+      waveShell.classList.add('seeking');
+      waveShell.setPointerCapture(e.pointerId);
+      seekFromPointer(e.clientX);
+    }
+
+    let seekRevealTimer;
+    function endSeek(e) {
+      seeking = false;
+      if (waveShell.hasPointerCapture(e.pointerId)) waveShell.releasePointerCapture(e.pointerId);
+      clearTimeout(seekRevealTimer);
+      seekRevealTimer = setTimeout(() => waveShell.classList.remove('seeking'), 420);
+    }
+
+    function resetConversation() {
+      timelineItems.forEach(hideItem);
+      messages.forEach(resetMessage);
+      setToolState('tool1', false, true);
+      setToolState('tool2', false, true);
+      nameValue.textContent = 'Sin nombre';
+      nameChip.classList.remove('updating');
+      reconnect.classList.remove('reconnected');
+      reconnectText.textContent = 'Reconectando';
+      conversationEmpty.hidden = false;
+      previousTimelineTime = 0;
+    }
+
+    function setMode(next) {
+      mode = next;
+      document.querySelectorAll('.demo-switcher button').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
+      appContent.hidden = mode === 'empty' || mode === 'error';
+      emptyState.hidden = mode !== 'empty';
+      errorState.hidden = mode !== 'error';
+
+      if (mode === 'empty' || mode === 'error') {
+        setPlaying(false);
+        lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+        return;
+      }
+
+      resetConversation();
+      current = 0;
+      callEnded = false;
+      endIconWrap.hidden = true;
+      setPlaying(true);
+
+      if (mode === 'live') {
+        liveEdge = 0;
+        liveSamples.length = 0;
+        sampleAccumulator = 0;
+        screenTitle.textContent = 'Llamada en tiempo real';
+        modeChip.className = 'chip mode-live';
+        modeChipText.textContent = 'EN VIVO';
+        liveDot.hidden = false;
+        liveSamples.push(.025);
+      } else {
+        liveEdge = DEMO_DURATION;
+        screenTitle.textContent = 'Grabación de llamada';
+        modeChip.className = 'chip mode-recorded';
+        modeChipText.textContent = 'GRABADA';
+        liveDot.hidden = true;
+        endIconWrap.hidden = true;
+        renderWave();
+      }
+
+      renderPlayer();
+      lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    }
+
+    function finalizeCall() {
+      if (callEnded) return;
+      callEnded = true;
+      liveEdge = DEMO_DURATION;
+      current = DEMO_DURATION;
+      setPlaying(false);
+      screenTitle.textContent = 'Llamada finalizada';
+      modeChip.className = 'chip mode-recorded';
+      modeChipText.textContent = 'FINALIZADA';
+      liveDot.hidden = true;
+      endIconWrap.hidden = false;
+      previousTimelineTime = Math.min(previousTimelineTime, DEMO_DURATION - .001);
+      syncTimeline(DEMO_DURATION, true);
+      renderPlayer();
+      lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    }
+
+    playBtn.addEventListener('click', () => setPlaying(!playing));
+    startBtn.addEventListener('click', () => seek(0));
+    liveBtn.addEventListener('click', jumpToLive);
+    document.getElementById('rewindBtn').addEventListener('click', () => seek(current - 10));
+    document.getElementById('forwardBtn').addEventListener('click', () => seek(current + 10));
+
+    waveShell.addEventListener('pointerdown', beginSeek);
+    waveShell.addEventListener('pointermove', e => { if (waveShell.hasPointerCapture(e.pointerId)) seekFromPointer(e.clientX); });
+    waveShell.addEventListener('pointerup', endSeek);
+    waveShell.addEventListener('pointercancel', endSeek);
+
+    waveShell.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); seek(current - 5); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); seek(current + 5); }
+      if (e.key === 'Home') { e.preventDefault(); seek(0); }
+      if (e.key === 'End') { e.preventDefault(); seek(maxSeekTime()); }
+      if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
+    });
+
+    document.querySelectorAll('.demo-switcher button').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+
+    function tick(now) {
+      const dt = Math.min(.05, (now - last) / 1000);
+      last = now;
+
+      if (mode === 'live' && !callEnded) {
+        const wasAtEdge = Math.abs(current - liveEdge) < .14;
+        const previousEdge = liveEdge;
+        liveEdge = Math.min(DEMO_DURATION, liveEdge + dt);
+
+        sampleAccumulator += dt;
+        while (sampleAccumulator >= SAMPLE_INTERVAL && liveEdge < DEMO_DURATION) {
+          sampleAccumulator -= SAMPLE_INTERVAL;
+          const sampleTime = Math.max(previousEdge, liveEdge - sampleAccumulator);
+          if (externalAnalyser && analyserBins) {
+            pushAmplitude(voiceLevelFromAnalyser(externalAnalyser, analyserBins, externalSampleRate));
+          } else {
+            pushFrequencyFrame(demoFrequencyFrame(sampleTime), 16000);
+          }
+        }
+
+        if (playing && !seeking) {
+          if (wasAtEdge) current = liveEdge;
+          else current = Math.min(liveEdge, current + dt);
+        }
+
+        syncTimeline(current, true);
+        renderPlayer();
+
+        if (liveEdge >= DEMO_DURATION - .0001) finalizeCall();
+      } else if (mode === 'recorded' && playing && !seeking) {
+        const prev = current;
+        current = Math.min(DEMO_DURATION, current + dt);
+        previousTimelineTime = prev;
+        syncTimeline(current, true);
+        renderPlayer();
+        if (current >= DEMO_DURATION) setPlaying(false);
+      } else if (mode === 'live' && callEnded && playing && !seeking) {
+        const prev = current;
+        current = Math.min(DEMO_DURATION, current + dt);
+        previousTimelineTime = prev;
+        syncTimeline(current, true);
+        renderPlayer();
+        if (current >= DEMO_DURATION) setPlaying(false);
+      } else if (mode === 'live' && callEnded) {
+        renderPlayer();
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    new ResizeObserver(() => renderWave()).observe(waveCanvas);
+    seedRecordedWaveform();
+    lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    setMode('live');
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

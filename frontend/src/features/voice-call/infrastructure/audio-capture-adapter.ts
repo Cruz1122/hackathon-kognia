@@ -5,6 +5,47 @@ type CaptureHandlers = {
   onError: (message: string) => void;
 };
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function goertzel(samples: ArrayLike<number>, sampleRate: number, freq: number): number {
+  const n = samples.length;
+  const omega = (2 * Math.PI * freq) / sampleRate;
+  const coeff = 2 * Math.cos(omega);
+  let s0 = 0;
+  let s1 = 0;
+  let s2 = 0;
+  for (let i = 0; i < n; i += 1) {
+    s0 = samples[i] + coeff * s1 - s2;
+    s2 = s1;
+    s1 = s0;
+  }
+  return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - coeff * s1 * s2)) / n;
+}
+
+export function voiceLevelFromSamples(samples: ArrayLike<number>, sampleRate: number): number {
+  const n = samples.length;
+  if (n < 32) return 0.04;
+  let energy = 0;
+  let crossings = 0;
+  let previous = samples[0];
+  for (let i = 0; i < n; i += 1) {
+    const sample = samples[i];
+    energy += sample * sample;
+    if ((previous >= 0) !== (sample >= 0)) crossings += 1;
+    previous = sample;
+  }
+  const rms = Math.sqrt(energy / n);
+  if (rms < 0.003) return clamp01(rms * 14);
+  let bands = 0;
+  for (const hz of [120, 240, 500, 900, 1600, 2600]) bands += goertzel(samples, sampleRate, hz);
+  const freq = Math.sqrt(bands / 6);
+  const pitchHz = (crossings * sampleRate) / (2 * n);
+  const pitch = clamp01((Math.min(500, Math.max(70, pitchHz)) - 70) / 430);
+  return clamp01(Math.max(rms * 9, freq * 4.4) * (0.45 + 0.55 * pitch));
+}
+
 export class AudioCaptureAdapter {
   private recorder?: MediaRecorder;
   private stream?: MediaStream;
@@ -13,6 +54,8 @@ export class AudioCaptureAdapter {
   private request?: AbortController;
   private heardSpeech = false;
   private lastSpeechAt = 0;
+  private firstSpeechAt = 0;
+  private speechHits = 0;
   private discarding = false;
   private handlers?: CaptureHandlers;
   private captureGeneration = 0;
@@ -21,48 +64,134 @@ export class AudioCaptureAdapter {
   private monitorTimer?: number;
   private monitorGeneration = 0;
   private monitorHits = 0;
+  private speechAnalyser?: AnalyserNode;
+  private processor?: ScriptProcessorNode;
+  private lastLevel = 0.04;
+  private workletNode?: AudioWorkletNode;
+  private captureSource?: MediaStreamAudioSourceNode;
+  private pcmTail = new Int16Array(0);
+  private pcmCallback?: (frame: Int16Array) => void;
+  private workletReady?: Promise<void>;
+  private levelListener?: (level: number) => void;
+  private maxRecordTimer?: number;
 
   constructor(private readonly transcribeUrl: string) {}
+
+  primeContext(): void {
+    if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContext();
+    void this.audioContext.resume();
+  }
+
+  voiceLevel(): number {
+    return this.lastLevel;
+  }
+
+  onLevel(listener: ((level: number) => void) | undefined): void {
+    this.levelListener = listener;
+  }
+
+  frequencyAnalyser(): { analyser: AnalyserNode; sampleRate: number } | undefined {
+    if (!this.audioContext || this.audioContext.state === 'closed' || !this.speechAnalyser) return undefined;
+    if (this.audioContext.state === 'suspended') void this.audioContext.resume();
+    return { analyser: this.speechAnalyser, sampleRate: this.audioContext.sampleRate };
+  }
+
+  private micConstraints(): MediaStreamConstraints {
+    return {
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+    };
+  }
+
+  private attachSpeechAnalyser(): void {
+    if (!this.stream) return;
+    this.primeContext();
+    const context = this.audioContext;
+    if (!context) return;
+    if (this.processor && this.speechAnalyser && context.state !== 'closed') {
+      void context.resume();
+      return;
+    }
+    const source = context.createMediaStreamSource(this.stream);
+    this.speechAnalyser = context.createAnalyser();
+    this.speechAnalyser.fftSize = 2048;
+    this.speechAnalyser.smoothingTimeConstant = 0.18;
+    this.speechAnalyser.minDecibels = -90;
+    this.speechAnalyser.maxDecibels = -25;
+    source.connect(this.speechAnalyser);
+    const mute = context.createGain();
+    mute.gain.value = 0.0001;
+    this.speechAnalyser.connect(mute);
+    mute.connect(context.destination);
+    this.processor = context.createScriptProcessor(1024, 1, 1);
+    source.connect(this.processor);
+    this.processor.connect(mute);
+    this.processor.onaudioprocess = (event) => {
+      const copy = new Float32Array(event.inputBuffer.getChannelData(0));
+      this.lastLevel = voiceLevelFromSamples(copy, context.sampleRate);
+      this.levelListener?.(this.lastLevel);
+    };
+    void context.resume();
+  }
+
+  setTrackEnabled(enabled: boolean): void {
+    this.stream?.getAudioTracks().forEach((track) => {
+      track.enabled = enabled;
+    });
+    if (!enabled) this.stop();
+  }
 
   async start(handlers: CaptureHandlers): Promise<boolean> {
     if (this.recorder) return false;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      handlers.onError('Este navegador no permite capturar audio. Usa el input textual.');
+      handlers.onError('Este navegador no permite capturar audio.');
       return false;
     }
     const generation = ++this.captureGeneration;
     try {
       this.handlers = handlers;
       this.discarding = false;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (generation !== this.captureGeneration || this.discarding) {
-        stream.getTracks().forEach((track) => track.stop());
-        return false;
+      if (!this.stream) {
+        const stream = await navigator.mediaDevices.getUserMedia(this.micConstraints());
+        if (generation !== this.captureGeneration || this.discarding) {
+          stream.getTracks().forEach((track) => track.stop());
+          return false;
+        }
+        this.stream = stream;
       }
-      this.stream = stream;
+      this.stream.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
       this.recorder = new MediaRecorder(this.stream, { mimeType });
       this.heardSpeech = false;
-      this.lastSpeechAt = performance.now();
+      this.speechHits = 0;
+      this.lastSpeechAt = 0;
+      this.firstSpeechAt = 0;
       const recorder = this.recorder;
       const chunks: Blob[] = [];
       recorder.ondataavailable = (event) => {
-        if (generation === this.captureGeneration && recorder === this.recorder && event.data.size) chunks.push(event.data);
+        if (generation !== this.captureGeneration || recorder !== this.recorder || !event.data.size) return;
+        chunks.push(event.data);
+        if (!this.heardSpeech && chunks.length > 8) chunks.splice(0, chunks.length - 8);
       };
       recorder.onerror = () => this.handleRecorderError(generation, recorder);
       this.recorder.onstop = () => {
         if (!this.discarding && generation === this.captureGeneration && recorder === this.recorder) {
           const blob = new Blob(chunks, { type: mimeType });
+          this.recorder = undefined;
+          this.pauseSilenceDetection();
           if (handlers.onAudio) {
-            this.recorder = undefined;
-            this.stopSilenceDetection();
-            this.cleanupTracks();
-            if (blob.size) handlers.onAudio(blob, mimeType);
+            if (blob.size > 1200 && this.heardSpeech) handlers.onAudio(blob, mimeType);
             else handlers.onEnd();
           } else void this.transcribe(handlers, mimeType, generation, chunks);
         }
       };
-      this.recorder.start(100);
+      this.recorder.start(200);
       this.startSilenceDetection(handlers);
       return true;
     } catch (error) {
@@ -75,17 +204,155 @@ export class AudioCaptureAdapter {
         recorder.stop();
       }
       this.recorder = undefined;
-      this.stopSilenceDetection();
+      this.teardownAnalyser();
       this.cleanupTracks();
       this.handlers = undefined;
-      handlers.onError(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Permiso de micrófono denegado. Usa el input textual.' : 'No se pudo abrir el micrófono.');
+      handlers.onError(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Permiso de micrófono denegado.' : 'No se pudo abrir el micrófono.');
       return false;
     }
   }
 
   stop(): void {
+    if (this.maxRecordTimer !== undefined) {
+      window.clearTimeout(this.maxRecordTimer);
+      this.maxRecordTimer = undefined;
+    }
+    this.pauseSilenceDetection();
     if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
-    this.stopSilenceDetection();
+  }
+
+  cancelRecording(): void {
+    this.discarding = true;
+    if (this.maxRecordTimer !== undefined) {
+      window.clearTimeout(this.maxRecordTimer);
+      this.maxRecordTimer = undefined;
+    }
+    this.pauseSilenceDetection();
+    const recorder = this.recorder;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = null;
+      recorder.onerror = null;
+      recorder.stop();
+    }
+    this.recorder = undefined;
+    this.handlers = undefined;
+    this.discarding = false;
+  }
+
+  async startPcmStream(onFrame: (frame: Int16Array) => void): Promise<boolean> {
+    this.primeContext();
+    const context = this.audioContext;
+    if (!context || !navigator.mediaDevices?.getUserMedia) return false;
+    try {
+      await context.resume();
+      if (!this.stream) this.stream = await navigator.mediaDevices.getUserMedia(this.micConstraints());
+      this.stream.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
+      this.pcmCallback = onFrame;
+      this.pcmTail = new Int16Array(0);
+      if (this.workletNode || this.processor) return true;
+      if (!this.workletReady) {
+        const source = [
+          'class PcmCaptureProcessor extends AudioWorkletProcessor {',
+          '  process(inputs) {',
+          '    const channel = inputs[0] && inputs[0][0];',
+          '    if (channel && channel.length) this.port.postMessage(channel.slice());',
+          '    return true;',
+          '  }',
+          '}',
+          "registerProcessor('pcm-capture', PcmCaptureProcessor);",
+        ].join('\n');
+        const blob = new Blob([source], { type: 'application/javascript' });
+        this.workletReady = context.audioWorklet.addModule(URL.createObjectURL(blob));
+      }
+      try {
+        await this.workletReady;
+      } catch {
+        this.workletReady = undefined;
+      }
+      this.captureSource = context.createMediaStreamSource(this.stream);
+      const mute = context.createGain();
+      mute.gain.value = 0.0001;
+      mute.connect(context.destination);
+      if (this.workletReady) {
+        this.workletNode = new AudioWorkletNode(context, 'pcm-capture');
+        this.captureSource.connect(this.workletNode);
+        this.workletNode.connect(mute);
+        this.workletNode.port.onmessage = (event) => {
+          if (!(event.data instanceof Float32Array)) return;
+          this.pushPcmFrame(event.data, context.sampleRate);
+        };
+      } else {
+        this.processor = context.createScriptProcessor(1024, 1, 1);
+        this.captureSource.connect(this.processor);
+        this.processor.connect(mute);
+        this.processor.onaudioprocess = (event) => {
+          this.pushPcmFrame(event.inputBuffer.getChannelData(0), context.sampleRate);
+        };
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  stopPcmStream(): void {
+    this.pcmCallback = undefined;
+    this.pcmTail = new Int16Array(0);
+    if (this.workletNode) {
+      this.workletNode.port.onmessage = null;
+      this.workletNode.disconnect();
+    }
+    if (this.processor) {
+      this.processor.onaudioprocess = null;
+      this.processor.disconnect();
+    }
+    this.captureSource?.disconnect();
+    this.workletNode = undefined;
+    this.processor = undefined;
+    this.captureSource = undefined;
+  }
+
+  private pushPcmFrame(input: Float32Array, inputRate: number): void {
+    const ratio = inputRate / 16000;
+    const length = Math.max(1, Math.floor(input.length / ratio));
+    const converted = new Int16Array(length);
+    const floats = new Float32Array(length);
+    for (let i = 0; i < length; i += 1) {
+      const sample = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)] ?? 0));
+      floats[i] = sample;
+      converted[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    }
+    this.lastLevel = voiceLevelFromSamples(floats, 16000);
+    const merged = new Int16Array(this.pcmTail.length + converted.length);
+    merged.set(this.pcmTail);
+    merged.set(converted, this.pcmTail.length);
+    const frameSize = 1600;
+    let offset = 0;
+    while (merged.length - offset >= frameSize) {
+      const frame = merged.slice(offset, offset + frameSize);
+      this.pcmCallback?.(frame);
+      offset += frameSize;
+    }
+    this.pcmTail = merged.slice(offset);
+  }
+
+  async ensureSession(): Promise<boolean> {
+    this.primeContext();
+    if (this.stream && this.processor && this.audioContext?.state !== 'closed') {
+      await this.audioContext.resume();
+      return true;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) return false;
+    try {
+      if (!this.stream) this.stream = await navigator.mediaDevices.getUserMedia(this.micConstraints());
+      this.attachSpeechAnalyser();
+      if (this.audioContext?.state === 'suspended') await this.audioContext.resume();
+      return Boolean(this.processor || this.speechAnalyser);
+    } catch {
+      return false;
+    }
   }
 
   abort(): void {
@@ -93,9 +360,13 @@ export class AudioCaptureAdapter {
     this.discarding = true;
     this.request?.abort();
     this.request = undefined;
+    if (this.maxRecordTimer !== undefined) {
+      window.clearTimeout(this.maxRecordTimer);
+      this.maxRecordTimer = undefined;
+    }
     if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
     this.recorder = undefined;
-    this.stopSilenceDetection();
+    this.teardownAnalyser();
     this.cleanupTracks();
     this.handlers = undefined;
     this.stopBargeIn();
@@ -137,31 +408,48 @@ export class AudioCaptureAdapter {
 
   private startSilenceDetection(handlers: CaptureHandlers): void {
     if (!this.stream) return;
+    this.pauseSilenceDetection();
     try {
-      this.audioContext = new AudioContext();
-      const analyser = this.audioContext.createAnalyser();
-      analyser.fftSize = 512;
-      this.audioContext.createMediaStreamSource(this.stream).connect(analyser);
-      const data = new Uint8Array(analyser.fftSize);
+      this.attachSpeechAnalyser();
+      const analyser = this.speechAnalyser;
+      const data = analyser ? new Uint8Array(analyser.fftSize) : undefined;
       const check = () => {
-        analyser.getByteTimeDomainData(data);
-        const rms = Math.sqrt(data.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / data.length);
-        if (rms > 0.035) { this.heardSpeech = true; this.lastSpeechAt = performance.now(); }
-        if (this.heardSpeech && performance.now() - this.lastSpeechAt > 900) this.stop();
-        else this.silenceTimer = window.setTimeout(check, 100);
+        let rms = 0;
+        if (analyser && data) {
+          analyser.getByteTimeDomainData(data);
+          rms = Math.sqrt(data.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / data.length);
+        }
+        const speaking = rms > 0.07 || this.lastLevel > 0.14;
+        if (speaking) {
+          this.speechHits += 1;
+          this.lastSpeechAt = performance.now();
+          if (!this.heardSpeech && this.speechHits >= 4) {
+            this.heardSpeech = true;
+            this.firstSpeechAt = this.lastSpeechAt;
+          }
+        } else {
+          this.speechHits = 0;
+        }
+        const now = performance.now();
+        if (this.heardSpeech && (now - this.lastSpeechAt > 900 || now - this.firstSpeechAt > 15000)) this.stop();
+        else this.silenceTimer = window.setTimeout(check, 80);
       };
-      this.silenceTimer = window.setTimeout(check, 100);
+      this.silenceTimer = window.setTimeout(check, 80);
     } catch {
-      // Recording still works when AudioContext/VAD is unavailable; stop manually on navigation.
-      handlers.onError('Detección automática de silencio no disponible; usa el input textual.');
+      handlers.onError('Detección automática de silencio no disponible.');
     }
+  }
+
+  private pauseSilenceDetection(): void {
+    if (this.silenceTimer !== undefined) window.clearTimeout(this.silenceTimer);
+    this.silenceTimer = undefined;
   }
 
   private async transcribe(handlers: CaptureHandlers, mimeType: string, generation: number, chunks: Blob[]): Promise<void> {
     if (generation !== this.captureGeneration || this.discarding) return;
     const blob = new Blob(chunks, { type: mimeType });
     this.recorder = undefined;
-    this.stopSilenceDetection();
+    this.teardownAnalyser();
     this.cleanupTracks();
     if (!blob.size) { handlers.onEnd(); return; }
     const request = new AbortController();
@@ -172,7 +460,7 @@ export class AudioCaptureAdapter {
       const payload = await response.json() as { text?: unknown };
       const text = typeof payload.text === 'string' ? payload.text.trim() : '';
       if (generation === this.captureGeneration && text) handlers.onResult({ transcript: text, isFinal: true });
-      else if (generation === this.captureGeneration && !this.discarding) handlers.onError('Whisper no detectó una frase.');
+      else if (generation === this.captureGeneration && !this.discarding) handlers.onError('No se detectó una frase.');
     } catch (error) {
       if (generation === this.captureGeneration && !this.discarding && !(error instanceof DOMException && error.name === 'AbortError')) handlers.onError('No se pudo transcribir el audio.');
     } finally {
@@ -188,7 +476,7 @@ export class AudioCaptureAdapter {
     if (generation !== this.captureGeneration || recorder !== this.recorder) return;
     const handlers = this.handlers;
     this.discarding = true;
-    this.stopSilenceDetection();
+    this.teardownAnalyser();
     this.cleanupTracks();
     this.recorder = undefined;
     this.handlers = undefined;
@@ -196,11 +484,19 @@ export class AudioCaptureAdapter {
     handlers?.onEnd();
   }
 
-  private stopSilenceDetection(): void {
-    if (this.silenceTimer !== undefined) window.clearTimeout(this.silenceTimer);
-    this.silenceTimer = undefined;
+  private teardownAnalyser(): void {
+    this.pauseSilenceDetection();
+    if (this.processor) {
+      this.processor.onaudioprocess = null;
+      this.processor.disconnect();
+    }
+    this.processor = undefined;
+    this.stopPcmStream();
+    this.workletReady = undefined;
+    this.lastLevel = 0.04;
     void this.audioContext?.close();
     this.audioContext = undefined;
+    this.speechAnalyser = undefined;
   }
 
   stopBargeIn(): void {

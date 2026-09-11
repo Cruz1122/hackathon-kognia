@@ -1,173 +1,166 @@
 ---
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const source = readFileSync(join(process.cwd(), '..', 'demo-monitoreo'), 'utf8');
+const cannedStart = source.indexOf('<div class="message-row customer timeline-item" data-at="1.0"');
+const cannedEnd = source.indexOf('</section>', source.indexOf('id="callEndedEvent"'));
+const withoutCanned =
+  cannedStart >= 0 && cannedEnd >= 0
+    ? `${source.slice(0, cannedStart)}${source.slice(cannedEnd)}`
+    : source;
+
+const debugControls = `            <div class="controls" aria-label="Controles de llamada">
+              <div class="control-stack">
+                <button class="control" type="button" id="rewindBtn" aria-label="Reiniciar llamada" title="Reiniciar llamada"><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>
+                <span class="control-caption">Reiniciar</span>
+              </div>
+              <div class="control-stack">
+                <button class="control primary" type="button" id="startBtn" aria-label="Empezar llamada" title="Empezar llamada"><i data-lucide="phone" aria-hidden="true"></i></button>
+                <span class="control-caption">Llamar</span>
+              </div>
+              <div class="control-stack">
+                <button class="control" type="button" id="playBtn" aria-label="Pausar llamada" title="Pausar llamada"><i data-lucide="pause" aria-hidden="true"></i></button>
+                <span class="control-caption">Pausa</span>
+              </div>
+            </div>`;
+
+const controlsStart = withoutCanned.indexOf('<div class="controls" aria-label="Controles de reproducción">');
+const liveBtnAt = withoutCanned.indexOf('id="liveBtn"');
+const liveCaptionAt = withoutCanned.indexOf('En vivo', liveBtnAt);
+const liveStackClose = withoutCanned.indexOf('</div>', liveCaptionAt);
+const controlsClose = withoutCanned.indexOf('</div>', liveStackClose + 1);
+const withControls =
+  controlsStart >= 0 && controlsClose > controlsStart
+    ? `${withoutCanned.slice(0, controlsStart)}${debugControls}${withoutCanned.slice(controlsClose + 6)}`
+    : withoutCanned;
+
+const adapted = withControls
+  .replace('const DEMO_DURATION = 36;', 'const DEMO_DURATION = 3600;')
+  .replace(
+    "reconnect.classList.toggle('reconnected', reconnected);",
+    "reconnect?.classList.toggle('reconnected', reconnected);",
+  )
+  .replace(
+    "reconnectText.textContent = reconnected ? 'Reconectado · 2 s' : 'Reconectando';",
+    "if (reconnectText) reconnectText.textContent = reconnected ? 'Reconectado · 2 s' : 'Reconectando';",
+  )
+  .replace(
+    'setNameResolved(now >= 11.2, animateCrossings && crossedName);',
+    '/* live: no resolver el nombre de la demo */',
+  )
+  .replace(/<nav class="demo-switcher"[\s\S]*?<\/nav>/, '')
+  .replace(
+    'function replacePlayIcon(name) {',
+    'function replacePlayIcon(name) { if (window.__liveDebugControls) return;',
+  )
+  .replace(
+    "playBtn.addEventListener('click', () => setPlaying(!playing));",
+    "if (!window.__liveDebugControls) playBtn.addEventListener('click', () => setPlaying(!playing));",
+  )
+  .replace(
+    "startBtn.addEventListener('click', () => seek(0));",
+    "if (!window.__liveDebugControls) startBtn.addEventListener('click', () => seek(0));",
+  )
+  .replace(
+    "liveBtn.addEventListener('click', jumpToLive);",
+    "if (!window.__liveDebugControls) liveBtn.addEventListener('click', jumpToLive);",
+  )
+  .replace(
+    "document.getElementById('rewindBtn').addEventListener('click', () => seek(current - 10));",
+    "if (!window.__liveDebugControls) document.getElementById('rewindBtn').addEventListener('click', () => seek(current - 10));",
+  )
+  .replace(
+    "document.getElementById('forwardBtn').addEventListener('click', () => seek(current + 10));",
+    "if (!window.__liveDebugControls) document.getElementById('forwardBtn')?.addEventListener('click', () => seek(current + 10));",
+  )
+  .replace(
+    'liveBtn.disabled = mode !== \'live\' || callEnded || atLiveEdge;',
+    'if (liveBtn) liveBtn.disabled = mode !== \'live\' || callEnded || atLiveEdge;',
+  )
+  .replace(
+    'liveBtn.hidden = mode !== \'live\' || callEnded;',
+    'if (liveBtn) liveBtn.hidden = mode !== \'live\' || callEnded;',
+  )
+  .replace(
+    'startBtn.disabled = current <= .01;',
+    'if (!window.__liveDebugControls) startBtn.disabled = current <= .01;',
+  )
+  .replace(
+    `      disconnectAnalyser() {
+        externalAnalyser = null;
+        analyserBins = null;
+      },`,
+    `      disconnectAnalyser() {
+        externalAnalyser = null;
+        analyserBins = null;
+      },
+      setPlaying,
+      resetLiveWave() {
+        liveSamples.length = 0;
+        liveSamples.push(.025);
+        liveEdge = 0;
+        current = 0;
+        sampleAccumulator = 0;
+        callEnded = false;
+        renderPlayer();
+      },`,
+  )
+  .replace(
+    `        liveEdge = Math.min(DEMO_DURATION, liveEdge + dt);
+
+        sampleAccumulator += dt;
+        while (sampleAccumulator >= SAMPLE_INTERVAL && liveEdge < DEMO_DURATION) {
+          sampleAccumulator -= SAMPLE_INTERVAL;
+          const sampleTime = Math.max(previousEdge, liveEdge - sampleAccumulator);
+          if (externalAnalyser && analyserBins) {
+            pushAmplitude(voiceLevelFromAnalyser(externalAnalyser, analyserBins, externalSampleRate));
+          } else {
+            pushFrequencyFrame(demoFrequencyFrame(sampleTime), 16000);
+          }
+        }`,
+    `        const frozen = window.__liveDebugControls && !playing;
+        if (!frozen) liveEdge = Math.min(DEMO_DURATION, liveEdge + dt);
+        if (frozen) sampleAccumulator = 0;
+        else sampleAccumulator += dt;
+        while (!frozen && sampleAccumulator >= SAMPLE_INTERVAL && liveEdge < DEMO_DURATION) {
+          sampleAccumulator -= SAMPLE_INTERVAL;
+          const sampleTime = Math.max(previousEdge, liveEdge - sampleAccumulator);
+          if (externalAnalyser && analyserBins) {
+            try {
+              externalAnalyser.getByteFrequencyData(analyserBins);
+              pushFrequencyFrame(analyserBins, externalSampleRate);
+            } catch {
+              try { pushAmplitude(voiceLevelFromAnalyser(externalAnalyser, analyserBins, externalSampleRate)); }
+              catch { pushAmplitude(.04); }
+            }
+          } else if (!window.__liveDebugControls) {
+            pushFrequencyFrame(demoFrequencyFrame(sampleTime), 16000);
+          }
+        }`,
+  )
+  .replace(
+    "setMode('live');\n    requestAnimationFrame(tick);",
+    "setMode('live');\n    if (window.__liveDebugControls) setPlaying(false);\n    requestAnimationFrame(tick);",
+  );
+
+const head = adapted.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
+const body = adapted.match(/<body>([\s\S]*?)<\/body>/i)?.[1] ?? '';
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 ---
-
 <html lang="es">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width" />
-    <meta name="description" content="Demo de conversación por voz con el agente Kognia" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <title>Kognia · Voice call demo</title>
-  </head>
-  <body>
-    <svg aria-hidden="true" class="goo-defs">
-      <defs>
-        <filter id="ui-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
-          <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 22 -10" result="goo" />
-          <feComposite in="SourceGraphic" in2="goo" operator="atop" />
-        </filter>
-      </defs>
-    </svg>
-
-    <main class="shell" data-api-url={apiUrl}>
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Kognia · voice architecture lab</p>
-          <h1>Una llamada, sin teléfono.</h1>
-        </div>
-        <span id="call-state" class="state-pill" aria-live="polite">Listo</span>
-      </header>
-
-      <section class="call-card" aria-label="Demo de llamada por voz">
-        <div class="call-orb goo-layer" aria-hidden="true"><span id="orb-dot"></span></div>
-        <p id="call-duration" class="duration">00:00</p>
-        <p id="warning" class="warning" role="status"></p>
-        <div class="transcript-panel">
-          <p class="label">Tú</p>
-          <p id="partial-transcript" class="partial">Pulsa iniciar y habla…</p>
-          <p id="last-user-message" class="message"></p>
-          <p class="label assistant-label">Agente</p>
-          <p id="assistant-text" class="assistant-message" aria-live="polite"></p>
-        </div>
-        <div class="controls">
-          <button id="start-call" class="button primary" type="button">Iniciar llamada</button>
-          <button id="interrupt-call" class="button danger" type="button" hidden>Interrumpir</button>
-          <button id="mute-call" class="button secondary" type="button" disabled>Silenciar micrófono</button>
-          <button id="end-call" class="button secondary" type="button" disabled>Colgar</button>
-        </div>
-      </section>
-
-      <section class="fallback-card" aria-label="Entrada textual alternativa">
-        <label for="text-input">Escribe para simular un turno</label>
-        <div class="text-row">
-          <input id="text-input" type="text" autocomplete="off" placeholder="Hola, ¿en qué me puedes ayudar?" />
-          <button id="send-text" class="button primary" type="button">Enviar</button>
-        </div>
-      </section>
-
-      <details class="debug-card">
-        <summary>Pipeline y métricas</summary>
-        <div class="debug-grid">
-          <div><span>STT latency</span><strong id="metric-stt">—</strong></div>
-          <div><span>LLM TTFT</span><strong id="metric-ttft">—</strong></div>
-          <div><span>First TTS chunk</span><strong id="metric-chunk">—</strong></div>
-          <div><span>Speech start</span><strong id="metric-speech">—</strong></div>
-          <div><span>Perceived latency</span><strong id="metric-e2e">—</strong></div>
-          <div><span>Chunks</span><strong id="metric-count">0</strong></div>
-        </div>
-        <p class="pipeline">MIC <b>→</b> STT <b>→</b> AGENT STREAM <b>→</b> CHUNKER <b>→</b> TTS</p>
-        <label for="voice-select">Voz del navegador</label>
-        <select id="voice-select"><option value="">Automática por idioma</option></select>
-      </details>
-    </main>
-
-    <script>
-      import { VoiceCallController } from '../features/voice-call/application/voice-call-controller';
-      import { AgentStreamAdapter } from '../features/voice-call/infrastructure/agent-stream-adapter';
-      import type { VoiceSnapshot } from '../features/voice-call/domain/types';
-
-      const root = document.querySelector<HTMLElement>('[data-api-url]');
-      if (!root) throw new Error('Voice call root not found');
-      const controller = new VoiceCallController(new AgentStreamAdapter(root.dataset.apiUrl ?? 'http://localhost:18474'), root.dataset.apiUrl ?? 'http://localhost:18474');
-      const $ = <T extends HTMLElement>(id: string) => document.querySelector<T>(`#${id}`)!;
-      const elapsed = (start?: number, end?: number) => start === undefined || end === undefined ? '—' : `${Math.max(0, Math.round(end - start))} ms`;
-
-      const render = (snapshot: VoiceSnapshot) => {
-        const labels: Record<VoiceSnapshot['state'], string> = { idle: 'Listo', connecting: 'Conectando', listening: 'Escuchando', processing: 'Pensando', speaking: 'Hablando', interrupted: 'Interrumpido', ended: 'Finalizada', error: 'Error' };
-        $('call-state').textContent = labels[snapshot.state];
-        $('partial-transcript').textContent = snapshot.partialTranscript || (snapshot.state === 'listening' ? 'Escuchando…' : '');
-        $('last-user-message').textContent = snapshot.lastUserMessage;
-        $('assistant-text').textContent = snapshot.assistantText;
-        $('warning').textContent = snapshot.warning || snapshot.error;
-        $('start-call').toggleAttribute('disabled', !['idle', 'ended', 'error'].includes(snapshot.state));
-        $('end-call').toggleAttribute('disabled', ['idle', 'ended'].includes(snapshot.state));
-        $('mute-call').toggleAttribute('disabled', ['idle', 'ended'].includes(snapshot.state));
-        $('mute-call').textContent = snapshot.muted ? 'Reactivar micrófono' : 'Silenciar micrófono';
-        $('interrupt-call').hidden = !['processing', 'speaking'].includes(snapshot.state);
-        const m = snapshot.metrics;
-        $('metric-stt').textContent = elapsed(m.speechEndedAt, m.transcriptFinalAt);
-        $('metric-ttft').textContent = elapsed(m.agentSentAt, m.firstTokenAt);
-        $('metric-chunk').textContent = elapsed(m.agentSentAt, m.firstChunkAt);
-        $('metric-speech').textContent = elapsed(m.agentSentAt, m.speechStartedAt);
-        $('metric-e2e').textContent = elapsed(m.agentSentAt, m.speechStartedAt);
-        $('metric-count').textContent = String(m.chunks);
-        $('orb-dot').className = snapshot.state;
-      };
-
-      controller.subscribe(render);
-      $('start-call').addEventListener('click', () => controller.start());
-      $('end-call').addEventListener('click', () => controller.end());
-      $('interrupt-call').addEventListener('click', () => controller.interrupt());
-      $('mute-call').addEventListener('click', () => controller.toggleMute());
-      const textInput = $('text-input') as HTMLInputElement;
-      const submitText = () => { controller.submitText(textInput.value); textInput.value = ''; };
-      $('send-text').addEventListener('click', submitText);
-      textInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') submitText(); });
-      const voiceSelect = $('voice-select') as HTMLSelectElement;
-      const refreshVoices = () => controller.voices.forEach((voice) => { if (![...voiceSelect.options].some((option) => option.value === voice.name)) voiceSelect.add(new Option(`${voice.name} · ${voice.lang}`, voice.name)); });
-      voiceSelect.addEventListener('change', () => controller.setVoice(voiceSelect.value));
-      refreshVoices();
-      window.setTimeout(refreshVoices, 500);
-      const durationTimer = window.setInterval(() => {
-        const start = controller.current.callStartedAt;
-        if (start === undefined || ['idle', 'ended'].includes(controller.current.state)) return;
-        const totalSeconds = Math.floor((performance.now() - start) / 1000);
-        $('call-duration').textContent = `${String(Math.floor(totalSeconds / 60)).padStart(2, '0')}:${String(totalSeconds % 60).padStart(2, '0')}`;
-      }, 500);
-      window.addEventListener('pagehide', () => { window.clearInterval(durationTimer); controller.end(); }, { once: true });
-    </script>
-
+    <Fragment set:html={head} />
     <style>
-      :global(*) { box-sizing: border-box; }
-      :global(:root) { --ui-graphite: #414141; --ui-amber: #f7c974; --ui-cream: #faeccf; --ui-paper: #f8f8f8; --font-ui: 'Urbanist', sans-serif; --radius-full: 9999px; }
-      :global(body) { margin: 0; min-height: 100vh; font-family: var(--font-ui); background: var(--ui-paper); color: var(--ui-graphite); }
-      :global(button), :global(input), :global(select) { font: inherit; }
-      :global(button:focus-visible), :global(input:focus-visible), :global(select:focus-visible), :global(summary:focus-visible) { outline: 3px solid var(--ui-graphite); outline-offset: 3px; }
-      .goo-defs { position: absolute; width: 0; height: 0; }
-      .goo-layer { filter: url(#ui-goo); -webkit-filter: url(#ui-goo); }
-      .shell { width: min(960px, calc(100% - 32px)); margin: 0 auto; padding: 52px 0; }
-      .topbar { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
-      .eyebrow, .label { margin: 0; font-size: .78rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
-      h1 { margin: 8px 0 28px; font-size: clamp(2.2rem, 6vw, 5rem); line-height: .95; font-weight: 800; }
-      .state-pill, .button, .call-card, .fallback-card, .debug-card, input, select { border-radius: var(--radius-full); }
-      .state-pill { background: var(--ui-amber); padding: 10px 17px; font-weight: 700; white-space: nowrap; }
-      .call-card { background: var(--ui-cream); padding: 34px; text-align: center; }
-      .call-orb { display: grid; place-items: center; width: 128px; height: 128px; margin: 0 auto 12px; background: var(--ui-amber); border-radius: 50%; }
-      .call-orb span { display: block; width: 34px; height: 34px; border-radius: 50%; background: var(--ui-graphite); transition: transform .3s ease; }
-      .call-orb span.listening { transform: scale(1.35); } .call-orb span.speaking { transform: scale(.75); }
-      .duration { margin: 0 0 22px; font-weight: 700; }
-      .warning { min-height: 1.3em; margin: 8px 0; font-weight: 600; }
-      .transcript-panel { max-width: 680px; margin: 0 auto 26px; padding: 24px; background: var(--ui-paper); border-radius: var(--radius-full); text-align: left; }
-      .partial { min-height: 1.5em; margin: 7px 0 18px; opacity: .65; }
-      .message, .assistant-message { min-height: 1.5em; margin: 7px 0 20px; font-size: 1.15rem; }
-      .assistant-label { color: var(--ui-graphite); } .assistant-message { margin-bottom: 0; }
-      .controls, .text-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-      .button { border: 0; padding: 13px 20px; cursor: pointer; font-weight: 700; transition: transform .18s ease, opacity .18s ease; }
-      .button:hover:not(:disabled) { transform: translateY(-2px); } .button:disabled { cursor: not-allowed; opacity: .45; }
-      .primary { background: var(--ui-graphite); color: var(--ui-paper); } .secondary { background: var(--ui-paper); color: var(--ui-graphite); } .danger { background: var(--ui-amber); color: var(--ui-graphite); }
-      .fallback-card, .debug-card { margin-top: 18px; padding: 20px 24px; background: var(--ui-cream); }
-      .fallback-card label, .debug-card label { display: block; margin-bottom: 10px; font-weight: 700; }
-      input, select { min-width: 0; border: 2px solid var(--ui-graphite); background: var(--ui-paper); color: var(--ui-graphite); padding: 12px 16px; }
-      .text-row input { flex: 1 1 280px; } .text-row .button { flex: 0 0 auto; }
-      summary { cursor: pointer; font-weight: 800; } .debug-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 20px 0; }
-      .debug-grid div { background: var(--ui-paper); border-radius: var(--radius-full); padding: 14px; } .debug-grid span, .debug-grid strong { display: block; } .debug-grid span { font-size: .8rem; opacity: .7; } .debug-grid strong { margin-top: 5px; }
-      .pipeline { font-size: .8rem; font-weight: 700; letter-spacing: .05em; } .pipeline b { color: var(--ui-amber); }
-      @media (max-width: 620px) { .shell { padding: 28px 0; } .topbar { display: block; } .call-card { padding: 24px 14px; } }
-      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
+      .demo-switcher { display: none !important; }
     </style>
+  </head>
+  <body data-api-url={apiUrl}>
+    <script is:inline>window.__liveDebugControls = true;</script>
+    <Fragment set:html={body} />
+    <script>
+      import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
+      bootLiveMonitor(document.body.dataset.apiUrl ?? 'http://localhost:18474');
+    </script>
   </body>
 </html>

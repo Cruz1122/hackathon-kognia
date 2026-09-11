@@ -1,41 +1,92 @@
+import { voiceLevelFromSamples } from './audio-capture-adapter';
+
 export class PcmAudioQueue {
   private context?: AudioContext;
+  private analyser?: AnalyserNode;
   private nextTime = 0;
   private pending = 0;
   private finished = false;
   private generation = 0;
+  private lastLevel = 0.04;
+  private inputRate = 24000;
+  private tail = new Float32Array(0);
+
+  frequencyAnalyser(): { analyser: AnalyserNode; sampleRate: number } | undefined {
+    if (!this.context || !this.analyser) return undefined;
+    if (this.context.state === 'suspended') void this.context.resume();
+    return { analyser: this.analyser, sampleRate: this.context.sampleRate };
+  }
+
+  voiceLevel(): number {
+    return this.lastLevel;
+  }
 
   start(sampleRate: number): void {
     this.cancel();
     this.generation += 1;
-    this.context = new AudioContext({ sampleRate });
-    this.nextTime = this.context.currentTime;
+    this.inputRate = sampleRate || 24000;
+    this.context = new AudioContext();
+    this.analyser = this.context.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.analyser.smoothingTimeConstant = 0.18;
+    this.analyser.minDecibels = -90;
+    this.analyser.maxDecibels = -25;
+    this.analyser.connect(this.context.destination);
+    this.nextTime = 0;
+    this.lastLevel = 0.04;
+    this.tail = new Float32Array(0);
+    void this.context.resume();
   }
 
   enqueue(chunk: Uint8Array, onStart: () => void, onEnd: () => void): void {
-    if (!this.context || chunk.byteLength < 2) return;
-    const generation = this.generation;
-    const usableLength = chunk.byteLength - (chunk.byteLength % 2);
-    const samples = new Int16Array(chunk.buffer, chunk.byteOffset, usableLength / 2);
-    const buffer = this.context.createBuffer(1, samples.length, this.context.sampleRate);
-    const channel = buffer.getChannelData(0);
-    for (let index = 0; index < samples.length; index += 1) channel[index] = samples[index] / 32768;
+    if (!this.context || !this.analyser || chunk.byteLength < 2) return;
+    const copy = new Uint8Array(chunk.byteLength);
+    copy.set(chunk);
+    const usableLength = copy.byteLength - (copy.byteLength % 2);
+    const samples = new Int16Array(copy.buffer, 0, usableLength / 2);
+    const incoming = new Float32Array(samples.length);
+    for (let index = 0; index < samples.length; index += 1) incoming[index] = samples[index] / 32768;
+    const merged = new Float32Array(this.tail.length + incoming.length);
+    merged.set(this.tail);
+    merged.set(incoming, this.tail.length);
+    const minSamples = Math.floor(this.inputRate * 0.08);
+    if (!this.finished && merged.length < minSamples) {
+      this.tail = merged;
+      return;
+    }
+    this.tail = new Float32Array(0);
+    this.play(merged, this.generation, onStart, onEnd);
+  }
+
+  private play(samples: Float32Array, generation: number, onStart: () => void, onEnd: () => void): void {
+    if (!this.context || !this.analyser || samples.length === 0) return;
+    this.lastLevel = voiceLevelFromSamples(samples, this.inputRate);
+    const buffer = this.context.createBuffer(1, samples.length, this.inputRate);
+    buffer.copyToChannel(samples, 0);
     const source = this.context.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.context.destination);
-    const startAt = Math.max(this.context.currentTime + 0.03, this.nextTime);
-    source.start(startAt);
-    this.nextTime = startAt + buffer.duration;
+    source.connect(this.analyser);
+    const now = this.context.currentTime;
+    if (this.nextTime < now + 0.04) this.nextTime = now + 0.08;
+    source.start(this.nextTime);
+    this.nextTime += buffer.duration;
     this.pending += 1;
     if (this.pending === 1) onStart();
     source.onended = () => {
       this.pending -= 1;
-      if (generation === this.generation && this.finished && this.pending === 0) onEnd();
+      if (this.pending === 0) this.lastLevel = 0.04;
+      if (generation === this.generation && this.finished && this.pending === 0 && this.tail.length === 0) onEnd();
     };
   }
 
   finish(onEnd: () => void): void {
     this.finished = true;
+    if (this.tail.length) {
+      const leftover = this.tail;
+      this.tail = new Float32Array(0);
+      this.play(leftover, this.generation, () => undefined, onEnd);
+      return;
+    }
     if (this.pending === 0) onEnd();
   }
 
@@ -43,8 +94,11 @@ export class PcmAudioQueue {
     this.generation += 1;
     void this.context?.close();
     this.context = undefined;
+    this.analyser = undefined;
+    this.lastLevel = 0.04;
     this.pending = 0;
     this.finished = false;
+    this.tail = new Float32Array(0);
   }
 
   get size(): number { return this.pending; }

@@ -1,3 +1,6 @@
+# Models
+backend/models/
+
 # Python
 backend/.venv/
 backend/__pycache__/

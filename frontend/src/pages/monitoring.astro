@@ -1,0 +1,29 @@
+---
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const source = readFileSync(join(process.cwd(), '..', 'demo-monitoreo'), 'utf8');
+const head = source.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
+const body = source.match(/<body>([\s\S]*?)<\/body>/i)?.[1] ?? '';
+---
+<html lang="es">
+  <head><Fragment set:html={head} /></head>
+  <body>
+    <Fragment set:html={body} />
+    <script data-legacy-boot>
+      const scripts = [...document.body.querySelectorAll('script:not([data-legacy-boot])')];
+      for (const node of scripts) {
+        if (node.src) {
+          await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = node.src;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.append(script);
+          });
+        } else if (node.textContent) new Function(node.textContent)();
+        node.remove();
+      }
+    </script>
+  </body>
+</html>
