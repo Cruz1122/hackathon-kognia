@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: hackathon-kognia-backend
+    container_name: hackathon-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      APP_ENV: ${APP_ENV:-test}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:18473}
+      SHERPA_THREADS: ${SHERPA_THREADS:-2}
+    ports:
+      - "18474:18474"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18474/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
