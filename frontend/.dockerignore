@@ -2,6 +2,9 @@
 .gitignore
 .dockerignore
 
+.env
+.env.*
+
 node_modules
 .pnpm-store
 dist
@@ -15,5 +18,3 @@ yarn-error.log*
 .DS_Store
 .vscode
 .idea
-
-# .env NO se ignora: Astro inyecta PUBLIC_* en build time.

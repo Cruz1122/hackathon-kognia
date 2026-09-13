@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: hackathon-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kognia}
+      POSTGRES_USER: ${POSTGRES_USER:-kognia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kognia}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: hackathon-kognia-backend
+    container_name: hackathon-migrate
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      # Always the compose network hostname. Host DATABASE_URL (localhost:15432) must not win here.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kognia}:${POSTGRES_PASSWORD:-kognia}@postgres:5432/${POSTGRES_DB:-kognia}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    command: ["alembic", "-c", "backend/alembic.ini", "upgrade", "head"]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: hackathon-kognia-backend
+    container_name: hackathon-backend
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-test}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kognia}:${POSTGRES_PASSWORD:-kognia}@postgres:5432/${POSTGRES_DB:-kognia}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:18473}
+      SHERPA_THREADS: ${SHERPA_THREADS:-2}
+    ports:
+      - "127.0.0.1:18474:18474"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:18474/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:18474}
+    image: hackathon-kognia-frontend
+    container_name: hackathon-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18473:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -20,8 +20,8 @@
 }
 
     .toast-stage {
-      --toast-color: #22c55e;
-      --icon-color: #ffffff;
+      --toast-color: var(--ui-amber);
+      --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-paper);
 
       position: relative;
@@ -181,30 +181,30 @@
     }
 
     .toast--success {
-      --toast-color: #22c55e;
-      --icon-color: #ffffff;
+      --toast-color: var(--ui-amber);
+      --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-paper);
       --message-color: var(--ui-graphite);
     }
 
     .toast--info {
-      --toast-color: #ffffff;
+      --toast-color: var(--ui-cream);
       --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-graphite);
       --message-color: var(--ui-paper);
     }
 
     .toast--warning {
-      --toast-color: #facc15;
-      --icon-color: #ffffff;
+      --toast-color: var(--ui-amber);
+      --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-paper);
       --message-color: var(--ui-graphite);
     }
 
     .toast--error {
-      --toast-color: #ef4444;
-      --icon-color: #ffffff;
-      --outer-bg: var(--ui-paper);
+      --toast-color: var(--ui-graphite);
+      --icon-color: var(--ui-amber);
+      --outer-bg: var(--ui-cream);
       --message-color: var(--ui-graphite);
     }
 
@@ -479,4 +479,3 @@
         transform: none;
       }
     }
-  

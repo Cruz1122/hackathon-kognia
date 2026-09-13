@@ -1,4 +1,6 @@
 ---
+const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
+import '../styles/toast.css';
 ---
 <html lang="es">
   <head>
@@ -696,7 +698,7 @@
   </style>
 
   </head>
-  <body>
+  <body data-api-url={apiUrl}>
 
   <svg width="0" height="0" aria-hidden="true" style="position:absolute">
     <defs>
@@ -723,6 +725,7 @@
           <span class="chip name-chip" id="nameChip"><span class="name-value" id="nameValue">Sin nombre</span></span>
           <span class="chip">+57 310 ••• ••42</span>
           <span class="chip mode-live" id="modeChip"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span class="mode-end-icon" id="endIconWrap" hidden aria-hidden="true"><i data-lucide="phone-off"></i></span><span id="modeChipText">EN VIVO</span></span>
+          <span class="chip" id="hubChip"><span id="hubChipText">Hub</span></span>
         </div>
       </header>
 
@@ -1208,7 +1211,12 @@
       }
     }
 
+    function hubLive() {
+      return document.body.dataset.hubLive === '1';
+    }
+
     function syncTimeline(now, animateCrossings = true) {
+      if (hubLive()) return;
       const movingForward = now >= previousTimelineTime;
       timelineItems.forEach(item => {
         const at = Number(item.dataset.at || 0);
@@ -1387,7 +1395,9 @@
       const dt = Math.min(.05, (now - last) / 1000);
       last = now;
 
-      if (mode === 'live' && !callEnded) {
+      if (mode === 'live' && hubLive()) {
+        renderPlayer();
+      } else if (mode === 'live' && !callEnded) {
         const wasAtEdge = Math.abs(current - liveEdge) < .14;
         const previousEdge = liveEdge;
         liveEdge = Math.min(DEMO_DURATION, liveEdge + dt);
@@ -1440,20 +1450,11 @@
     requestAnimationFrame(tick);
   </script>
 
-    <script data-legacy-boot>
-      const scripts = [...document.body.querySelectorAll('script:not([data-legacy-boot])')];
-      for (const node of scripts) {
-        if (node.src) {
-          await new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = node.src;
-            script.onload = resolve;
-            script.onerror = reject;
-            document.head.append(script);
-          });
-        } else if (node.textContent) new Function(node.textContent)();
-        node.remove();
-      }
-    </script>
+  <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+  <script>
+    import { bootEventsMonitor } from '../features/voice-call/application/events-monitor';
+    bootEventsMonitor(document.body.dataset.apiUrl ?? '');
+  </script>
+
   </body>
 </html>

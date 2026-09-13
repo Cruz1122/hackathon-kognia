@@ -5,37 +5,60 @@ import os
 import queue
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from .auth.dependencies import get_current_user, require_superadmin
+from .auth.passwords import DUMMY_PASSWORD_HASH, PasswordValidationError, hash_password, verify_password
+from .auth.schemas import (
+    AdminCreate,
+    LoginRequest,
+    LoginResponse,
+    OrganizationCreate,
+    OrganizationResponse,
+    UserResponse,
+)
+from .auth.tokens import (
+    AuthConfigurationError,
+    InvalidTokenError,
+    authenticate_token,
+    create_access_token,
+    get_access_token_expire_minutes,
+)
 from .config import AppEnv, Provider, get_app_env, get_model_chain
+from .db.models import Conversation, Message as DbMessage
+from .db.models import MessageRole, Organization, User, UserRole
+from .db.queries import create_conversation, get_conversation, list_messages
+from .db.session import check_database, dispose_engine, get_db
 from .features.agent.service import stream_agent
-from .features.chat.schemas import AskRequest
+from .features.transcription.service import pcm_speech_features
+from .features.chat.schemas import (
+    AskRequest,
+    ConversationCreate,
+    ConversationResponse,
+)
 from .features.transcription.schemas import TranscriptionResponse
-from .features.transcription.service import (
-    create_stream,
-    feed_pcm,
-    finish_stream,
-    pcm_wave_level,
-    preload_model,
-    reset_stream,
-    transcribe_audio,
-)
 from .features.synthesis.schemas import SynthesisRequest
-from .features.synthesis.service import (
-    preload_tts,
-    stream_tts_audio,
-    synthesize_text,
-    tts_sample_rate,
+from .providers import (
+    ProviderError,
+    llm_provider as default_llm_provider,
+    stt_provider as default_stt_provider,
+    tts_provider as default_tts_provider,
 )
-from .providers import ProviderError, stream_provider
+from .providers.contracts import LLMProvider, SpeechToTextProvider, TextToSpeechProvider
+from .realtime.events import RealtimeEvent
+from .realtime.hub import RealtimeHub
 
 
 logger = logging.getLogger("hackathon.voice")
@@ -54,28 +77,58 @@ def load_repository_environment(env_file: Path | None = None) -> None:
 
 load_repository_environment()
 
+llm_provider: LLMProvider = default_llm_provider
+stt_provider: SpeechToTextProvider = default_stt_provider
+tts_provider: TextToSpeechProvider = default_tts_provider
 transcription_lock = asyncio.Semaphore(1)
+realtime_hub = RealtimeHub()
+sherpa_status = "starting"
 tts_status = "starting"
+db_status = "starting"
+DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
+CALL_SPEECH_LEVEL = 0.12
+CALL_BARGE_LEVEL = 0.45
+CALL_BARGE_STRONG = 0.6
+CALL_SILENCE_SECONDS = 0.8
+CALL_MAX_UTTERANCE_SECONDS = 8.0
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Warm Sherpa-ONNX before serving requests without blocking the event loop."""
+    global db_status, sherpa_status, tts_status
+    db_status = "starting"
     try:
-        await asyncio.to_thread(preload_model)
-    except ImportError:
-        # Keep the API available for text-only fallback when dependencies are absent.
-        pass
-    global tts_status
+        await check_database()
+        db_status = "ready"
+        logger.info("PostgreSQL is ready")
+    except Exception:
+        db_status = "error"
+        # Keep the API alive so /health/live can distinguish process health from readiness.
+        logger.exception("PostgreSQL failed its startup check")
+
+    sherpa_status = "starting"
+    try:
+        await asyncio.to_thread(stt_provider.preload)
+        sherpa_status = "ready"
+        logger.info("Sherpa-ONNX is ready")
+    except Exception:
+        sherpa_status = "error"
+        # Keep the API alive so /health/live can distinguish process health from readiness.
+        logger.exception("Sherpa-ONNX failed to load during backend startup")
+    tts_status = "starting"
     logger.info("Loading Piper TTS before accepting requests")
     try:
-        await asyncio.to_thread(preload_tts)
+        await asyncio.to_thread(tts_provider.preload)
         tts_status = "ready"
         logger.info("Piper TTS is ready")
     except Exception:
         tts_status = "error"
         logger.exception("Piper TTS failed to load during backend startup")
-    yield
+    try:
+        yield
+    finally:
+        await dispose_engine()
 
 
 app = FastAPI(title="Hackathon API", version="0.1.0", lifespan=lifespan)
@@ -94,14 +147,250 @@ app.add_middleware(
 )
 
 
-@app.get("/health")
+def _health_status() -> dict[str, str]:
+    return {"status": "ok", "sherpa": sherpa_status, "tts": tts_status, "db": db_status}
+
+
+async def _refresh_database_readiness() -> None:
+    """Check the current database connection instead of trusting startup state."""
+    global db_status
+    try:
+        await asyncio.wait_for(check_database(), timeout=DATABASE_READINESS_TIMEOUT_SECONDS)
+    except Exception:
+        db_status = "error"
+        logger.warning("PostgreSQL readiness check failed", exc_info=True)
+    else:
+        db_status = "ready"
+
+
+@app.get("/health/live", summary="Comprueba que el proceso de la API está vivo")
+def health_live() -> dict[str, str]:
+    return _health_status()
+
+
+@app.get("/health/ready", summary="Comprueba que la API, los modelos y PostgreSQL están listos")
+async def health_ready() -> Response:
+    await _refresh_database_readiness()
+    payload = _health_status()
+    if sherpa_status != "ready" or tts_status != "ready" or db_status != "ready":
+        return JSONResponse(status_code=503, content=payload)
+    payload["status"] = "ready"
+    return JSONResponse(content=payload)
+
+
+@app.get("/health", deprecated=True, summary="Alias de compatibilidad para health/live")
 def health() -> dict[str, str]:
-    return {"status": "ok", "tts": tts_status}
+    """Keep the legacy path as a liveness check; readiness is /health/ready."""
+    return health_live()
 
 
 @app.get("/api/hello")
 def hello() -> dict[str, str]:
     return {"message": "FastAPI + Astro funcionando"}
+
+
+@app.post("/auth/login", response_model=LoginResponse, summary="Inicia sesión")
+async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db)) -> LoginResponse:
+    try:
+        user = await session.scalar(select(User).where(User.email == payload.email))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable.") from exc
+
+    if user is None:
+        verify_password(payload.password, DUMMY_PASSWORD_HASH)
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    if not user.is_active or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    try:
+        token = create_access_token(user.id)
+        expires_in = get_access_token_expire_minutes() * 60
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=500, detail="Authentication is not configured.") from exc
+    return LoginResponse(
+        access_token=token,
+        expires_in=expires_in,
+        user=UserResponse.model_validate(user),
+    )
+
+
+@app.get("/auth/me", response_model=UserResponse, summary="Devuelve el usuario autenticado")
+async def auth_me(user: User = Depends(get_current_user)) -> UserResponse:
+    return UserResponse.model_validate(user)
+
+
+@app.post(
+    "/organizations",
+    response_model=OrganizationResponse,
+    status_code=201,
+    summary="Crea una organización",
+)
+async def create_organization(
+    payload: OrganizationCreate,
+    _superadmin: User = Depends(require_superadmin),
+    session: AsyncSession = Depends(get_db),
+) -> OrganizationResponse:
+    organization = Organization(name=payload.name, slug=payload.slug)
+    session.add(organization)
+    try:
+        await session.commit()
+        await session.refresh(organization)
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Organization could not be created.") from exc
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=503, detail="Organization service unavailable.") from exc
+    return OrganizationResponse.model_validate(organization)
+
+
+@app.post(
+    "/organizations/{organization_id}/admins",
+    response_model=UserResponse,
+    status_code=201,
+    summary="Crea un administrador de organización",
+)
+async def create_organization_admin(
+    organization_id: uuid.UUID,
+    payload: AdminCreate,
+    _superadmin: User = Depends(require_superadmin),
+    session: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    organization = await session.get(Organization, organization_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    try:
+        admin = User(
+            organization_id=organization.id,
+            email=payload.email,
+            password_hash=hash_password(payload.password),
+            role=UserRole.ADMIN,
+        )
+    except PasswordValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid password.") from exc
+    session.add(admin)
+    try:
+        await session.commit()
+        await session.refresh(admin)
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Admin could not be created.") from exc
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=503, detail="Organization service unavailable.") from exc
+    return UserResponse.model_validate(admin)
+
+
+def _tenant_id(user: User) -> uuid.UUID:
+    if user.organization_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="An organization is required for this operation.",
+        )
+    return user.organization_id
+
+
+async def _persist_message(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    role: MessageRole,
+    content: str,
+) -> DbMessage:
+    message = DbMessage(
+        conversation_id=conversation_id,
+        role=role,
+        content=content,
+    )
+    session.add(message)
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    return message
+
+
+async def _conversation_history(
+    session: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+) -> tuple[Conversation, list[DbMessage]]:
+    conversation = await get_conversation(
+        session,
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    messages = await list_messages(
+        session,
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+    )
+    return conversation, messages
+
+
+@app.post(
+    "/conversations",
+    response_model=ConversationResponse,
+    status_code=201,
+    summary="Crea una conversación persistida",
+)
+async def create_conversation_endpoint(
+    payload: ConversationCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    organization_id = _tenant_id(user)
+    try:
+        conversation = await create_conversation(
+            session,
+            organization_id=organization_id,
+            created_by=user.id,
+            channel=payload.channel,
+            status=payload.status,
+        )
+        await session.commit()
+        await session.refresh(conversation)
+    except HTTPException:
+        await session.rollback()
+        raise
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Conversation could not be created.") from exc
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=503, detail="Conversation service unavailable.") from exc
+    return ConversationResponse.model_validate(conversation)
+
+
+@app.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationResponse,
+    summary="Recupera una conversación y su historial",
+)
+async def get_conversation_endpoint(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    organization_id = _tenant_id(user)
+    conversation, messages = await _conversation_history(
+        session,
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+    )
+    return ConversationResponse(
+        id=conversation.id,
+        organization_id=conversation.organization_id,
+        created_by=conversation.created_by,
+        channel=conversation.channel,
+        status=conversation.status,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        messages=messages,
+    )
 
 
 @app.post("/transcribe", response_model=TranscriptionResponse)
@@ -114,7 +403,7 @@ async def transcribe(request: Request) -> TranscriptionResponse:
     try:
         async with transcription_lock:
             text = await asyncio.to_thread(
-                transcribe_audio,
+                stt_provider.transcribe_audio,
                 audio,
                 request.headers.get("content-type", "audio/webm"),
             )
@@ -128,7 +417,7 @@ async def transcribe(request: Request) -> TranscriptionResponse:
 @app.post("/synthesize", response_class=Response)
 async def synthesize(request: SynthesisRequest) -> Response:
     try:
-        audio = await asyncio.to_thread(synthesize_text, request.text)
+        audio = await asyncio.to_thread(tts_provider.synthesize_wav, request.text)
     except ImportError as exc:
         raise HTTPException(status_code=503, detail="Piper TTS no está instalado.") from exc
     except Exception as exc:
@@ -140,13 +429,13 @@ async def synthesize(request: SynthesisRequest) -> Response:
 async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
     """Stream Piper TTS as mono signed-int16 PCM, using one resident model worker."""
     try:
-        sample_rate = await asyncio.to_thread(tts_sample_rate)
+        sample_rate = await asyncio.to_thread(tts_provider.sample_rate)
     except ImportError as exc:
         raise HTTPException(status_code=503, detail="Piper TTS no está instalado.") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="No se pudo cargar Piper TTS.") from exc
     return StreamingResponse(
-        stream_tts_audio(request.text),
+        tts_provider.stream_audio(request.text),
         media_type=f"audio/L16; rate={sample_rate}; channels=1",
         headers={
             "X-Audio-Sample-Rate": str(sample_rate),
@@ -170,7 +459,7 @@ async def _stream_tts_chunk(text: str):
 
     def generate() -> None:
         try:
-            for chunk in stream_tts_audio(text):
+            for chunk in tts_provider.stream_audio(text):
                 audio_queue.put(chunk)
         except BaseException as exc:
             audio_queue.put(exc)
@@ -205,7 +494,7 @@ async def _voice_audio_stream(
             async for name, payload in stream_agent(
                 prompt,
                 messages=history,
-                provider_stream=stream_provider,
+                llm=llm_provider,
             ):
                 if name == "error":
                     raise ProviderError(payload["message"])
@@ -280,7 +569,7 @@ async def voice(request: Request) -> StreamingResponse:
         timings["transcription_start"] = time.perf_counter()
         async with transcription_lock:
             prompt = await asyncio.to_thread(
-                transcribe_audio,
+                stt_provider.transcribe_audio,
                 audio,
                 request.headers.get("content-type", "audio/webm"),
             )
@@ -296,7 +585,7 @@ async def voice(request: Request) -> StreamingResponse:
         chain = get_model_chain()
         if not any(config.api_key for config in chain):
             raise HTTPException(status_code=503, detail="No hay API keys configuradas.")
-        sample_rate = await asyncio.to_thread(tts_sample_rate)
+        sample_rate = await asyncio.to_thread(tts_provider.sample_rate)
         timings["tts_model_ready"] = time.perf_counter()
     except HTTPException:
         raise
@@ -360,12 +649,35 @@ def _event(name: str, payload: dict[str, str]) -> str:
 async def _ask_stream(
     prompt: str,
     messages: list[dict[str, str]] | None = None,
+    *,
+    session: AsyncSession | None = None,
+    conversation_id: uuid.UUID | None = None,
 ) -> AsyncIterator[str]:
+    answer_parts: list[str] = []
     async for name, payload in stream_agent(
         prompt,
         messages=messages,
-        provider_stream=stream_provider,
+        llm=llm_provider,
     ):
+        if name == "token":
+            answer_parts.append(str(payload.get("text", "")))
+        if name == "done" and session is not None and conversation_id is not None:
+            answer = "".join(answer_parts).strip()
+            if answer:
+                try:
+                    await _persist_message(
+                        session,
+                        conversation_id=conversation_id,
+                        role=MessageRole.ASSISTANT,
+                        content=answer,
+                    )
+                except Exception:
+                    logger.exception("Assistant message persistence failed")
+                    yield _event(
+                        "error",
+                        {"message": "No se pudo guardar la respuesta de la conversación."},
+                    )
+                    return
         yield _event(name, payload)
 
 
@@ -403,7 +715,12 @@ async def _replay_stream(first_chunk: str, stream: AsyncIterator[str]) -> AsyncI
         503: {"model": ErrorResponse, "description": "No hay API keys configuradas."},
     },
 )
-async def ask(request: AskRequest) -> Response:
+async def ask(
+    request: AskRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    organization_id = _tenant_id(user)
     try:
         chain = get_model_chain()
     except ValueError as exc:
@@ -414,8 +731,46 @@ async def ask(request: AskRequest) -> Response:
             content={"detail": "No hay API keys configuradas para el entorno seleccionado."},
         )
 
-    history = [message.model_dump() for message in request.messages]
-    stream = _ask_stream(request.prompt, history or None)
+    conversation_id = request.conversation_id
+    if conversation_id is not None:
+        try:
+            _conversation, persisted_messages = await _conversation_history(
+                session,
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Conversation service unavailable.") from exc
+        history = [
+            {"role": message.role.value, "content": message.content}
+            for message in persisted_messages
+            if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+        ]
+        try:
+            await _persist_message(
+                session,
+                conversation_id=conversation_id,
+                role=MessageRole.USER,
+                content=request.prompt,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Conversation service unavailable.") from exc
+    else:
+        if not request.messages:
+            raise HTTPException(
+                status_code=422,
+                detail="conversation_id is required; messages is a temporary compatibility path.",
+            )
+        history = [message.model_dump() for message in request.messages]
+
+    stream = _ask_stream(
+        request.prompt,
+        history or None,
+        session=session if conversation_id is not None else None,
+        conversation_id=conversation_id,
+    )
     try:
         first_chunk = await anext(stream)
     except StopAsyncIteration:
@@ -437,23 +792,92 @@ def _usable_transcript(text: str) -> bool:
     return len(_TRANSCRIPT_LETTER.findall(text)) >= 2
 
 
-async def _speak_chunk(websocket: WebSocket, text: str) -> None:
+async def _send_call_event(
+    websocket: WebSocket,
+    event_type: str,
+    payload: dict[str, object],
+    *,
+    organization_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+) -> None:
+    """Keep the call's direct JSON transport and fan out a structured copy."""
+    await websocket.send_json({"type": event_type, **payload})
+    try:
+        await realtime_hub.publish(
+            RealtimeEvent(
+                type=event_type,
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+                payload=payload,
+            )
+        )
+    except Exception:
+        # A monitoring subscriber must never break the call's direct transport.
+        logger.exception("Realtime event publish failed: %s", event_type)
+
+
+async def _speak_chunk(
+    websocket: WebSocket,
+    text: str,
+    *,
+    organization_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+) -> None:
     if tts_status != "ready" or not text.strip():
         return
-    await websocket.send_json({"type": "tts.started", "text": text})
-    sample_rate = await asyncio.to_thread(tts_sample_rate)
+    await _send_call_event(
+        websocket,
+        "tts.started",
+        {"text": text},
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+    )
+    sample_rate = await asyncio.to_thread(tts_provider.sample_rate)
     await websocket.send_json({"type": "tts.format", "sample_rate": sample_rate})
     async for audio_chunk in _stream_tts_chunk(text):
         await websocket.send_bytes(audio_chunk)
-    await websocket.send_json({"type": "tts.completed"})
+    await _send_call_event(
+        websocket,
+        "tts.completed",
+        {},
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+    )
 
 
 async def _run_call_turn(
     websocket: WebSocket,
     prompt: str,
     history: list[dict[str, str]],
+    *,
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    conversation_id: uuid.UUID,
 ) -> None:
-    await websocket.send_json({"type": "turn.started"})
+    try:
+        await _persist_message(
+            session,
+            conversation_id=conversation_id,
+            role=MessageRole.USER,
+            content=prompt,
+        )
+    except Exception:
+        logger.exception("Customer message persistence failed")
+        await _send_call_event(
+            websocket,
+            "error",
+            {"message": "No se pudo guardar la conversación."},
+            organization_id=organization_id,
+            conversation_id=conversation_id,
+        )
+        return
+    await _send_call_event(
+        websocket,
+        "turn.started",
+        {},
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+    )
     answer = ""
     buffer = ""
     failed = False
@@ -464,28 +888,51 @@ async def _run_call_turn(
             text = await pending.get()
             if text is None:
                 return
-            await _speak_chunk(websocket, text)
+            await _speak_chunk(
+                websocket,
+                text,
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
 
     speaker = asyncio.create_task(speak_worker())
     try:
         async for name, payload in stream_agent(
             prompt,
             messages=history or None,
-            provider_stream=stream_provider,
+            llm=llm_provider,
         ):
             if name == "error":
                 failed = True
-                await websocket.send_json({"type": "error", "message": payload["message"]})
+                await _send_call_event(
+                    websocket,
+                    "error",
+                    {"message": payload["message"]},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 break
             if name == "tool.started" or name == "tool.completed":
-                await websocket.send_json({"type": name, **payload})
+                await _send_call_event(
+                    websocket,
+                    name,
+                    payload,
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 continue
             if name != "token":
                 continue
             token = payload["text"]
             answer += token
             buffer += token
-            await websocket.send_json({"type": "agent.token", "text": token})
+            await _send_call_event(
+                websocket,
+                "agent.token",
+                {"text": token},
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
             chunk, buffer = _take_semantic_chunk(buffer)
             if chunk:
                 await pending.put(chunk)
@@ -494,11 +941,34 @@ async def _run_call_turn(
         await pending.put(None)
         await speaker
         if not failed and answer.strip():
+            try:
+                await _persist_message(
+                    session,
+                    conversation_id=conversation_id,
+                    role=MessageRole.ASSISTANT,
+                    content=answer,
+                )
+            except Exception:
+                logger.exception("Assistant message persistence failed")
+                await _send_call_event(
+                    websocket,
+                    "error",
+                    {"message": "No se pudo guardar la conversación."},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
+                return
             history.extend(
                 [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
             )
             del history[:-40]
-        await websocket.send_json({"type": "turn.completed", "text": answer})
+        await _send_call_event(
+            websocket,
+            "turn.completed",
+            {"text": answer},
+            organization_id=organization_id,
+            conversation_id=conversation_id,
+        )
     except asyncio.CancelledError:
         speaker.cancel()
         try:
@@ -506,35 +976,185 @@ async def _run_call_turn(
         except asyncio.CancelledError:
             pass
         try:
-            await websocket.send_json({"type": "turn.cancelled"})
+            await _send_call_event(
+                websocket,
+                "turn.cancelled",
+                {},
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
         except Exception:
             pass
         raise
+    except Exception:
+        speaker.cancel()
+        try:
+            await speaker
+        except (asyncio.CancelledError, Exception):
+            pass
+        logger.exception("Call turn failed")
+        try:
+            await _send_call_event(
+                websocket,
+                "error",
+                {"message": "No se pudo completar la llamada."},
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            pass
+
+
+async def _receive_json_message(websocket: WebSocket) -> dict[str, object] | None:
+    message = await websocket.receive()
+    if message["type"] == "websocket.disconnect":
+        raise WebSocketDisconnect
+    text = message.get("text")
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+@app.websocket("/ws/events")
+async def events_socket(
+    websocket: WebSocket,
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Subscribe to tenant-scoped JSON events after authenticating."""
+    await websocket.accept()
+    organization_id: uuid.UUID | None = None
+    try:
+        auth_payload = await _receive_json_message(websocket)
+        token = auth_payload.get("token") if auth_payload is not None else None
+        if auth_payload is None or auth_payload.get("type") != "auth" or not isinstance(token, str):
+            await websocket.close(code=4401)
+            return
+        try:
+            user = await authenticate_token(token, session)
+        except InvalidTokenError:
+            await websocket.close(code=4401)
+            return
+        except Exception:
+            logger.exception("Realtime events authentication failed")
+            await websocket.close(code=1011)
+            return
+
+        organization_id = user.organization_id
+        if organization_id is None:
+            await websocket.close(code=4403)
+            return
+        realtime_hub.connect(websocket, organization_id)
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            if message.get("bytes") is not None:
+                await websocket.close(code=1003)
+                return
+            # The endpoint is a subscriber; text messages are intentionally ignored.
+    except WebSocketDisconnect:
+        logger.info("Realtime events WebSocket disconnected")
+    except Exception:
+        logger.exception("Realtime events WebSocket failed")
+    finally:
+        if organization_id is not None:
+            realtime_hub.disconnect(websocket, organization_id)
 
 
 @app.websocket("/ws/call")
-async def call_socket(websocket: WebSocket) -> None:
-    """Live PCM: Sherpa partials, agent tokens and TTS."""
+async def call_socket(
+    websocket: WebSocket,
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Live PCM: authenticate and attach a tenant conversation before media."""
     await websocket.accept()
-    await websocket.send_json({"type": "call.connected", "tts": tts_status})
-    if tts_status == "ready":
-        ready_rate = await asyncio.to_thread(tts_sample_rate)
-        await websocket.send_json({"type": "tts.format", "sample_rate": ready_rate})
-    history: list[dict[str, str]] = []
-    audio_mime = "audio/webm"
-    pcm_mode = True
-    sample_rate = 16000
-    stream = None
-    last_partial = ""
-    last_voice_at = 0.0
-    ignore_until = 0.0
-    barge_hits = 0
-    turn_task: asyncio.Task[None] | None = None
     try:
-        stream = await asyncio.to_thread(create_stream)
+        auth_payload = await _receive_json_message(websocket)
+        token = auth_payload.get("token") if auth_payload is not None else None
+        if auth_payload is None or auth_payload.get("type") != "auth" or not isinstance(token, str):
+            await websocket.close(code=4401)
+            return
+        try:
+            user = await authenticate_token(token, session)
+        except InvalidTokenError:
+            await websocket.close(code=4401)
+            return
+        except Exception:
+            logger.exception("Call authentication failed")
+            await websocket.close(code=1011)
+            return
+
+        organization_id = user.organization_id
+        if organization_id is None:
+            await websocket.close(code=4403)
+            return
+        attach_payload = await _receive_json_message(websocket)
+        conversation_value = (
+            attach_payload.get("conversation_id") if attach_payload is not None else None
+        )
+        if (
+            attach_payload is None
+            or attach_payload.get("type") != "conversation.attach"
+            or not isinstance(conversation_value, str)
+        ):
+            await websocket.close(code=4400)
+            return
+        try:
+            conversation_id = uuid.UUID(conversation_value)
+        except ValueError:
+            await websocket.close(code=4400)
+            return
+        try:
+            conversation = await get_conversation(
+                session,
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
+            if conversation is None:
+                await websocket.close(code=4403)
+                return
+            persisted_messages = await list_messages(
+                session,
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            logger.exception("Call conversation lookup failed")
+            await websocket.close(code=1011)
+            return
+        history: list[dict[str, str]] = [
+            {"role": message.role.value, "content": message.content}
+            for message in persisted_messages
+            if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+        ]
+        await websocket.send_json(
+            {
+                "type": "call.connected",
+                "tts": tts_status,
+                "conversation_id": str(conversation.id),
+            }
+        )
+        if tts_status == "ready":
+            ready_rate = await asyncio.to_thread(tts_provider.sample_rate)
+            await websocket.send_json({"type": "tts.format", "sample_rate": ready_rate})
+        audio_mime = "audio/webm"
+        pcm_mode = True
+        sample_rate = 16000
+        stream = None
+        last_partial = ""
+        last_voice_at = 0.0
+        first_voice_at = 0.0
+        ignore_until = 0.0
+        barge_hits = 0
+        turn_task: asyncio.Task[None] | None = None
+        stream = await asyncio.to_thread(stt_provider.create_stream)
 
         async def _reap_turn() -> None:
-            nonlocal turn_task, last_partial, last_voice_at, ignore_until, barge_hits, stream
+            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_hits, stream
             if turn_task is None or not turn_task.done():
                 return
             task = turn_task
@@ -542,7 +1162,8 @@ async def call_socket(websocket: WebSocket) -> None:
             barge_hits = 0
             last_partial = ""
             last_voice_at = 0.0
-            ignore_until = time.monotonic() + 0.4
+            first_voice_at = 0.0
+            ignore_until = time.monotonic() + 0.12
             try:
                 await task
             except asyncio.CancelledError:
@@ -550,25 +1171,41 @@ async def call_socket(websocket: WebSocket) -> None:
             except Exception:
                 logger.exception("Call turn failed")
             if stream is not None:
-                await asyncio.to_thread(reset_stream, stream)
+                await asyncio.to_thread(stt_provider.reset_stream, stream)
 
         async def _start_turn(prompt: str) -> None:
-            nonlocal turn_task, last_partial, last_voice_at, stream
+            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, stream
             flushed = ""
             if stream is not None:
                 try:
-                    flushed = await asyncio.to_thread(finish_stream, stream, sample_rate)
+                    flushed = await asyncio.to_thread(stt_provider.finish_stream, stream, sample_rate)
                 except Exception:
                     logger.exception("Sherpa flush failed")
-                stream = await asyncio.to_thread(create_stream)
+                stream = await asyncio.to_thread(stt_provider.create_stream)
             final = flushed.strip() if _usable_transcript(flushed) else prompt
             last_partial = ""
             last_voice_at = 0.0
-            await websocket.send_json({"type": "customer.transcript", "text": final})
-            turn_task = asyncio.create_task(_run_call_turn(websocket, final, history))
+            first_voice_at = 0.0
+            await _send_call_event(
+                websocket,
+                "customer.transcript",
+                {"text": final},
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
+            turn_task = asyncio.create_task(
+                _run_call_turn(
+                    websocket,
+                    final,
+                    history,
+                    session=session,
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
+            )
 
         async def _barge_in() -> None:
-            nonlocal turn_task, barge_hits, last_partial, last_voice_at, ignore_until
+            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_hits, stream
             barge_hits = 0
             if turn_task is None:
                 return
@@ -588,7 +1225,10 @@ async def call_socket(websocket: WebSocket) -> None:
                     logger.exception("Call turn cancel failed")
             last_partial = ""
             last_voice_at = time.monotonic()
+            first_voice_at = last_voice_at
             ignore_until = 0.0
+            if stream is not None:
+                await asyncio.to_thread(stt_provider.reset_stream, stream)
 
         while True:
             message = await websocket.receive()
@@ -605,67 +1245,128 @@ async def call_socket(websocket: WebSocket) -> None:
             if raw is not None:
                 if pcm_mode:
                     await _reap_turn()
-                    level = pcm_wave_level(raw, sample_rate)
+                    level, voiced, _rms = pcm_speech_features(raw, sample_rate)
                     await websocket.send_json({"type": "wave.level", "value": level, "source": "customer"})
                     now = time.monotonic()
                     busy = turn_task is not None and not turn_task.done()
-                    speaking = level >= 0.09
+                    speaking = level >= CALL_SPEECH_LEVEL
                     if speaking:
                         last_voice_at = now
+                        if first_voice_at <= 0:
+                            first_voice_at = now
                     if busy:
-                        barge_hits = barge_hits + 1 if level >= 0.16 else 0
-                        if barge_hits >= 3 and now >= ignore_until:
+                        if voiced and level >= CALL_BARGE_LEVEL and now >= ignore_until:
+                            barge_hits += 1
+                        else:
+                            barge_hits = 0
+                        if now >= ignore_until and (
+                            barge_hits >= 4 or (voiced and level >= CALL_BARGE_STRONG)
+                        ):
+                            barge_hits = 0
                             await _barge_in()
-                        continue
+                        else:
+                            continue
                     if stream is None or now < ignore_until:
                         continue
                     try:
-                        partial, _ended = await asyncio.to_thread(feed_pcm, stream, raw, sample_rate)
+                        partial, ended = await asyncio.to_thread(stt_provider.feed_pcm, stream, raw, sample_rate)
                     except Exception:
                         logger.exception("Call transcription failed")
-                        await websocket.send_json(
-                            {"type": "error", "message": "No se pudo transcribir el audio."}
+                        await _send_call_event(
+                            websocket,
+                            "error",
+                            {"message": "No se pudo transcribir el audio."},
+                            organization_id=organization_id,
+                            conversation_id=conversation_id,
                         )
                         continue
                     if partial and partial != last_partial:
                         last_partial = partial
                         if _usable_transcript(partial):
-                            await websocket.send_json({"type": "customer.partial", "text": partial})
+                            await _send_call_event(
+                                websocket,
+                                "customer.partial",
+                                {"text": partial},
+                                organization_id=organization_id,
+                                conversation_id=conversation_id,
+                            )
                     prompt = last_partial.strip()
-                    if (
-                        not prompt
-                        or not _usable_transcript(prompt)
-                        or last_voice_at <= 0
-                        or now - last_voice_at < 1.0
-                    ):
-                        continue
-                    await _start_turn(prompt)
+                    usable = _usable_transcript(prompt)
+                    silent = last_voice_at > 0 and now - last_voice_at >= CALL_SILENCE_SECONDS
+                    too_long = (
+                        usable
+                        and first_voice_at > 0
+                        and now - first_voice_at >= CALL_MAX_UTTERANCE_SECONDS
+                    )
+                    if usable and (ended or silent or too_long):
+                        await _start_turn(prompt)
+                    elif ended and not usable:
+                        last_partial = ""
+                        last_voice_at = 0.0
+                        first_voice_at = 0.0
+                        if stream is not None:
+                            await asyncio.to_thread(stt_provider.reset_stream, stream)
                     continue
                 try:
                     async with transcription_lock:
-                        prompt = await asyncio.to_thread(transcribe_audio, raw, audio_mime)
+                        prompt = await asyncio.to_thread(stt_provider.transcribe_audio, raw, audio_mime)
                 except Exception:
                     logger.exception("Call transcription failed")
-                    await websocket.send_json(
-                        {"type": "error", "message": "No se pudo transcribir el audio."}
+                    await _send_call_event(
+                        websocket,
+                        "error",
+                        {"message": "No se pudo transcribir el audio."},
+                        organization_id=organization_id,
+                        conversation_id=conversation_id,
                     )
                     continue
                 if not prompt.strip():
                     await websocket.send_json({"type": "transcript.empty"})
                     continue
-                await websocket.send_json({"type": "customer.transcript", "text": prompt})
-                await _run_call_turn(websocket, prompt, history)
+                await _send_call_event(
+                    websocket,
+                    "customer.transcript",
+                    {"text": prompt},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
+                await _run_call_turn(
+                    websocket,
+                    prompt,
+                    history,
+                    session=session,
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 continue
             if not text:
-                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                await _send_call_event(
+                    websocket,
+                    "error",
+                    {"message": "Mensaje de llamada inválido."},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 continue
             try:
                 payload = json.loads(text)
             except json.JSONDecodeError:
-                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                await _send_call_event(
+                    websocket,
+                    "error",
+                    {"message": "Mensaje de llamada inválido."},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 continue
             if not isinstance(payload, dict):
-                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                await _send_call_event(
+                    websocket,
+                    "error",
+                    {"message": "Mensaje de llamada inválido."},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 continue
             if payload.get("type") == "pcm.start":
                 rate = payload.get("sample_rate")
@@ -674,17 +1375,24 @@ async def call_socket(websocket: WebSocket) -> None:
                 pcm_mode = True
                 last_partial = ""
                 last_voice_at = 0.0
+                first_voice_at = 0.0
                 if stream is not None:
-                    await asyncio.to_thread(reset_stream, stream)
+                    await asyncio.to_thread(stt_provider.reset_stream, stream)
                 else:
-                    stream = await asyncio.to_thread(create_stream)
+                    stream = await asyncio.to_thread(stt_provider.create_stream)
                 continue
             if payload.get("type") == "pcm.stop":
                 pcm_mode = False
                 last_partial = ""
                 last_voice_at = 0.0
+                first_voice_at = 0.0
                 if stream is not None:
-                    await asyncio.to_thread(reset_stream, stream)
+                    await asyncio.to_thread(stt_provider.reset_stream, stream)
+                continue
+            if payload.get("type") == "barge":
+                busy = turn_task is not None and not turn_task.done()
+                if busy:
+                    await _barge_in()
                 continue
             if payload.get("type") == "audio":
                 mime = payload.get("mime")
@@ -692,22 +1400,32 @@ async def call_socket(websocket: WebSocket) -> None:
                     audio_mime = mime
                 continue
             if payload.get("type") != "turn":
-                await websocket.send_json({"type": "error", "message": "Mensaje de llamada inválido."})
+                await _send_call_event(
+                    websocket,
+                    "error",
+                    {"message": "Mensaje de llamada inválido."},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 continue
             prompt = payload.get("prompt")
             if not isinstance(prompt, str) or not prompt.strip():
-                await websocket.send_json({"type": "error", "message": "El mensaje está vacío."})
+                await _send_call_event(
+                    websocket,
+                    "error",
+                    {"message": "El mensaje está vacío."},
+                    organization_id=organization_id,
+                    conversation_id=conversation_id,
+                )
                 continue
-            incoming = payload.get("messages", [])
-            if isinstance(incoming, list) and incoming:
-                history = [
-                    message
-                    for message in incoming
-                    if isinstance(message, dict)
-                    and message.get("role") in {"user", "assistant"}
-                    and isinstance(message.get("content"), str)
-                ]
-            await _run_call_turn(websocket, prompt, history)
+            await _run_call_turn(
+                websocket,
+                prompt,
+                history,
+                session=session,
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
     except WebSocketDisconnect:
         logger.info("Call WebSocket disconnected")
     except Exception:

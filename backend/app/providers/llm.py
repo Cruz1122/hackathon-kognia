@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import httpx
 
-from .config import ModelConfig, Provider
-from .features.agent.tools import AGENT_SYSTEM, GEMINI_TOOLS, OPENAI_TOOLS
-
-
-class ProviderError(RuntimeError):
-    """An upstream provider failed without exposing its response body."""
-
-    def __init__(self, message: str, *, retryable: bool = True) -> None:
-        super().__init__(message)
-        self.retryable = retryable
+from ..config import ModelConfig, Provider
+from ..features.agent.tools import (
+    AGENT_SYSTEM,
+    CanonicalTool,
+    to_gemini_tools,
+    to_openai_tools,
+)
+from .contracts import LLMCapabilities
+from .errors import ProviderError
 
 
 def _sse_data(line: str) -> str | None:
@@ -111,7 +110,7 @@ def _gemini_contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return contents
 
 
-def _with_system(messages: list[dict[str, Any]] | None, prompt: str) -> list[dict[str, Any]]:
+def _with_system(messages: Sequence[dict[str, Any]] | None, prompt: str) -> list[dict[str, Any]]:
     source = list(messages) if messages else [{"role": "user", "content": prompt}]
     if not source or source[0].get("role") != "system":
         return [{"role": "system", "content": AGENT_SYSTEM}, *source]
@@ -191,13 +190,14 @@ async def _stream_gemini_chat(
         yield "tool_calls", {"calls": calls}
 
 
-async def stream_chat(
+async def _post_stream(
     config: ModelConfig,
     prompt: str,
-    client: httpx.AsyncClient | None = None,
-    messages: list[dict[str, Any]] | None = None,
     *,
-    tools: bool = False,
+    client: httpx.AsyncClient | None,
+    messages: Sequence[dict[str, Any]] | None,
+    tools: Sequence[CanonicalTool] | None,
+    openai_compatible: bool,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     owns_client = client is None
     http_client = client or httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
@@ -205,30 +205,30 @@ async def stream_chat(
         if not config.api_key:
             raise ProviderError(f"Missing API key for {config.provider.value}")
         source_messages = _with_system(messages, prompt)
-        if config.provider is Provider.GEMINI:
-            url = f"{config.base_url}/models/{config.model}:streamGenerateContent"
-            params = {"alt": "sse"}
-            body: dict[str, Any] = {
-                "systemInstruction": {"parts": [{"text": AGENT_SYSTEM}]},
-                "contents": _gemini_contents(source_messages),
-            }
-            if tools:
-                body["tools"] = GEMINI_TOOLS
-            headers = {"Content-Type": "application/json", "x-goog-api-key": config.api_key}
-            stream_events = _stream_gemini_chat
-        else:
+        if openai_compatible:
             url = f"{config.base_url}/chat/completions"
             params = None
-            body = {
+            body: dict[str, Any] = {
                 "model": config.model,
                 "messages": source_messages,
                 "stream": True,
             }
             if tools:
-                body["tools"] = OPENAI_TOOLS
+                body["tools"] = to_openai_tools(tools)
                 body["tool_choice"] = "auto"
             headers = {"Authorization": f"Bearer {config.api_key}"}
             stream_events = _stream_openai_chat
+        else:
+            url = f"{config.base_url}/models/{config.model}:streamGenerateContent"
+            params = {"alt": "sse"}
+            body = {
+                "systemInstruction": {"parts": [{"text": AGENT_SYSTEM}]},
+                "contents": _gemini_contents(source_messages),
+            }
+            if tools:
+                body["tools"] = to_gemini_tools(tools)
+            headers = {"Content-Type": "application/json", "x-goog-api-key": config.api_key}
+            stream_events = _stream_gemini_chat
 
         try:
             async with http_client.stream(
@@ -249,6 +249,111 @@ async def stream_chat(
     finally:
         if owns_client:
             await http_client.aclose()
+
+
+class OpenAICompatibleLLM:
+    capabilities = LLMCapabilities(supports_tools=True, supports_streaming=True)
+
+    async def stream(
+        self,
+        config: ModelConfig,
+        prompt: str,
+        *,
+        messages: Sequence[dict[str, Any]] | None = None,
+        tools: Sequence[CanonicalTool] | None = None,
+        client: Any | None = None,
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        async for event in _post_stream(
+            config,
+            prompt,
+            client=client,
+            messages=messages,
+            tools=tools,
+            openai_compatible=True,
+        ):
+            yield event
+
+
+class GeminiLLM:
+    capabilities = LLMCapabilities(supports_tools=True, supports_streaming=True)
+
+    async def stream(
+        self,
+        config: ModelConfig,
+        prompt: str,
+        *,
+        messages: Sequence[dict[str, Any]] | None = None,
+        tools: Sequence[CanonicalTool] | None = None,
+        client: Any | None = None,
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        async for event in _post_stream(
+            config,
+            prompt,
+            client=client,
+            messages=messages,
+            tools=tools,
+            openai_compatible=False,
+        ):
+            yield event
+
+
+class RoutedLLM:
+    """Pick the vendor adapter from ModelConfig.provider. Capabilities stay explicit."""
+
+    capabilities = LLMCapabilities(supports_tools=True, supports_streaming=True)
+
+    def __init__(
+        self,
+        *,
+        openai: OpenAICompatibleLLM | None = None,
+        gemini: GeminiLLM | None = None,
+    ) -> None:
+        self._openai = openai or OpenAICompatibleLLM()
+        self._gemini = gemini or GeminiLLM()
+
+    def _adapter_for(self, config: ModelConfig) -> OpenAICompatibleLLM | GeminiLLM:
+        if config.provider is Provider.GEMINI:
+            return self._gemini
+        return self._openai
+
+    async def stream(
+        self,
+        config: ModelConfig,
+        prompt: str,
+        *,
+        messages: Sequence[dict[str, Any]] | None = None,
+        tools: Sequence[CanonicalTool] | None = None,
+        client: Any | None = None,
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        adapter = self._adapter_for(config)
+        async for event in adapter.stream(
+            config, prompt, messages=messages, tools=tools, client=client
+        ):
+            yield event
+
+
+async def stream_chat(
+    config: ModelConfig,
+    prompt: str,
+    client: httpx.AsyncClient | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    *,
+    tools: Sequence[CanonicalTool] | bool | None = None,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    from ..features.agent.tools import CANONICAL_TOOLS
+
+    selected: Sequence[CanonicalTool] | None
+    if tools is True:
+        selected = CANONICAL_TOOLS
+    elif tools is False or tools is None:
+        selected = None
+    else:
+        selected = tools
+    adapter = GeminiLLM() if config.provider is Provider.GEMINI else OpenAICompatibleLLM()
+    async for event in adapter.stream(
+        config, prompt, messages=messages, tools=selected, client=client
+    ):
+        yield event
 
 
 async def stream_provider(

@@ -24,9 +24,9 @@ function goertzel(samples: ArrayLike<number>, sampleRate: number, freq: number):
   return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - coeff * s1 * s2)) / n;
 }
 
-export function voiceLevelFromSamples(samples: ArrayLike<number>, sampleRate: number): number {
+export function analyzeVoice(samples: ArrayLike<number>, sampleRate: number): { level: number; voiced: boolean; rms: number } {
   const n = samples.length;
-  if (n < 32) return 0.04;
+  if (n < 32) return { level: 0.04, voiced: false, rms: 0 };
   let energy = 0;
   let crossings = 0;
   let previous = samples[0];
@@ -37,13 +37,22 @@ export function voiceLevelFromSamples(samples: ArrayLike<number>, sampleRate: nu
     previous = sample;
   }
   const rms = Math.sqrt(energy / n);
-  if (rms < 0.003) return clamp01(rms * 14);
+  if (rms < 0.003) return { level: clamp01(rms * 14), voiced: false, rms };
   let bands = 0;
   for (const hz of [120, 240, 500, 900, 1600, 2600]) bands += goertzel(samples, sampleRate, hz);
   const freq = Math.sqrt(bands / 6);
   const pitchHz = (crossings * sampleRate) / (2 * n);
   const pitch = clamp01((Math.min(500, Math.max(70, pitchHz)) - 70) / 430);
-  return clamp01(Math.max(rms * 9, freq * 4.4) * (0.45 + 0.55 * pitch));
+  const voiced = rms >= 0.016 && pitchHz >= 85 && pitchHz <= 340 && freq > rms * 0.35;
+  return {
+    level: clamp01(Math.max(rms * 9, freq * 4.4) * (0.45 + 0.55 * pitch)),
+    voiced,
+    rms,
+  };
+}
+
+export function voiceLevelFromSamples(samples: ArrayLike<number>, sampleRate: number): number {
+  return analyzeVoice(samples, sampleRate).level;
 }
 
 export class AudioCaptureAdapter {
@@ -67,11 +76,13 @@ export class AudioCaptureAdapter {
   private speechAnalyser?: AnalyserNode;
   private processor?: ScriptProcessorNode;
   private lastLevel = 0.04;
+  private lastVoiced = false;
   private workletNode?: AudioWorkletNode;
   private captureSource?: MediaStreamAudioSourceNode;
   private pcmTail = new Int16Array(0);
   private pcmCallback?: (frame: Int16Array) => void;
   private workletReady?: Promise<void>;
+  private captureMute?: GainNode;
   private levelListener?: (level: number) => void;
   private maxRecordTimer?: number;
 
@@ -84,6 +95,10 @@ export class AudioCaptureAdapter {
 
   voiceLevel(): number {
     return this.lastLevel;
+  }
+
+  isVoiced(): boolean {
+    return this.lastVoiced;
   }
 
   onLevel(listener: ((level: number) => void) | undefined): void {
@@ -100,11 +115,34 @@ export class AudioCaptureAdapter {
     return {
       audio: {
         echoCancellation: true,
-        noiseSuppression: false,
-        autoGainControl: true,
+        noiseSuppression: true,
+        autoGainControl: false,
         channelCount: 1,
       },
     };
+  }
+
+  private ensureCaptureAnalyser(context: AudioContext): void {
+    if (!this.captureSource) return;
+    if (!this.speechAnalyser || this.speechAnalyser.context !== context) {
+      this.speechAnalyser = context.createAnalyser();
+      this.speechAnalyser.fftSize = 2048;
+      this.speechAnalyser.smoothingTimeConstant = 0.18;
+      this.speechAnalyser.minDecibels = -90;
+      this.speechAnalyser.maxDecibels = -25;
+    }
+    try {
+      this.captureSource.connect(this.speechAnalyser);
+    } catch {
+      /* already connected */
+    }
+    if (this.captureMute) {
+      try {
+        this.speechAnalyser.connect(this.captureMute);
+      } catch {
+        /* already connected */
+      }
+    }
   }
 
   private attachSpeechAnalyser(): void {
@@ -132,7 +170,9 @@ export class AudioCaptureAdapter {
     this.processor.connect(mute);
     this.processor.onaudioprocess = (event) => {
       const copy = new Float32Array(event.inputBuffer.getChannelData(0));
-      this.lastLevel = voiceLevelFromSamples(copy, context.sampleRate);
+      const voice = analyzeVoice(copy, context.sampleRate);
+      this.lastLevel = voice.level;
+      this.lastVoiced = voice.voiced;
       this.levelListener?.(this.lastLevel);
     };
     void context.resume();
@@ -251,7 +291,10 @@ export class AudioCaptureAdapter {
       });
       this.pcmCallback = onFrame;
       this.pcmTail = new Int16Array(0);
-      if (this.workletNode || this.processor) return true;
+      if (this.workletNode || this.processor) {
+        this.ensureCaptureAnalyser(context);
+        return true;
+      }
       if (!this.workletReady) {
         const source = [
           'class PcmCaptureProcessor extends AudioWorkletProcessor {',
@@ -275,6 +318,8 @@ export class AudioCaptureAdapter {
       const mute = context.createGain();
       mute.gain.value = 0.0001;
       mute.connect(context.destination);
+      this.captureMute = mute;
+      this.ensureCaptureAnalyser(context);
       if (this.workletReady) {
         this.workletNode = new AudioWorkletNode(context, 'pcm-capture');
         this.captureSource.connect(this.workletNode);
@@ -312,6 +357,7 @@ export class AudioCaptureAdapter {
     this.workletNode = undefined;
     this.processor = undefined;
     this.captureSource = undefined;
+    this.captureMute = undefined;
   }
 
   private pushPcmFrame(input: Float32Array, inputRate: number): void {
@@ -324,7 +370,9 @@ export class AudioCaptureAdapter {
       floats[i] = sample;
       converted[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
     }
-    this.lastLevel = voiceLevelFromSamples(floats, 16000);
+    const voice = analyzeVoice(floats, 16000);
+    this.lastLevel = voice.level;
+    this.lastVoiced = voice.voiced;
     const merged = new Int16Array(this.pcmTail.length + converted.length);
     merged.set(this.pcmTail);
     merged.set(converted, this.pcmTail.length);
@@ -391,7 +439,7 @@ export class AudioCaptureAdapter {
         if (generation !== this.monitorGeneration || !this.monitorStream) return;
         analyser.getByteTimeDomainData(data);
         const rms = Math.sqrt(data.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / data.length);
-        this.monitorHits = rms > 0.07 ? this.monitorHits + 1 : 0;
+        this.monitorHits = rms > 0.16 ? this.monitorHits + 1 : 0;
         if (this.monitorHits >= 3) { this.stopBargeIn(); onSpeech(); return; }
         this.monitorTimer = window.setTimeout(check, 100);
       };
@@ -419,7 +467,7 @@ export class AudioCaptureAdapter {
           analyser.getByteTimeDomainData(data);
           rms = Math.sqrt(data.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / data.length);
         }
-        const speaking = rms > 0.07 || this.lastLevel > 0.14;
+        const speaking = rms > 0.16 || this.lastLevel > 0.22;
         if (speaking) {
           this.speechHits += 1;
           this.lastSpeechAt = performance.now();
@@ -494,6 +542,7 @@ export class AudioCaptureAdapter {
     this.stopPcmStream();
     this.workletReady = undefined;
     this.lastLevel = 0.04;
+    this.lastVoiced = false;
     void this.audioContext?.close();
     this.audioContext = undefined;
     this.speechAnalyser = undefined;

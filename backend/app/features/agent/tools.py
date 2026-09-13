@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
+
+from ...providers.contracts import CanonicalTool
 
 LOREM = (
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
@@ -18,79 +21,70 @@ AGENT_SYSTEM = (
     "números. No inventes el resultado de esas tools: ejecútalas. Habla en español."
 )
 
-OPENAI_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_lorem_ipsum",
-            "description": "Genera texto lorem ipsum con la cantidad de caracteres pedida.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "characters": {
-                        "type": "integer",
-                        "description": "Número de caracteres a generar (1 a 5000).",
-                    }
-                },
-                "required": ["characters"],
+CANONICAL_TOOLS: tuple[CanonicalTool, ...] = (
+    CanonicalTool(
+        name="generate_lorem_ipsum",
+        description="Genera texto lorem ipsum con la cantidad de caracteres pedida.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "characters": {
+                    "type": "integer",
+                    "description": "Número de caracteres a generar (1 a 5000).",
+                }
             },
+            "required": ["characters"],
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "sum_numbers",
-            "description": "Suma los números que indique el usuario.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "numbers": {
-                        "type": "array",
-                        "items": {"type": "number"},
-                        "description": "Lista de números a sumar.",
-                    }
-                },
-                "required": ["numbers"],
+    ),
+    CanonicalTool(
+        name="sum_numbers",
+        description="Suma los números que indique el usuario.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Lista de números a sumar.",
+                }
             },
+            "required": ["numbers"],
         },
-    },
-]
+    ),
+)
 
-GEMINI_TOOLS: list[dict[str, Any]] = [
-    {
-        "functionDeclarations": [
-            {
-                "name": "generate_lorem_ipsum",
-                "description": "Genera texto lorem ipsum con la cantidad de caracteres pedida.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "characters": {
-                            "type": "integer",
-                            "description": "Número de caracteres a generar (1 a 5000).",
-                        }
-                    },
-                    "required": ["characters"],
-                },
+
+def to_openai_tools(tools: Sequence[CanonicalTool]) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
             },
-            {
-                "name": "sum_numbers",
-                "description": "Suma los números que indique el usuario.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "numbers": {
-                            "type": "array",
-                            "items": {"type": "number"},
-                            "description": "Lista de números a sumar.",
-                        }
-                    },
-                    "required": ["numbers"],
-                },
-            },
-        ]
-    }
-]
+        }
+        for tool in tools
+    ]
+
+
+def to_gemini_tools(tools: Sequence[CanonicalTool]) -> list[dict[str, Any]]:
+    return [
+        {
+            "functionDeclarations": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                }
+                for tool in tools
+            ]
+        }
+    ]
+
+
+OPENAI_TOOLS = to_openai_tools(CANONICAL_TOOLS)
+GEMINI_TOOLS = to_gemini_tools(CANONICAL_TOOLS)
 
 
 def generate_lorem_ipsum(characters: int) -> str:

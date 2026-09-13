@@ -15,3 +15,19 @@ def test_pcm_wave_level_is_quiet_for_silence() -> None:
 
 def test_pcm_wave_level_detects_voice_band_tone() -> None:
     assert pcm_wave_level(_tone(220)) > 0.2
+
+
+def test_pcm_speech_features_marks_voice_tone_as_voiced() -> None:
+    from app.features.transcription.service import pcm_speech_features
+
+    _level, voiced, rms = pcm_speech_features(_tone(220))
+    assert voiced is True
+    assert rms > 0.01
+
+
+def test_pcm_speech_features_rejects_silence() -> None:
+    from app.features.transcription.service import pcm_speech_features
+
+    _level, voiced, rms = pcm_speech_features(b"\x00\x00" * 1600)
+    assert voiced is False
+    assert rms == 0.0

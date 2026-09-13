@@ -1,9 +1,12 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
+import { showToast } from '../infrastructure/toast';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
   connectAnalyser: (analyser: AnalyserNode, sampleRate?: number) => void;
+  connectPlaybackAnalyser?: (analyser: AnalyserNode, sampleRate?: number) => void;
+  disconnectPlaybackAnalyser?: () => void;
   disconnectAnalyser: () => void;
   setPlaying?: (next: boolean) => void;
   resetLiveWave?: () => void;
@@ -59,15 +62,23 @@ function setControl(button: HTMLButtonElement, icon: string, caption: string | n
   button.append(node);
 }
 
-export function bootLiveMonitor(apiUrl: string): void {
+export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?: string, autoStart = false): void {
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector('#conversationEmpty');
-  if (!conversation) return;
+  if (!conversation) {
+    showToast('No se encontró el panel de la llamada.', 'error');
+    return;
+  }
+  if (conversation instanceof HTMLElement && conversation.dataset.liveBooted === '1') return;
+  if (conversation instanceof HTMLElement) conversation.dataset.liveBooted = '1';
 
   const restartBtn = stealButton('rewindBtn');
   const callBtn = stealButton('startBtn');
   const pauseBtn = stealButton('playBtn');
-  if (!callBtn || !restartBtn || !pauseBtn) return;
+  if (!callBtn || !restartBtn || !pauseBtn) {
+    showToast('No se pudieron conectar los controles de la llamada.', 'error');
+    return;
+  }
 
   setControl(restartBtn, 'rotate-ccw', 'Reiniciar', 'Reiniciar llamada');
   setControl(callBtn, 'phone', 'Llamar', 'Empezar llamada');
@@ -77,9 +88,12 @@ export function bootLiveMonitor(apiUrl: string): void {
   const capture = new AudioCaptureAdapter(`${apiUrl}/transcribe`);
   const pcm = new PcmAudioQueue();
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/call`;
+  const authToken = typeof token === 'string' ? token.trim() : '';
+  const attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
   const pendingTools = new Map<string, string>();
 
   let socket: WebSocket | null = null;
+  let connected = false;
   let live = false;
   let paused = false;
   let processing = false;
@@ -91,6 +105,12 @@ export function bootLiveMonitor(apiUrl: string): void {
   let customerBubble: HTMLElement | null = null;
   let customerShown = '';
   let ignoreTts = false;
+  let waveFromAnalyser = false;
+  let ttsRate = 24000;
+  let sentBarge = false;
+  let bargeHits = 0;
+  let bargeArmedAt = 0;
+  let noiseFloor = 0.2;
 
   function stamp(): string {
     return formatTime((performance.now() - startedAt) / 1000);
@@ -125,6 +145,34 @@ export function bootLiveMonitor(apiUrl: string): void {
       'system-event',
       `<span class="call-ended-label"><i data-lucide="${icon}"></i><span>${escapeHtml(message)}</span></span>`,
     );
+  }
+
+  function showTransportError(message: string, icon = 'triangle-alert'): void {
+    showToast(message, 'error');
+    note(message, icon);
+  }
+
+  function hookMicWave(): void {
+    const tap = capture.frequencyAnalyser();
+    if (!tap) return;
+    waveApi?.connectAnalyser(tap.analyser, tap.sampleRate);
+    waveFromAnalyser = true;
+  }
+
+  function hookTtsWave(): void {
+    const tap = pcm.frequencyAnalyser();
+    if (!tap) return;
+    waveApi?.connectPlaybackAnalyser?.(tap.analyser, tap.sampleRate);
+  }
+
+  function unhookTtsWave(): void {
+    waveApi?.disconnectPlaybackAnalyser?.();
+  }
+
+  function sendSocketCommand(payload: Record<string, unknown>): boolean {
+    if (!connected || !socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify(payload));
+    return true;
   }
 
   function appendTokens(target: HTMLElement, text: string): void {
@@ -238,28 +286,55 @@ export function bootLiveMonitor(apiUrl: string): void {
   }
 
   async function listen(): Promise<void> {
-    if (!live || paused) return;
+    if (!live || paused || !connected) return;
     capture.primeContext();
     capture.onLevel((level) => {
       if (!live || paused) return;
-      waveApi?.pushAmplitude(level);
+      waveApi?.setPlaying?.(true);
+      waveApi?.pushAmplitude(Math.max(level, pcm.voiceLevel()));
     });
     const started = await capture.startPcmStream((frame) => {
-      if (!live || paused || !socket || socket.readyState !== WebSocket.OPEN) return;
-      waveApi?.pushAmplitude(capture.voiceLevel());
+      if (!live || paused || !connected || !socket || socket.readyState !== WebSocket.OPEN) return;
+      const micLevel = capture.voiceLevel();
+      const voiced = capture.isVoiced();
+      const now = performance.now();
+      waveApi?.setPlaying?.(true);
+      waveApi?.pushAmplitude(Math.max(micLevel, pcm.voiceLevel()));
+      const agentBusy = processing || pcmReady;
+      if (!agentBusy) {
+        bargeHits = 0;
+        if (micLevel < noiseFloor + 0.04) noiseFloor = Math.max(0.2, noiseFloor * 0.94 + micLevel * 0.06);
+      } else if (!sentBarge && now >= bargeArmedAt) {
+        const floor = Math.max(0.2, noiseFloor);
+        const speech = voiced && micLevel >= Math.max(0.4, floor + 0.22);
+        const strong = voiced && micLevel >= Math.max(0.55, floor + 0.35);
+        bargeHits = speech ? bargeHits + 1 : 0;
+        if (strong || bargeHits >= 3) {
+          sentBarge = true;
+          bargeHits = 0;
+          sendSocketCommand({ type: 'barge' });
+        }
+      }
       socket.send(frame.buffer);
     });
-    if (!started) note('No se pudo abrir el micrófono', 'mic-off');
+    if (!started) {
+      note('No se pudo abrir el micrófono', 'mic-off');
+      showToast('Permite el micrófono para enviar audio al agente.', 'error');
+      return;
+    }
+    hookMicWave();
   }
 
   function handleEvent(data: Record<string, unknown>): void {
     const type = String(data.type ?? '');
     if (type === 'call.connected') {
-      socket?.send(JSON.stringify({ type: 'pcm.start', sample_rate: 16000 }));
-      void listen();
+      if (connected) return;
+      connected = true;
+      showToast('Llamada conectada. Habla como en una llamada IP.', 'success');
+      note('Llamada conectada', 'phone');
+      if (live && !paused && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
     } else if (type === 'wave.level') {
       waveApi?.setPlaying?.(true);
-      waveApi?.pushAmplitude(Number(data.value) || 0.04);
     } else if (type === 'customer.partial') {
       setCustomerPartial(String(data.text ?? ''));
     } else if (type === 'customer.transcript') {
@@ -277,23 +352,33 @@ export function bootLiveMonitor(apiUrl: string): void {
       if (id) completeTool(id, String(data.title ?? data.tool ?? 'Tool'), String(data.status ?? 'Completado'));
     } else if (type === 'turn.started') {
       ignoreTts = false;
+      sentBarge = false;
+      bargeHits = 0;
     } else if (type === 'tts.format') {
       if (ignoreTts) return;
-      if (!pcmReady) {
-        pcm.start(Number(data.sample_rate) || 24000);
-        pcmReady = true;
-      }
+      ttsRate = Number(data.sample_rate) || 24000;
     } else if (type === 'tts.cancel' || type === 'turn.cancelled') {
       ignoreTts = true;
+      sentBarge = false;
+      bargeHits = 0;
+      bargeArmedAt = 0;
       pcm.cancel();
       pcmReady = false;
       processing = false;
+      unhookTtsWave();
+      hookMicWave();
       finishAgent();
     } else if (type === 'turn.completed') {
       finishAgent();
       processing = false;
       pcmReady = false;
-      pcm.finish(() => undefined);
+      sentBarge = false;
+      bargeHits = 0;
+      bargeArmedAt = 0;
+      pcm.finish(() => {
+        unhookTtsWave();
+        hookMicWave();
+      });
     } else if (type === 'transcript.empty') {
       processing = false;
     } else if (type === 'error') {
@@ -304,32 +389,88 @@ export function bootLiveMonitor(apiUrl: string): void {
   }
 
   function bindSocket(): void {
-    socket = new WebSocket(socketUrl);
-    socket.binaryType = 'arraybuffer';
-    socket.addEventListener('message', (event) => {
+    const current = new WebSocket(socketUrl);
+    socket = current;
+    connected = false;
+    current.binaryType = 'arraybuffer';
+    current.addEventListener('open', () => {
+      if (socket !== current || closing || !live) {
+        current.close();
+        return;
+      }
+      if (!authToken || !attachedConversationId) {
+        showTransportError('No se puede autenticar la llamada: faltan credenciales.');
+        current.close();
+        return;
+      }
+      current.send(JSON.stringify({ type: 'auth', token: authToken }));
+      current.send(JSON.stringify({ type: 'conversation.attach', conversation_id: attachedConversationId }));
+    });
+    current.addEventListener('message', (event) => {
+      if (socket !== current || !live) return;
       if (typeof event.data !== 'string') {
         if (paused || ignoreTts) return;
         const bytes = new Uint8Array(event.data as ArrayBuffer);
+        if (!pcmReady) {
+          pcm.start(ttsRate);
+          pcmReady = true;
+        }
         pcm.enqueue(bytes, () => undefined, () => undefined);
-        waveApi?.pushAmplitude(pcm.voiceLevel());
+        hookTtsWave();
+        bargeArmedAt = Math.max(bargeArmedAt, performance.now() + 500);
+        waveApi?.setPlaying?.(true);
+        waveApi?.pushAmplitude(Math.max(capture.voiceLevel(), pcm.voiceLevel()));
         return;
       }
-      handleEvent(JSON.parse(event.data) as Record<string, unknown>);
+      try {
+        const data: unknown = JSON.parse(event.data);
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+        handleEvent(data as Record<string, unknown>);
+      } catch {
+        showTransportError('La llamada recibió un mensaje inválido.');
+      }
     });
-    socket.addEventListener('close', () => {
+    current.addEventListener('error', () => {
+      if (socket !== current) return;
+      showTransportError('No se pudo abrir el canal de la llamada.');
+    });
+    current.addEventListener('close', (event) => {
+      if (socket !== current) return;
+      connected = false;
       if (closing || !live) return;
       void hangup(false);
-      note('La llamada se desconectó', 'unplug');
+      if (event.code === 4401) {
+        showTransportError('La sesión de la llamada no es válida. Inicia sesión de nuevo.');
+      } else if (event.code === 4403) {
+        showTransportError('Esta cuenta no puede adjuntar la conversación.');
+      } else {
+        note('La llamada se desconectó', 'unplug');
+        showToast('La llamada se desconectó.', 'warning');
+      }
     });
   }
 
   async function startCall(): Promise<void> {
     if (live && !paused) return;
+    if (!authToken || !attachedConversationId) {
+      showTransportError('No se puede iniciar la llamada: faltan credenciales.');
+      return;
+    }
     if (live && paused) {
       await resumeCall();
       return;
     }
+    showToast('Conectando la llamada…', 'info');
     capture.primeContext();
+    live = true;
+    paused = false;
+    connected = false;
+    processing = false;
+    pcmReady = false;
+    closing = false;
+    startedAt = performance.now();
+    syncControls();
+    bindSocket();
     if (!waveApi) {
       try {
         waveApi = await waitForMonitor(1500);
@@ -337,16 +478,8 @@ export function bootLiveMonitor(apiUrl: string): void {
         waveApi = monitor() ?? null;
       }
     }
-    live = true;
-    paused = false;
-    processing = false;
-    pcmReady = false;
-    closing = false;
-    startedAt = performance.now();
     waveApi?.resetLiveWave?.();
     waveApi?.setPlaying?.(true);
-    syncControls();
-    bindSocket();
   }
 
   async function resumeCall(): Promise<void> {
@@ -356,9 +489,8 @@ export function bootLiveMonitor(apiUrl: string): void {
     processing = false;
     pcmReady = false;
     waveApi?.setPlaying?.(true);
-    socket?.send(JSON.stringify({ type: 'pcm.start', sample_rate: 16000 }));
     syncControls();
-    void listen();
+    if (connected && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
   }
 
   function pauseCall(): void {
@@ -368,8 +500,9 @@ export function bootLiveMonitor(apiUrl: string): void {
     pcmReady = false;
     capture.stopPcmStream();
     capture.cancelRecording();
-    socket?.send(JSON.stringify({ type: 'pcm.stop' }));
+    sendSocketCommand({ type: 'pcm.stop' });
     pcm.cancel();
+    unhookTtsWave();
     waveApi?.setPlaying?.(false);
     syncControls();
   }
@@ -382,9 +515,11 @@ export function bootLiveMonitor(apiUrl: string): void {
     processing = false;
     capture.stopPcmStream();
     capture.abort();
-    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'pcm.stop' }));
+    sendSocketCommand({ type: 'pcm.stop' });
+    connected = false;
     pcm.cancel();
     waveApi?.setPlaying?.(false);
+    waveFromAnalyser = false;
     waveApi?.disconnectAnalyser();
     const current = socket;
     socket = null;
@@ -410,7 +545,9 @@ export function bootLiveMonitor(apiUrl: string): void {
 
   callBtn.addEventListener('click', () => {
     void startCall().catch((error) => {
-      note(error instanceof Error ? error.message : 'No se pudo iniciar la llamada', 'phone-off');
+      const message = error instanceof Error ? error.message : 'No se pudo iniciar la llamada';
+      note(message, 'phone-off');
+      showToast(message, 'error');
     });
   });
   pauseBtn.addEventListener('click', () => {
@@ -425,6 +562,14 @@ export function bootLiveMonitor(apiUrl: string): void {
 
   void waitForMonitor().then((api) => {
     waveApi = api;
-    api.setPlaying?.(false);
+    if (live && !paused) api.setPlaying?.(true);
   }).catch(() => undefined);
+
+  if (autoStart) {
+    void startCall().catch((error) => {
+      const message = error instanceof Error ? error.message : 'No se pudo iniciar la llamada';
+      note(message, 'phone-off');
+      showToast(message, 'error');
+    });
+  }
 }

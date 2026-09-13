@@ -1,12 +1,12 @@
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from ...config import AppEnv, Provider, get_app_env, get_model_chain
-from ...providers import ProviderError, stream_chat, stream_provider
-from .tools import describe_tool_done, describe_tool_start, execute_tool, parse_arguments
+from ...providers import ProviderError, llm_provider as default_llm
+from ...providers.contracts import LLMProvider
+from .tools import CANONICAL_TOOLS, describe_tool_done, describe_tool_start, execute_tool, parse_arguments
 
 Message = dict[str, Any]
-ProviderStream = Callable[..., AsyncIterator[str]]
 MAX_TOOL_ROUNDS = 4
 
 
@@ -14,9 +14,10 @@ async def stream_agent(
     prompt: str,
     *,
     messages: Sequence[Message] | None = None,
-    provider_stream: ProviderStream,
+    llm: LLMProvider | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, str]]]:
-    """Stream the existing provider chain without duplicating agent behavior."""
+    """Retry/fallback over the model chain using an explicit LLM contract."""
+    provider = llm or default_llm
     chain = get_model_chain()
     attempts_per_model = 3
     total_attempts = len(chain) * attempts_per_model
@@ -29,7 +30,7 @@ async def stream_agent(
 
     attempt = 0
     permanent_failures: set[Provider] = set()
-    use_tools = provider_stream is stream_provider
+    use_tools = provider.capabilities.supports_tools
     while attempt < len(configs):
         config = configs[attempt]
         attempt += 1
@@ -41,11 +42,11 @@ async def stream_agent(
                 conversation: list[Message] = [*(messages or []), {"role": "user", "content": prompt}]
                 for _ in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
-                    async for kind, payload in stream_chat(
+                    async for kind, payload in provider.stream(
                         config,
                         prompt,
                         messages=conversation,
-                        tools=True,
+                        tools=CANONICAL_TOOLS,
                     ):
                         if kind == "token":
                             emitted_tokens = True
@@ -98,14 +99,17 @@ async def stream_agent(
                 yield "done", {"provider": config.provider.value, "model": config.model}
                 return
 
-            if messages is None:
-                stream = provider_stream(config, prompt)
-            else:
-                conversation = [*messages, {"role": "user", "content": prompt}]
-                stream = provider_stream(config, prompt, messages=conversation)
-            async for token in stream:
+            conversation = None if messages is None else [*messages, {"role": "user", "content": prompt}]
+            async for kind, payload in provider.stream(
+                config,
+                prompt,
+                messages=conversation,
+                tools=None,
+            ):
+                if kind != "token":
+                    continue
                 emitted_tokens = True
-                yield "token", {"text": token}
+                yield "token", {"text": str(payload["text"])}
             if not emitted_tokens:
                 raise ProviderError("Provider returned an empty stream")
             yield "done", {"provider": config.provider.value, "model": config.model}

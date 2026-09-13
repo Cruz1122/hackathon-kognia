@@ -23,9 +23,7 @@ RUN apt-get update \
 COPY requirements.txt backend/requirements.txt
 RUN python -m pip install --no-cache-dir -r backend/requirements.txt
 
-COPY app backend/app
-
-# Download the speech-recognition model into the backend image.
+# Download speech models before copying app code so source edits keep this layer.
 RUN mkdir -p backend/models/sherpa-es \
     && curl --fail --location --show-error \
         -o /tmp/sherpa-es.tar.bz2 \
@@ -37,12 +35,15 @@ RUN mkdir -p backend/models/sherpa-es \
     && rm -rf "$extracted" /tmp/sherpa-es.tar.bz2 \
     && test -f backend/models/sherpa-es/tokens.txt
 
-# Piper model — local TTS voice used by /synthesize and the voice call demo.
 RUN python -m piper.download_voices \
         --download-dir "$PIPER_MODEL_DIR" \
         "$PIPER_TTS_VOICE" \
     && test -f "$PIPER_MODEL_DIR/$PIPER_TTS_VOICE.onnx" \
     && test -f "$PIPER_MODEL_DIR/$PIPER_TTS_VOICE.onnx.json"
+
+COPY app backend/app
+COPY alembic.ini backend/alembic.ini
+COPY migrations backend/migrations
 
 RUN groupadd --system --gid 10001 appuser \
     && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin appuser \

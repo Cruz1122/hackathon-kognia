@@ -38,7 +38,7 @@ build-api: check-venv
 
 build-web:
 	@echo "[web] Generando build de Astro/Vite"
-	cd frontend && pnpm run build
+	cd frontend && PUBLIC_API_URL="$${PUBLIC_API_URL:-http://localhost:18474}" pnpm run build
 
 smoke:
 	./scripts/smoke.sh

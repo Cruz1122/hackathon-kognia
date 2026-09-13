@@ -4,17 +4,29 @@ import { parseSse } from './sse-parser';
 type TokenEvent = { text?: unknown };
 
 export class AgentStreamAdapter {
-  constructor(private readonly apiUrl: string) {}
+  constructor(
+    private readonly apiUrl: string,
+    private readonly token?: string,
+    private readonly conversationId?: string,
+  ) {}
 
   async *stream(
     prompt: string,
     history: ChatMessage[],
     signal: AbortSignal,
   ): AsyncGenerator<{ type: 'token' | 'done' | 'error'; text?: string; message?: string }> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    };
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    const body = this.conversationId
+      ? { prompt, conversation_id: this.conversationId }
+      : { prompt, messages: history, channel: 'voice-demo' };
     const response = await fetch(`${this.apiUrl}/ask`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ prompt, messages: history, channel: 'voice-demo' }),
+      headers,
+      body: JSON.stringify(body),
       signal,
     });
     if (!response.ok) throw new Error(`El agente no está disponible (HTTP ${response.status})`);

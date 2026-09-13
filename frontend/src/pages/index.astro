@@ -1,8 +1,6 @@
 ---
-const apiUrl = import.meta.env.PUBLIC_API_URL;
-if (!apiUrl) {
-  throw new Error('Falta PUBLIC_API_URL. Definela en frontend/.env (ver frontend/.env.example).');
-}
+const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
+import '../styles/toast.css';
 ---
 <html lang="es">
   <head>
@@ -45,7 +43,54 @@ if (!apiUrl) {
       padding: 32px 0 84px;
     }
 
-    .app-content[hidden], .state-view[hidden] { display: none !important; }
+    .app-content[hidden], .state-view[hidden], .auth-panel[hidden] { display: none !important; }
+
+    .auth-panel {
+      display: grid;
+      gap: 16px;
+      margin: 0 12px 22px;
+      padding: 20px;
+      border-radius: var(--radius-full);
+      background: var(--ui-cream);
+      box-shadow: 0 8px 28px rgba(65,65,65,.08);
+    }
+
+    .auth-copy { display: grid; gap: 5px; }
+    .auth-copy h2 { margin: 0; font-size: 22px; line-height: 1.05; letter-spacing: -.025em; }
+    .auth-copy p:last-child { margin: 0; color: rgba(65,65,65,.68); font-size: 14px; line-height: 1.35; }
+
+    .auth-form {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .auth-field { display: grid; gap: 5px; min-width: min(220px, 100%); flex: 1 1 220px; }
+    .auth-field span { padding-inline: 14px; font-size: 12px; font-weight: 700; }
+    .auth-field input {
+      width: 100%;
+      border: 0;
+      border-radius: var(--radius-full);
+      padding: 12px 15px;
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
+      font: inherit;
+      outline: 0;
+    }
+    .auth-field input:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
+    .auth-submit {
+      border: 0;
+      border-radius: var(--radius-full);
+      padding: 12px 20px;
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .auth-submit:disabled { cursor: wait; opacity: .62; }
+    .auth-submit:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
+    .auth-status { min-height: 1.25em; margin: 0; padding-inline: 14px; font-size: 13px; font-weight: 600; }
 
     .topline {
       display: flex;
@@ -688,6 +733,9 @@ if (!apiUrl) {
       .tool-call { width: 92%; }
       .conversation { margin-top: 18px; padding-inline: 2px; }
       .demo-switcher { right: 10px; bottom: 10px; }
+      .auth-panel { margin-inline: 0; padding: 16px; }
+      .auth-form { align-items: stretch; }
+      .auth-submit { width: 100%; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -720,8 +768,30 @@ if (!apiUrl) {
     </defs>
   </svg>
 
+  <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
   <main class="page">
-    <div class="app-content" id="appContent">
+    <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
+      <div class="auth-copy">
+        <p class="eyebrow">Acceso de demo</p>
+        <h2 id="authTitle">Inicia sesión para abrir una llamada</h2>
+        <p>Usa un ADMIN creado por el bootstrap de la API.</p>
+      </div>
+      <form class="auth-form" id="authForm">
+        <label class="auth-field">
+          <span>Correo</span>
+          <input id="authEmail" name="email" type="email" autocomplete="username" required maxlength="320" />
+        </label>
+        <label class="auth-field">
+          <span>Contraseña</span>
+          <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
+        </label>
+        <button class="auth-submit" type="submit" id="authSubmit">Entrar</button>
+      </form>
+      <p class="auth-status" id="authStatus" role="status" aria-live="polite"></p>
+    </section>
+
+    <div class="app-content" id="appContent" hidden>
       <header class="topline">
         <div>
           <p class="eyebrow">Monitoreo</p>
@@ -801,6 +871,9 @@ if (!apiUrl) {
     let externalAnalyser = null;
     let externalSampleRate = 16000;
     let analyserBins = null;
+    let playbackAnalyser = null;
+    let playbackSampleRate = 16000;
+    let playbackBins = null;
     let callEnded = false;
     let waveDpr = 1;
     let waveWidth = 1;
@@ -809,6 +882,7 @@ if (!apiUrl) {
     const liveSamples = [];
     const recordedSamples = [];
 
+    const authPanel = document.getElementById('authPanel');
     const appContent = document.getElementById('appContent');
     const emptyState = document.getElementById('emptyState');
     const errorState = document.getElementById('errorState');
@@ -981,6 +1055,32 @@ if (!apiUrl) {
       pushAmplitude(amplitudeFromFrequencyFrame(frequencies, sampleRate));
     }
 
+    function readAnalyserFrame(analyser, bins, sampleRate) {
+      try {
+        analyser.getByteFrequencyData(bins);
+        return { bins, sampleRate };
+      } catch {
+        try {
+          return { amplitude: voiceLevelFromAnalyser(analyser, bins, sampleRate) };
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    function mixFrequencyBins(left, leftRate, right, rightRate) {
+      if (!left.length) return { bins: right, sampleRate: rightRate };
+      if (!right.length) return { bins: left, sampleRate: leftRate };
+      const length = Math.max(left.length, right.length);
+      const mixed = new Uint8Array(length);
+      for (let i = 0; i < length; i++) {
+        const li = left[Math.min(left.length - 1, Math.floor(i * left.length / length))] ?? 0;
+        const ri = right[Math.min(right.length - 1, Math.floor(i * right.length / length))] ?? 0;
+        mixed[i] = li > ri ? li : ri;
+      }
+      return { bins: mixed, sampleRate: Math.max(leftRate, rightRate) };
+    }
+
     const SPEECH_SEGMENTS = [
       [1.0, 4.7, 'customer'],
       [5.2, 8.9, 'agent'],
@@ -1033,9 +1133,21 @@ if (!apiUrl) {
         analyserBins = new Uint8Array(analyser.frequencyBinCount);
         void analyser.context?.resume?.();
       },
+      connectPlaybackAnalyser(analyser, sampleRate = 16000) {
+        playbackAnalyser = analyser;
+        playbackSampleRate = sampleRate;
+        playbackBins = new Uint8Array(analyser.frequencyBinCount);
+        void analyser.context?.resume?.();
+      },
+      disconnectPlaybackAnalyser() {
+        playbackAnalyser = null;
+        playbackBins = null;
+      },
       disconnectAnalyser() {
         externalAnalyser = null;
         analyserBins = null;
+        playbackAnalyser = null;
+        playbackBins = null;
       },
       setPlaying,
       resetLiveWave() {
@@ -1217,8 +1329,10 @@ if (!apiUrl) {
       setToolState('tool1', now >= 19.2, !animateCrossings);
       setToolState('tool2', now >= 31.5, !animateCrossings);
 
-      const hasMessages = [...document.querySelectorAll('.message-row.timeline-item')].some(item => now >= Number(item.dataset.at || 0));
-      conversationEmpty.hidden = hasMessages;
+      if (!window.__liveDebugControls) {
+        const hasMessages = [...document.querySelectorAll('.message-row.timeline-item')].some(item => now >= Number(item.dataset.at || 0));
+        conversationEmpty.hidden = hasMessages;
+      }
       previousTimelineTime = now;
     }
 
@@ -1286,8 +1400,8 @@ if (!apiUrl) {
       setToolState('tool2', false, true);
       nameValue.textContent = 'Sin nombre';
       nameChip.classList.remove('updating');
-      reconnect.classList.remove('reconnected');
-      reconnectText.textContent = 'Reconectando';
+      reconnect?.classList.remove('reconnected');
+      if (reconnectText) reconnectText.textContent = 'Reconectando';
       conversationEmpty.hidden = false;
       previousTimelineTime = 0;
     }
@@ -1295,7 +1409,9 @@ if (!apiUrl) {
     function setMode(next) {
       mode = next;
       document.querySelectorAll('.demo-switcher button').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
-      appContent.hidden = mode === 'empty' || mode === 'error';
+      if (!authPanel || authPanel.hidden) {
+        appContent.hidden = mode === 'empty' || mode === 'error';
+      }
       emptyState.hidden = mode !== 'empty';
       errorState.hidden = mode !== 'error';
 
@@ -1353,7 +1469,7 @@ if (!apiUrl) {
 
     if (!window.__liveDebugControls) playBtn.addEventListener('click', () => setPlaying(!playing));
     if (!window.__liveDebugControls) startBtn.addEventListener('click', () => seek(0));
-    if (!window.__liveDebugControls) liveBtn.addEventListener('click', jumpToLive);
+    if (!window.__liveDebugControls) liveBtn?.addEventListener('click', jumpToLive);
     if (!window.__liveDebugControls) document.getElementById('rewindBtn').addEventListener('click', () => seek(current - 10));
     if (!window.__liveDebugControls) document.getElementById('forwardBtn')?.addEventListener('click', () => seek(current + 10));
 
@@ -1386,14 +1502,21 @@ if (!apiUrl) {
         while (!frozen && sampleAccumulator >= SAMPLE_INTERVAL && liveEdge < DEMO_DURATION) {
           sampleAccumulator -= SAMPLE_INTERVAL;
           const sampleTime = Math.max(previousEdge, liveEdge - sampleAccumulator);
-          if (externalAnalyser && analyserBins) {
-            try {
-              externalAnalyser.getByteFrequencyData(analyserBins);
-              pushFrequencyFrame(analyserBins, externalSampleRate);
-            } catch {
-              try { pushAmplitude(voiceLevelFromAnalyser(externalAnalyser, analyserBins, externalSampleRate)); }
-              catch { pushAmplitude(.04); }
-            }
+          const micFrame = externalAnalyser && analyserBins
+            ? readAnalyserFrame(externalAnalyser, analyserBins, externalSampleRate)
+            : null;
+          const ttsFrame = playbackAnalyser && playbackBins
+            ? readAnalyserFrame(playbackAnalyser, playbackBins, playbackSampleRate)
+            : null;
+          if (micFrame?.bins && ttsFrame?.bins) {
+            const mixed = mixFrequencyBins(micFrame.bins, micFrame.sampleRate, ttsFrame.bins, ttsFrame.sampleRate);
+            pushFrequencyFrame(mixed.bins, mixed.sampleRate);
+          } else if (micFrame?.bins) {
+            pushFrequencyFrame(micFrame.bins, micFrame.sampleRate);
+          } else if (ttsFrame?.bins) {
+            pushFrequencyFrame(ttsFrame.bins, ttsFrame.sampleRate);
+          } else if (micFrame?.amplitude != null || ttsFrame?.amplitude != null) {
+            pushAmplitude(Math.max(micFrame?.amplitude ?? 0, ttsFrame?.amplitude ?? 0));
           } else if (!window.__liveDebugControls) {
             pushFrequencyFrame(demoFrequencyFrame(sampleTime), 16000);
           }
@@ -1439,7 +1562,107 @@ if (!apiUrl) {
 
     <script>
       import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
-      bootLiveMonitor(document.body.dataset.apiUrl ?? '');
+      import { showToast } from '../features/voice-call/infrastructure/toast';
+
+      const apiUrl = document.body.dataset.apiUrl ?? '';
+      const authPanel = document.getElementById('authPanel');
+      const authForm = document.getElementById('authForm');
+      const authEmail = document.getElementById('authEmail');
+      const authPassword = document.getElementById('authPassword');
+      const authSubmit = document.getElementById('authSubmit');
+      const authStatus = document.getElementById('authStatus');
+      const appContent = document.getElementById('appContent');
+      const tokenKey = 'kognia.auth.access-token';
+      const conversationKey = 'kognia.auth.conversation-id';
+
+      function setStatus(message: string): void {
+        if (authStatus) authStatus.textContent = message;
+      }
+
+      function showApp(token: string, conversationId: string): void {
+        if (authPanel) authPanel.hidden = true;
+        if (appContent) appContent.hidden = false;
+        bootLiveMonitor(apiUrl, token, conversationId, true);
+      }
+
+      async function responseData(response: Response): Promise<Record<string, unknown>> {
+        try {
+          const data: unknown = await response.json();
+          return data && typeof data === 'object' && !Array.isArray(data)
+            ? data as Record<string, unknown>
+            : {};
+        } catch {
+          return {};
+        }
+      }
+
+      async function restoreSession(): Promise<void> {
+        const token = sessionStorage.getItem(tokenKey)?.trim() ?? '';
+        const conversationId = sessionStorage.getItem(conversationKey)?.trim() ?? '';
+        if (!token || !conversationId) return;
+        const [me, conversation] = await Promise.all([
+          fetch(`${apiUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${apiUrl}/conversations/${encodeURIComponent(conversationId)}`, { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        if (me.ok && conversation.ok) {
+          showApp(token, conversationId);
+          return;
+        }
+        sessionStorage.removeItem(tokenKey);
+        sessionStorage.removeItem(conversationKey);
+      }
+
+      async function createSession(email: string, password: string): Promise<void> {
+        const loginResponse = await fetch(`${apiUrl}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        if (!loginResponse.ok) throw new Error('Correo o contraseña inválidos.');
+        const login = await responseData(loginResponse);
+        const token = typeof login.access_token === 'string' ? login.access_token.trim() : '';
+        if (!token) throw new Error('La API no devolvió una sesión válida.');
+
+        const conversationResponse = await fetch(`${apiUrl}/conversations`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ channel: 'voice-demo' }),
+        });
+        if (!conversationResponse.ok) throw new Error('El usuario no puede abrir una conversación.');
+        const conversation = await responseData(conversationResponse);
+        const conversationId = typeof conversation.id === 'string' ? conversation.id.trim() : '';
+        if (!conversationId) throw new Error('La API no devolvió una conversación válida.');
+
+        sessionStorage.setItem(tokenKey, token);
+        sessionStorage.setItem(conversationKey, conversationId);
+        showApp(token, conversationId);
+      }
+
+      authForm?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const email = authEmail instanceof HTMLInputElement ? authEmail.value : '';
+        const password = authPassword instanceof HTMLInputElement ? authPassword.value : '';
+        if (!(authSubmit instanceof HTMLButtonElement)) return;
+        authSubmit.disabled = true;
+        setStatus('Conectando…');
+        void createSession(email, password)
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : 'No se pudo iniciar sesión.';
+            setStatus(message);
+            showToast(message, 'error');
+          })
+          .finally(() => {
+            authSubmit.disabled = false;
+          });
+      });
+
+      void restoreSession().catch(() => {
+        sessionStorage.removeItem(tokenKey);
+        sessionStorage.removeItem(conversationKey);
+      });
     </script>
   </body>
 </html>

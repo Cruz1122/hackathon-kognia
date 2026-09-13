@@ -54,7 +54,11 @@ def _get_recognizer() -> Any:
                 num_threads=int(os.getenv("SHERPA_THREADS", "2")),
                 sample_rate=16000,
                 feature_dim=80,
-                decoding_method="greedy_search",
+                low_freq=80.0,
+                decoding_method="modified_beam_search",
+                max_active_paths=4,
+                blank_penalty=0.4,
+                temperature_scale=1.2,
                 provider="cpu",
                 enable_endpoint_detection=True,
                 rule1_min_trailing_silence=100.0,
@@ -118,11 +122,11 @@ def finish_stream(stream: Any, sample_rate: int = 16000) -> str:
     return _result_text(recognizer.get_result(stream))
 
 
-def pcm_wave_level(pcm: bytes, sample_rate: int = 16000) -> float:
-    """Map signed-int16 PCM to a 0-1 speech envelope for the live spectrogram."""
+def pcm_speech_features(pcm: bytes, sample_rate: int = 16000) -> tuple[float, bool, float]:
+    """Return (visual_level, voiced, rms) for barge-in and STT gating."""
     count = len(pcm) // 2
     if count < 8:
-        return 0.04
+        return 0.04, False, 0.0
     samples = array.array("h")
     samples.frombytes(pcm[: count * 2])
     energy = 0
@@ -135,10 +139,18 @@ def pcm_wave_level(pcm: bytes, sample_rate: int = 16000) -> float:
         previous = sample
     rms = (energy / count) ** 0.5 / 32768.0
     if rms < 0.003:
-        return max(0.0, min(1.0, rms * 14))
+        return max(0.0, min(1.0, rms * 14)), False, rms
     pitch_hz = (crossings * sample_rate) / (2 * count)
     pitch = min(1.0, max(0.0, (min(500.0, max(70.0, pitch_hz)) - 70.0) / 430.0))
-    return max(0.0, min(1.0, rms * 10 * (0.45 + 0.55 * pitch)))
+    level = max(0.0, min(1.0, rms * 10 * (0.45 + 0.55 * pitch)))
+    voiced = rms >= 0.016 and 85.0 <= pitch_hz <= 340.0
+    return level, voiced, rms
+
+
+def pcm_wave_level(pcm: bytes, sample_rate: int = 16000) -> float:
+    """Map signed-int16 PCM to a 0-1 speech envelope for the live spectrogram."""
+    level, _voiced, _rms = pcm_speech_features(pcm, sample_rate)
+    return level
 
 
 def transcribe_pcm(pcm: bytes, sample_rate: int = 16000, *, vad: bool = True) -> str:

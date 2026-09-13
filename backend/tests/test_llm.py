@@ -1,12 +1,39 @@
 import json
+import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from app import main
+from app.auth.tokens import create_access_token
 from app.config import AppEnv, Provider, get_model_chain
-from app.providers import ProviderError, _gemini_text, _openai_text, stream_provider
+from app.db.models import User, UserRole
+from app.db.session import get_db
+from app.providers import FakeLLM, FakeSTT, FakeTTS, ProviderError, _gemini_text, _openai_text, stream_provider
+
+
+@pytest.fixture
+def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    secret = "test-llm-jwt-secret-012345678901234567890"
+    monkeypatch.setenv("JWT_SECRET_KEY", secret)
+    user = User(
+        id=uuid.uuid4(),
+        organization_id=uuid.uuid4(),
+        email="admin@test.invalid",
+        password_hash="hash",
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    session = AsyncMock()
+    session.get.return_value = user
+
+    async def override_db():
+        yield session
+
+    monkeypatch.setitem(main.app.dependency_overrides, get_db, override_db)
+    return {"Authorization": f"Bearer {create_access_token(user.id)}"}
 
 
 def event_names(chunks: list[str]) -> list[str]:
@@ -15,6 +42,28 @@ def event_names(chunks: list[str]) -> list[str]:
 
 def event_payload(chunk: str) -> dict[str, str]:
     return json.loads(chunk.splitlines()[1].removeprefix("data: "))
+
+
+def install_token_llm(monkeypatch: pytest.MonkeyPatch, handler) -> FakeLLM:
+    async def stream(config, prompt, *, messages=None, tools=None):
+        del messages, tools
+        async for item in handler(config, prompt):
+            yield item
+
+    fake = FakeLLM(stream, supports_tools=False)
+    monkeypatch.setattr(main, "llm_provider", fake)
+    return fake
+
+
+def install_message_llm(monkeypatch: pytest.MonkeyPatch, handler) -> FakeLLM:
+    async def stream(config, prompt, *, messages=None, tools=None):
+        del tools
+        async for item in handler(config, prompt, messages=messages):
+            yield item
+
+    fake = FakeLLM(stream, supports_tools=False)
+    monkeypatch.setattr(main, "llm_provider", fake)
+    return fake
 
 
 def test_model_catalog_is_hardcoded_by_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,7 +97,7 @@ async def test_test_environment_fallback_is_circular_and_bounded(monkeypatch: py
         raise ProviderError("upstream unavailable")
         yield prompt
 
-    monkeypatch.setattr(main, "stream_provider", always_fails)
+    install_token_llm(monkeypatch, always_fails)
     chunks = [chunk async for chunk in main._ask_stream("hello")]
 
     assert attempts == [
@@ -79,7 +128,7 @@ async def test_production_falls_back_from_luna_to_gemini(monkeypatch: pytest.Mon
             raise ProviderError("luna unavailable")
         yield "hola"
 
-    monkeypatch.setattr(main, "stream_provider", succeeds_on_gemini)
+    install_token_llm(monkeypatch, succeeds_on_gemini)
     chunks = [chunk async for chunk in main._ask_stream("hello")]
 
     assert attempts == [Provider.OPENAI, Provider.OPENAI, Provider.OPENAI, Provider.GEMINI]
@@ -97,7 +146,7 @@ async def test_partial_stream_does_not_fallback_or_duplicate(monkeypatch: pytest
         yield "partial"
         raise ProviderError("connection lost")
 
-    monkeypatch.setattr(main, "stream_provider", emits_then_fails)
+    install_token_llm(monkeypatch, emits_then_fails)
     chunks = [chunk async for chunk in main._ask_stream("hello")]
 
     assert attempts == [Provider.OPENAI]
@@ -185,7 +234,7 @@ async def test_permanent_failure_skips_provider_for_remaining_circular_attempts(
         raise ProviderError("temporary failure")
         yield prompt
 
-    monkeypatch.setattr(main, "stream_provider", permanent_gemini_failure)
+    install_token_llm(monkeypatch, permanent_gemini_failure)
     chunks = [chunk async for chunk in main._ask_stream("hello")]
 
     assert attempts == [
@@ -217,18 +266,25 @@ def test_gemini_parser_rejects_malformed_payloads(payload) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ask_validates_prompt_and_streams_sse(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ask_validates_prompt_and_streams_sse(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
 
-    async def fake_stream(config, prompt):
+    async def fake_stream(config, prompt, *, messages):
         yield "respuesta"
 
-    monkeypatch.setattr(main, "stream_provider", fake_stream)
+    install_message_llm(monkeypatch, fake_stream)
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/ask", json={"prompt": "hola"})
-        invalid = await client.post("/ask", json={"prompt": ""})
+        response = await client.post(
+            "/ask",
+            headers=auth_headers,
+            json={"prompt": "hola", "messages": [{"role": "user", "content": "contexto"}]},
+        )
+        invalid = await client.post("/ask", headers=auth_headers, json={"prompt": ""})
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -238,7 +294,10 @@ async def test_ask_validates_prompt_and_streams_sse(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-async def test_ask_forwards_voice_history_to_the_shared_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ask_forwards_voice_history_to_the_shared_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
     captured: list[dict[str, str]] = []
@@ -247,11 +306,12 @@ async def test_ask_forwards_voice_history_to_the_shared_agent(monkeypatch: pytes
         captured.extend(messages)
         yield "respuesta"
 
-    monkeypatch.setattr(main, "stream_provider", fake_stream)
+    fake = install_message_llm(monkeypatch, fake_stream)
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             "/ask",
+            headers=auth_headers,
             json={
                 "prompt": "¿Y después?",
                 "messages": [{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "Hola, ¿cómo estás?"}],
@@ -269,13 +329,8 @@ async def test_ask_forwards_voice_history_to_the_shared_agent(monkeypatch: pytes
 
 @pytest.mark.asyncio
 async def test_transcribe_accepts_raw_browser_audio(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_transcribe(audio: bytes, content_type: str) -> str:
-        captured.update(audio=audio, content_type=content_type)
-        return "transcripción local"
-
-    monkeypatch.setattr(main, "transcribe_audio", fake_transcribe)
+    fake = FakeSTT("transcripción local")
+    monkeypatch.setattr(main, "stt_provider", fake)
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
@@ -286,60 +341,79 @@ async def test_transcribe_accepts_raw_browser_audio(monkeypatch: pytest.MonkeyPa
 
     assert response.status_code == 200
     assert response.json() == {"text": "transcripción local"}
-    assert captured == {"audio": b"browser-audio", "content_type": "audio/webm;codecs=opus"}
+    assert fake.transcripts == [(b"browser-audio", "audio/webm;codecs=opus")]
 
 
 @pytest.mark.asyncio
 async def test_synthesize_returns_local_wav(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main, "synthesize_text", lambda text: b"RIFF-local-wav")
+    monkeypatch.setattr(main, "tts_provider", FakeTTS())
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/synthesize", json={"text": "Hola"})
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "audio/wav"
-    assert response.content == b"RIFF-local-wav"
+    assert response.content == b"RIFF-fake-wav"
 
 
 @pytest.mark.asyncio
 async def test_ask_returns_502_when_all_providers_fail_before_stream(
     monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
 ) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
 
-    async def failed_stream(config, prompt):
+    async def failed_stream(config, prompt, *, messages):
         raise ProviderError("upstream unavailable")
         yield prompt
 
-    monkeypatch.setattr(main, "stream_provider", failed_stream)
+    install_message_llm(monkeypatch, failed_stream)
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/ask", json={"prompt": "hola"})
+        response = await client.post(
+            "/ask",
+            headers=auth_headers,
+            json={"prompt": "hola", "messages": [{"role": "user", "content": "contexto"}]},
+        )
 
     assert response.status_code == 502
     assert response.json() == {"detail": "Los providers no pudieron responder."}
 
 
 @pytest.mark.asyncio
-async def test_ask_returns_503_without_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ask_returns_503_without_api_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/ask", json={"prompt": "hola"})
+        response = await client.post(
+            "/ask",
+            headers=auth_headers,
+            json={"prompt": "hola", "messages": [{"role": "user", "content": "contexto"}]},
+        )
 
     assert response.status_code == 503
 
 
 @pytest.mark.asyncio
-async def test_ask_returns_500_for_invalid_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ask_returns_500_for_invalid_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+) -> None:
     monkeypatch.setenv("APP_ENV", "staging")
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/ask", json={"prompt": "hola"})
+        response = await client.post(
+            "/ask",
+            headers=auth_headers,
+            json={"prompt": "hola", "messages": [{"role": "user", "content": "contexto"}]},
+        )
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Configuración de entorno inválida"}
@@ -348,18 +422,23 @@ async def test_ask_returns_500_for_invalid_environment(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_partial_provider_failure_keeps_200_and_emits_error(
     monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
 ) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
 
-    async def partial_stream(config, prompt):
+    async def partial_stream(config, prompt, *, messages):
         yield "parcial"
         raise ProviderError("connection lost")
 
-    monkeypatch.setattr(main, "stream_provider", partial_stream)
+    install_message_llm(monkeypatch, partial_stream)
     transport = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/ask", json={"prompt": "hola"})
+        response = await client.post(
+            "/ask",
+            headers=auth_headers,
+            json={"prompt": "hola", "messages": [{"role": "user", "content": "contexto"}]},
+        )
 
     assert response.status_code == 200
     assert "event: token" in response.text
