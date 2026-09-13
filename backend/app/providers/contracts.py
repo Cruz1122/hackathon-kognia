@@ -5,19 +5,13 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ..config import ModelConfig
+from ..agent.tool_schema import CanonicalTool
 
 
 @dataclass(frozen=True)
 class LLMCapabilities:
     supports_tools: bool
     supports_streaming: bool = True
-
-
-@dataclass(frozen=True)
-class CanonicalTool:
-    name: str
-    description: str
-    parameters: dict[str, Any]
 
 
 class LLMProvider(Protocol):

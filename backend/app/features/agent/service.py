@@ -4,10 +4,15 @@ from typing import Any
 from ...config import AppEnv, Provider, get_app_env, get_model_chain
 from ...providers import ProviderError, llm_provider as default_llm
 from ...providers.contracts import LLMProvider
+from ...agent.tools.contracts import ToolContext
+from ...agent.tools.loader import load_tool_registry
+from ...platform.rag.runtime import retriever as rag_retriever
+from ...platform.rag.citations import build_knowledge_context
 from .tools import CANONICAL_TOOLS, describe_tool_done, describe_tool_start, execute_tool, parse_arguments
 
 Message = dict[str, Any]
 MAX_TOOL_ROUNDS = 4
+TOOL_REGISTRY = load_tool_registry()
 
 
 async def stream_agent(
@@ -39,7 +44,8 @@ async def stream_agent(
         emitted_tokens = False
         try:
             if use_tools:
-                conversation: list[Message] = [*(messages or []), {"role": "user", "content": prompt}]
+                knowledge = await _knowledge_message(prompt, messages)
+                conversation: list[Message] = [*(messages or []), *knowledge, {"role": "user", "content": prompt}]
                 for _ in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
                     async for kind, payload in provider.stream(
@@ -64,10 +70,15 @@ async def stream_agent(
                         arguments = parse_arguments(raw_arguments)
                         title, status = describe_tool_start(name, arguments)
                         yield "tool.started", {"tool": name, "title": title, "status": status}
-                        try:
-                            result = execute_tool(name, arguments)
-                        except (TypeError, ValueError) as exc:
-                            result = str(exc)
+                        tool_result = await TOOL_REGISTRY.execute(
+                            name,
+                            arguments,
+                            ToolContext(request_id=f"agent-{config.provider.value}-{attempt}"),
+                        )
+                        if tool_result.ok:
+                            result = tool_result.data if isinstance(tool_result.data, str) else __import__("json").dumps(tool_result.data, ensure_ascii=False)
+                        else:
+                            result = __import__("json").dumps({"error_code": tool_result.error_code, "message": tool_result.message}, ensure_ascii=False)
                         done_title, done_status = describe_tool_done(name, arguments, result)
                         yield "tool.completed", {
                             "tool": name,
@@ -99,7 +110,8 @@ async def stream_agent(
                 yield "done", {"provider": config.provider.value, "model": config.model}
                 return
 
-            conversation = None if messages is None else [*messages, {"role": "user", "content": prompt}]
+            knowledge = await _knowledge_message(prompt, messages)
+            conversation: list[Message] | None = [*(messages or []), *knowledge, {"role": "user", "content": prompt}]
             async for kind, payload in provider.stream(
                 config,
                 prompt,
@@ -125,3 +137,16 @@ async def stream_agent(
                 return
 
     yield "error", {"message": "No hay proveedores disponibles"}
+
+
+async def _knowledge_message(prompt: str, messages: Sequence[Message] | None) -> list[Message]:
+    try:
+        result = await rag_retriever.search(prompt, conversation=list(messages or [])[-2:])
+    except Exception:
+        # Preserve the provider-facing history when knowledge infrastructure is
+        # down; the runtime remains usable and must not fabricate context.
+        return []
+    if result.evidence_state == "INSUFFICIENT" or not result.hits:
+        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}]
+    context, _ = build_knowledge_context(result)
+    return [{"role": "system", "content": "knowledge_status=available\nIf supplied knowledge does not support the answer, do not claim that the document says it.\n" + context}]

@@ -4,7 +4,8 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from ...providers.contracts import CanonicalTool
+from ...agent.tool_schema import CanonicalTool
+from ...agent.tools.loader import load_tool_registry
 
 LOREM = (
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
@@ -21,37 +22,24 @@ AGENT_SYSTEM = (
     "números. No inventes el resultado de esas tools: ejecútalas. Habla en español."
 )
 
-CANONICAL_TOOLS: tuple[CanonicalTool, ...] = (
-    CanonicalTool(
-        name="generate_lorem_ipsum",
-        description="Genera texto lorem ipsum con la cantidad de caracteres pedida.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "characters": {
-                    "type": "integer",
-                    "description": "Número de caracteres a generar (1 a 5000).",
-                }
-            },
-            "required": ["characters"],
-        },
-    ),
-    CanonicalTool(
-        name="sum_numbers",
-        description="Suma los números que indique el usuario.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "numbers": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "Lista de números a sumar.",
-                }
-            },
-            "required": ["numbers"],
-        },
-    ),
+def _canonical_domain_tools() -> tuple[CanonicalTool, ...]:
+    return tuple(
+        CanonicalTool(name=item["name"], description=item["description"], parameters=item["parameters"])
+        for item in load_tool_registry().schemas()
+    )
+
+
+# Kept as a compatibility export for older provider integrations. New domain tools
+# follow it and are the only tools with registered handlers in the runtime.
+_LEGACY_TOOLS: tuple[CanonicalTool, ...] = (
+    CanonicalTool("generate_lorem_ipsum", "Legacy compatibility helper.", {"type": "object", "properties": {"characters": {"type": "integer"}}, "required": ["characters"]}),
+    CanonicalTool("sum_numbers", "Legacy compatibility helper.", {"type": "object", "properties": {"numbers": {"type": "array"}}, "required": ["numbers"]}),
 )
+DOMAIN_TOOLS: tuple[CanonicalTool, ...] = tuple(
+    tool for tool in _canonical_domain_tools()
+    if tool.name not in {"generate_lorem_ipsum", "sum_numbers"}
+)
+CANONICAL_TOOLS: tuple[CanonicalTool, ...] = _LEGACY_TOOLS + DOMAIN_TOOLS
 
 
 def to_openai_tools(tools: Sequence[CanonicalTool]) -> list[dict[str, Any]]:

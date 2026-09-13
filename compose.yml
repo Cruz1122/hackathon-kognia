@@ -1,4 +1,15 @@
 services:
+  chroma:
+    image: chromadb/chroma:1.1.1
+    volumes:
+      - chroma_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8000 && printf \"GET /api/v2/heartbeat HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && IFS= read -r status <&3 && case \"$$status\" in HTTP/*\\ 200*) exit 0;; *) exit 1;; esac'"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   postgres:
     image: postgres:16.4-alpine
     container_name: hackathon-postgres
@@ -49,6 +60,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kognia}:${POSTGRES_PASSWORD:-kognia}@postgres:5432/${POSTGRES_DB:-kognia}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:18473}
       SHERPA_THREADS: ${SHERPA_THREADS:-2}
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_SSL: "false"
+      CHROMA_RAG_COLLECTION: rag_documents
+      AGENT_TOOL_MODULES: app.domains.demo_booking.tools
     ports:
       - "127.0.0.1:18474:18474"
     restart: unless-stopped
@@ -63,6 +79,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      chroma:
+        condition: service_healthy
 
   frontend:
     build:
@@ -81,3 +99,4 @@ services:
 
 volumes:
   postgres_data:
+  chroma_data:

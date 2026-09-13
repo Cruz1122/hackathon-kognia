@@ -695,6 +695,13 @@ import '../styles/toast.css';
       color: rgba(65,65,65,.70);
     }
 
+    .knowledge-panel { margin: 28px auto 0; padding: 20px; border-radius: var(--radius-full); background: var(--ui-cream); display: grid; gap: 12px; }
+    .knowledge-panel h2, .knowledge-panel p { margin: 0; }
+    .knowledge-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .knowledge-form input[type=file] { flex: 1 1 220px; }
+    .knowledge-form button { border: 0; border-radius: var(--radius-full); background: var(--ui-graphite); color: var(--ui-paper); padding: 11px 18px; font-weight: 700; cursor: pointer; }
+    .knowledge-form button:disabled { opacity: .6; cursor: wait; }
+
     .demo-switcher {
       position: fixed;
       right: 18px;
@@ -841,6 +848,10 @@ import '../styles/toast.css';
           <div class="conversation-empty__copy"><i data-lucide="message-circle" aria-hidden="true"></i><p>Aún no hay mensajes.</p></div>
         </div>
 
+        </section>
+        <section class="knowledge-panel" aria-labelledby="knowledgeTitle">
+          <div><p class="eyebrow">Conocimiento</p><h2 id="knowledgeTitle">Documento de conocimiento</h2><p id="knowledgeStatus">Sin documento activo</p></div>
+          <form class="knowledge-form" id="knowledgeForm"><input id="knowledgeFile" type="file" accept=".txt,.md,.pdf" required /><button type="submit">Reemplazar documento</button></form>
         </section>
     </div>
 
@@ -1579,11 +1590,34 @@ import '../styles/toast.css';
         if (authStatus) authStatus.textContent = message;
       }
 
-      function showApp(token: string, conversationId: string): void {
+       function showApp(token: string, conversationId: string): void {
         if (authPanel) authPanel.hidden = true;
         if (appContent) appContent.hidden = false;
-        bootLiveMonitor(apiUrl, token, conversationId, true);
-      }
+         bootLiveMonitor(apiUrl, token, conversationId, true);
+         void refreshKnowledge();
+       }
+
+       const knowledgeForm = document.getElementById('knowledgeForm');
+       const knowledgeFile = document.getElementById('knowledgeFile');
+       const knowledgeStatus = document.getElementById('knowledgeStatus');
+       async function refreshKnowledge(): Promise<void> {
+         const response = await fetch(`${apiUrl}/api/rag/status`);
+         const status = await responseData(response);
+         const document = status.document as Record<string, unknown> | null;
+         if (knowledgeStatus) knowledgeStatus.textContent = document ? `${String(document.filename)} · ${String(document.chunks)} fragmentos` : 'Sin documento activo';
+       }
+       knowledgeForm?.addEventListener('submit', (event) => {
+         event.preventDefault();
+         const file = knowledgeFile instanceof HTMLInputElement ? knowledgeFile.files?.[0] : undefined;
+         const token = sessionStorage.getItem(tokenKey) ?? '';
+         if (!file || !token) return;
+         const button = knowledgeForm.querySelector('button');
+         if (button instanceof HTMLButtonElement) button.disabled = true;
+         void fetch(`${apiUrl}/api/rag/document`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'X-Filename': file.name }, body: file })
+           .then(async (response) => { if (!response.ok) throw new Error('No se pudo indexar el documento.'); await refreshKnowledge(); showToast('Documento listo', 'success'); })
+           .catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Error de documento', 'error'))
+           .finally(() => { if (button instanceof HTMLButtonElement) button.disabled = false; });
+       });
 
       async function responseData(response: Response): Promise<Record<string, unknown>> {
         try {

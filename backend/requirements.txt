@@ -12,3 +12,7 @@ uvicorn[standard]==0.52.4
 sherpa-onnx==1.13.8
 numpy>=2.0
 piper-tts==1.8.0
+chromadb==1.1.1
+pypdf==6.1.0
+python-multipart==0.0.20
+sentence-transformers==5.1.0

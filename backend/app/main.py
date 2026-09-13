@@ -59,6 +59,10 @@ from .providers import (
 from .providers.contracts import LLMProvider, SpeechToTextProvider, TextToSpeechProvider
 from .realtime.events import RealtimeEvent
 from .realtime.hub import RealtimeHub
+from .platform.rag.runtime import store as rag_store, embeddings as rag_embeddings, retriever as rag_retriever
+from .platform.rag.ingestion import RagIngestionService
+from .platform.rag.retrieval import ProgressiveRetriever
+from .platform.rag.extraction import RagExtractionError
 
 
 logger = logging.getLogger("hackathon.voice")
@@ -82,6 +86,7 @@ stt_provider: SpeechToTextProvider = default_stt_provider
 tts_provider: TextToSpeechProvider = default_tts_provider
 transcription_lock = asyncio.Semaphore(1)
 realtime_hub = RealtimeHub()
+rag_ingestion = RagIngestionService(rag_store, rag_embeddings, rag_retriever)
 sherpa_status = "starting"
 tts_status = "starting"
 db_status = "starting"
@@ -187,6 +192,59 @@ def health() -> dict[str, str]:
 @app.get("/api/hello")
 def hello() -> dict[str, str]:
     return {"message": "FastAPI + Astro funcionando"}
+
+
+@app.put("/api/rag/document")
+async def replace_rag_document(request: Request) -> dict:
+    filename = request.headers.get("x-filename", "knowledge.txt")
+    if request.headers.get("content-type", "").startswith("multipart/form-data"):
+        form = await request.form()
+        upload = next((value for value in form.values() if hasattr(value, "read")), None)
+        if upload is None:
+            data = b""
+        else:
+            filename = getattr(upload, "filename", None) or filename
+            data = await upload.read()
+    else:
+        data = await request.body()
+    max_mb = int(os.getenv("RAG_MAX_UPLOAD_MB", "10"))
+    if not data:
+        raise HTTPException(status_code=422, detail="RAG_EMPTY_UPLOAD")
+    if len(data) > max_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="RAG_UPLOAD_TOO_LARGE")
+    try:
+        return await rag_ingestion.replace(data, filename)
+    except RagExtractionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("RAG ingestion failed")
+        raise HTTPException(status_code=503, detail="RAG_UNAVAILABLE") from exc
+
+
+@app.get("/api/rag/status")
+async def rag_status() -> dict:
+    try:
+        active = await rag_store.get_active_document()
+    except Exception:
+        return {"available": False, "document": None, "embedding_model": rag_embeddings.model_name, "dimensions": rag_embeddings.dimensions}
+    hits = rag_retriever._hits.get(active or "", [])
+    return {"available": True, "document": ({"document_id": active, "filename": hits[0].metadata.get("source_filename"), "chunks": len(hits)} if active and hits else None), "embedding_model": rag_embeddings.model_name, "dimensions": rag_embeddings.dimensions}
+
+
+class RagSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=4000)
+    debug: bool = False
+
+
+@app.post("/internal/rag/search")
+async def internal_rag_search(payload: RagSearchRequest) -> dict:
+    try:
+        result = await rag_retriever.search(payload.query, debug=payload.debug)
+    except Exception:
+        logger.exception("RAG search failed")
+        return {"evidence_state": "INSUFFICIENT", "level_reached": 0, "rewrite_used": False, "hits": [], "knowledge_status": "unavailable"}
+    hits = [{"chunk_id": h.chunk_id, "content": h.content, "metadata": h.metadata, "score": h.score} for h in result.hits]
+    return {"evidence_state": result.evidence_state, "level_reached": result.level_reached, "rewrite_used": result.rewrite_used, "hits": hits, "source_map": result.source_map, "debug": result.debug if payload.debug else {}}
 
 
 @app.post("/auth/login", response_model=LoginResponse, summary="Inicia sesión")
