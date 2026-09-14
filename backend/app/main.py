@@ -227,6 +227,8 @@ async def rag_status() -> dict:
         active = await rag_store.get_active_document()
     except Exception:
         return {"available": False, "document": None, "embedding_model": rag_embeddings.model_name, "dimensions": rag_embeddings.dimensions}
+    if active:
+        await rag_retriever.ensure_document_chunks(active)
     hits = rag_retriever._hits.get(active or "", [])
     return {"available": True, "document": ({"document_id": active, "filename": hits[0].metadata.get("source_filename"), "chunks": len(hits)} if active and hits else None), "embedding_model": rag_embeddings.model_name, "dimensions": rag_embeddings.dimensions}
 

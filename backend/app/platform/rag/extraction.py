@@ -22,7 +22,10 @@ def extract_document(data: bytes, filename: str, *, max_pages: int = 150, max_ch
         text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
         parser_version = "pypdf-v1"
     else:
-        text = data.decode("utf-8-sig")
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise RagExtractionError("RAG_INVALID_UTF8") from exc
         parser_version = "text-v1"
     text = text.strip()
     if not text:

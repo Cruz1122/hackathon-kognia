@@ -10,6 +10,10 @@ def chunk_text(text: str, *, target_size: int = 900, overlap: int = 140, hard_ma
     current = ""
     start = 0
     for block in blocks:
+        if current and block.startswith("#"):
+            chunks.append((current, start, start + len(current)))
+            start = cursor
+            current = ""
         candidate = f"{current}\n\n{block}".strip() if current else block
         if current and len(candidate) > target_size:
             chunks.append((current, start, start + len(current)))

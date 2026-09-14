@@ -50,7 +50,7 @@ class ChromaVectorStore:
 
     async def set_active_document(self, document_id: str) -> None:
         collection = await self._get_collection()
-        await collection.modify(metadata={"hnsw:space": "cosine", "active_document_id": document_id})
+        await collection.modify(metadata={"active_document_id": document_id})
 
     async def get_active_document(self) -> str | None:
         collection = await self._get_collection()
@@ -60,6 +60,20 @@ class ChromaVectorStore:
     async def delete_document(self, document_id: str) -> None:
         collection = await self._get_collection()
         await collection.delete(where={"document_id": document_id})
+
+    async def get_document_hits(self, document_id: str) -> list[RetrievalHit]:
+        collection = await self._get_collection()
+        response = await collection.get(
+            where={"document_id": document_id},
+            include=["documents", "metadatas"],
+        )
+        ids = response.get("ids") or []
+        documents = response.get("documents") or []
+        metadatas = response.get("metadatas") or []
+        return [
+            RetrievalHit(str(identifier), document or "", metadata or {}, 0.0, "semantic")
+            for identifier, document, metadata in zip(ids, documents, metadatas)
+        ]
 
 
 class MemoryVectorStore:
@@ -82,3 +96,10 @@ class MemoryVectorStore:
     async def get_active_document(self): return self.active_document_id
     async def delete_document(self, document_id):
         self.items = {key: value for key, value in self.items.items() if value[2].get("document_id") != document_id}
+
+    async def get_document_hits(self, document_id):
+        return [
+            RetrievalHit(identifier, document, metadata, 0.0, "semantic")
+            for identifier, (document, _vector, metadata) in self.items.items()
+            if metadata.get("document_id") == document_id
+        ]

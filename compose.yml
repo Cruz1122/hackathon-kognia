@@ -80,7 +80,7 @@ services:
       migrate:
         condition: service_completed_successfully
       chroma:
-        condition: service_healthy
+        condition: service_started
 
   frontend:
     build:

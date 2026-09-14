@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,8 +17,13 @@ class RagIngestionService:
         self.store = store
         self.embeddings = embeddings
         self.retriever = retriever
+        self._replace_lock = asyncio.Lock()
 
-    async def replace(self, data: bytes, filename: str) -> dict:
+    async def replace(self, data: bytes, filename: str, *, document_version: int = 1) -> dict:
+        async with self._replace_lock:
+            return await self._replace_unlocked(data, filename, document_version=document_version)
+
+    async def _replace_unlocked(self, data: bytes, filename: str, *, document_version: int = 1) -> dict:
         digest = hashlib.sha256(data).hexdigest()
         document_id = f"doc_{digest[:12]}"
         active = await self.store.get_active_document()
@@ -36,13 +42,18 @@ class RagIngestionService:
         metadatas = []
         hits = []
         for index, (content, start, end) in enumerate(pieces):
+            line_start = text[:start].count("\n") + 1
+            line_end = text[:end].count("\n") + 1
+            section = next((line.lstrip("# ").strip() for line in reversed(text[:start].splitlines()) if line.startswith("#")), "General")
             metadata = {
-                "document_id": document_id, "document_hash": digest, "document_version": 1,
-                "source_filename": filename, "source_type": source_type, "mime_type": "application/pdf" if source_type == "pdf" else "text/plain",
+                "document_id": document_id, "document_hash": digest, "document_version": document_version,
+                "source_filename": filename, "source_type": source_type, "mime_type": {"pdf": "application/pdf", "md": "text/markdown", "txt": "text/plain"}[source_type],
+                "document_title": Path(filename).stem, "section": section, "heading_path": section,
                 "chunk_index": index, "chunk_count": chunk_count, "content_hash": hashlib.sha256(content.encode()).hexdigest(),
                 "ingested_at": now, "parser_version": parser_version, "chunker_version": "structural-v1",
                 "embedding_model": getattr(self.embeddings, "model_name", "intfloat/multilingual-e5-small"), "embedding_dimensions": len(vectors[index]),
-                "citation_label": f"{Path(filename).stem} — líneas {start + 1}–{end}", "char_start": start, "char_end": end, "char_count": len(content),
+                "citation_label": f"{Path(filename).stem} — líneas {line_start}–{line_end}", "line_start": line_start, "line_end": line_end,
+                "char_start": start, "char_end": end, "char_count": len(content),
             }
             metadatas.append(metadata)
             hits.append(RetrievalHit(ids[index], content, metadata, 0.0, "semantic"))
