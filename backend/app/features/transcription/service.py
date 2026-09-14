@@ -15,6 +15,22 @@ _recognizer_lock = Lock()
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 
+SHERPA_CONFIG: dict[str, Any] = {
+    "sample_rate": 16000,
+    "feature_dim": 80,
+    "low_freq": 80.0,
+    "decoding_method": "greedy_search",
+    "max_active_paths": 4,
+    "blank_penalty": 0.4,
+    "temperature_scale": 1.2,
+    "provider": "cpu",
+    "enable_endpoint_detection": True,
+    "rule1_min_trailing_silence": 100.0,
+    "rule2_min_trailing_silence": 1.0,
+    "rule3_min_utterance_length": 20,
+    "finish_padding_seconds": 0.5,
+}
+
 
 def _model_dir() -> Path:
     configured = os.getenv("SHERPA_MODEL_DIR", "backend/models/sherpa-es")
@@ -32,39 +48,50 @@ def _first_file(directory: Path, *patterns: str) -> Path:
     raise FileNotFoundError(f"No se encontró {patterns} en {directory}")
 
 
+def build_recognizer(*, overrides: dict[str, Any] | None = None) -> Any:
+    import sherpa_onnx
+
+    config = {**SHERPA_CONFIG, **(overrides or {})}
+    directory = _model_dir()
+    tokens = directory / "tokens.txt"
+    if not tokens.is_file():
+        raise FileNotFoundError(f"Falta el modelo Sherpa en {directory}. Ejecuta scripts/download-sherpa-model.sh")
+    return sherpa_onnx.OnlineRecognizer.from_transducer(
+        tokens=str(tokens),
+        encoder=str(_first_file(directory, "encoder*.int8.onnx", "encoder*.onnx")),
+        decoder=str(_first_file(directory, "decoder*.onnx")),
+        joiner=str(_first_file(directory, "joiner*.int8.onnx", "joiner*.onnx")),
+        num_threads=int(os.getenv("SHERPA_THREADS", "2")),
+        sample_rate=int(config["sample_rate"]),
+        feature_dim=int(config["feature_dim"]),
+        low_freq=float(config["low_freq"]),
+        decoding_method=str(config["decoding_method"]),
+        max_active_paths=int(config["max_active_paths"]),
+        blank_penalty=float(config["blank_penalty"]),
+        temperature_scale=float(config["temperature_scale"]),
+        provider=str(config["provider"]),
+        enable_endpoint_detection=bool(config["enable_endpoint_detection"]),
+        rule1_min_trailing_silence=float(config["rule1_min_trailing_silence"]),
+        rule2_min_trailing_silence=float(config["rule2_min_trailing_silence"]),
+        rule3_min_utterance_length=int(config["rule3_min_utterance_length"]),
+    )
+
+
+def apply_config(overrides: dict[str, Any]) -> None:
+    """Update Sherpa knobs and drop the cached recognizer (eval experiments)."""
+    global _recognizer
+    SHERPA_CONFIG.update(overrides)
+    with _recognizer_lock:
+        _recognizer = None
+
+
 def _get_recognizer() -> Any:
     global _recognizer
     if _recognizer is not None:
         return _recognizer
     with _recognizer_lock:
         if _recognizer is None:
-            import sherpa_onnx
-
-            directory = _model_dir()
-            tokens = directory / "tokens.txt"
-            if not tokens.is_file():
-                raise FileNotFoundError(
-                    f"Falta el modelo Sherpa en {directory}. Ejecuta scripts/download-sherpa-model.sh"
-                )
-            _recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-                tokens=str(tokens),
-                encoder=str(_first_file(directory, "encoder*.int8.onnx", "encoder*.onnx")),
-                decoder=str(_first_file(directory, "decoder*.onnx")),
-                joiner=str(_first_file(directory, "joiner*.int8.onnx", "joiner*.onnx")),
-                num_threads=int(os.getenv("SHERPA_THREADS", "2")),
-                sample_rate=16000,
-                feature_dim=80,
-                low_freq=80.0,
-                decoding_method="modified_beam_search",
-                max_active_paths=4,
-                blank_penalty=0.4,
-                temperature_scale=1.2,
-                provider="cpu",
-                enable_endpoint_detection=True,
-                rule1_min_trailing_silence=100.0,
-                rule2_min_trailing_silence=1.0,
-                rule3_min_utterance_length=20,
-            )
+            _recognizer = build_recognizer()
     return _recognizer
 
 
@@ -114,7 +141,7 @@ def feed_pcm(stream: Any, pcm: bytes, sample_rate: int = 16000) -> tuple[str, bo
 
 def finish_stream(stream: Any, sample_rate: int = 16000) -> str:
     recognizer = _get_recognizer()
-    padding = np.zeros(int(sample_rate * 0.5), dtype=np.float32)
+    padding = np.zeros(int(sample_rate * float(SHERPA_CONFIG["finish_padding_seconds"])), dtype=np.float32)
     stream.accept_waveform(sample_rate, padding)
     stream.input_finished()
     while recognizer.is_ready(stream):
@@ -178,7 +205,7 @@ def _audio_suffix(content_type: str) -> str:
     return ".webm"
 
 
-def _decode_to_pcm(path: Path) -> bytes:
+def decode_audio_file(path: Path) -> bytes:
     completed = subprocess.run(
         ["ffmpeg", "-nostdin", "-i", str(path), "-ac", "1", "-ar", "16000", "-f", "s16le", "-"],
         check=False,
@@ -196,6 +223,6 @@ def transcribe_audio(audio: bytes, content_type: str) -> str:
         temporary.write(audio)
         path = Path(temporary.name)
     try:
-        return transcribe_pcm(_decode_to_pcm(path), 16000)
+        return transcribe_pcm(decode_audio_file(path), 16000)
     finally:
         path.unlink(missing_ok=True)
