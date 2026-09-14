@@ -58,14 +58,20 @@ Regla: con `conversation_id` se ignora `messages` como fuente de verdad. Sin `co
 Eventos SSE:
 
 ```
-event: token
-data: {"text":"..."}
-
 event: tool.started
 data: {"tool":"...","title":"...","status":"..."}
 
 event: tool.completed
 data: {"tool":"...","title":"...","status":"...","result":"..."}
+
+event: token
+data: {"text":"..."}
+
+event: rag.started
+data: {"used_rag":true,"message":"Políticas de reembolso"}
+
+event: rag.completed
+data: {"used_rag":true,"message":"Políticas de reembolso"}
 
 event: done
 data: {"provider":"openai","model":"gpt-4o-mini"}

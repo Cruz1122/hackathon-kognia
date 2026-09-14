@@ -1,4 +1,5 @@
 import { showToast } from '../infrastructure/toast';
+import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -21,6 +22,7 @@ export function bootEventsMonitor(apiUrl: string): void {
   if (!conversation) return;
 
   const conversationId = sessionStorage.getItem('kognia.auth.conversation-id')?.trim() ?? '';
+  const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
   if (!token) {
     if (hubChip) hubChip.textContent = 'Demo local';
     return;
@@ -28,6 +30,7 @@ export function bootEventsMonitor(apiUrl: string): void {
 
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/events`;
   const pendingTools = new Map<string, string>();
+  let pendingRetrievalId: string | null = null;
   let agentBubble: HTMLElement | null = null;
   let customerBubble: HTMLElement | null = null;
   let customerShown = '';
@@ -47,6 +50,30 @@ export function bootEventsMonitor(apiUrl: string): void {
     row.scrollIntoView({ behavior: 'smooth', block: 'center' });
     window.setTimeout(() => row.classList.remove('enter'), 900);
     return row;
+  }
+
+  function completePendingRetrieval(payload: unknown): void {
+    if (!shouldRenderRetrieval(payload)) {
+      cancelPendingRetrieval();
+      return;
+    }
+    const id = pendingRetrievalId ?? `hub-rag-${Date.now()}`;
+    if (!document.getElementById(id)) {
+      const markup = createRetrievalCardMarkup(id, payload);
+      if (markup) {
+        const row = appendRow('tool-row', markup);
+        const agentRow = agentBubble?.closest('.message-row');
+        if (agentRow && agentRow.parentElement === conversation) conversation.insertBefore(row, agentRow);
+      }
+    }
+    completeRetrievalCard(id, payload);
+    pendingRetrievalId = null;
+  }
+
+  function cancelPendingRetrieval(): void {
+    if (!pendingRetrievalId) return;
+    document.getElementById(pendingRetrievalId)?.closest('.tool-row')?.remove();
+    pendingRetrievalId = null;
   }
 
   function enterLiveFeed(): void {
@@ -142,7 +169,23 @@ export function bootEventsMonitor(apiUrl: string): void {
           statusNode.classList.remove('loading');
         }
       }
+    } else if (type === 'rag.started') {
+      enterLiveFeed();
+      const id = `hub-rag-${Date.now()}`;
+      pendingRetrievalId = shouldRenderRetrieval(payload) ? id : null;
+      if (pendingRetrievalId) {
+        const markup = createRetrievalCardMarkup(id, payload);
+        if (markup) {
+          const row = appendRow('tool-row', markup);
+          const agentRow = agentBubble?.closest('.message-row');
+          if (agentRow && agentRow.parentElement === conversation) conversation.insertBefore(row, agentRow);
+        }
+      }
+    } else if (type === 'rag.completed') {
+      enterLiveFeed();
+      completePendingRetrieval(payload);
     } else if (type === 'turn.completed' || type === 'turn.cancelled') {
+      cancelPendingRetrieval();
       if (agentBubble) agentBubble.classList.add('complete');
       agentBubble = null;
     } else if (type === 'error') {

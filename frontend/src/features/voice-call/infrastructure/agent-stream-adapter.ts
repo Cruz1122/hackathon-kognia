@@ -2,6 +2,12 @@ import type { ChatMessage } from '../domain/types';
 import { parseSse } from './sse-parser';
 
 type TokenEvent = { text?: unknown };
+type AgentStreamEvent = {
+  type: 'token' | 'done' | 'error' | 'rag.started' | 'rag.completed';
+  text?: string;
+  message?: string;
+  data?: unknown;
+};
 
 export class AgentStreamAdapter {
   constructor(
@@ -14,7 +20,7 @@ export class AgentStreamAdapter {
     prompt: string,
     history: ChatMessage[],
     signal: AbortSignal,
-  ): AsyncGenerator<{ type: 'token' | 'done' | 'error'; text?: string; message?: string }> {
+  ): AsyncGenerator<AgentStreamEvent> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
@@ -39,6 +45,8 @@ export class AgentStreamAdapter {
       } else if (event.event === 'error') {
         const payload = event.data as { message?: unknown };
         yield { type: 'error', message: typeof payload.message === 'string' ? payload.message : 'El agente se interrumpió' };
+      } else if (event.event === 'rag.started' || event.event === 'rag.completed') {
+        yield { type: event.event, data: event.data };
       }
     }
   }

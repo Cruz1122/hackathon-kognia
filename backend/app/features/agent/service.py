@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -13,6 +14,19 @@ from .tools import CANONICAL_TOOLS, describe_tool_done, describe_tool_start, exe
 Message = dict[str, Any]
 MAX_TOOL_ROUNDS = 4
 TOOL_REGISTRY = load_tool_registry()
+_RAG_STOP_WORDS = frozenset(
+    "a al algo con como cuando de del donde el en es esta este hay la las lo los más me "
+    "para por que qué se su sus te tu tus un una y".split()
+)
+_CLARIFICATION_MARKERS = (
+    "mensaje se cortó",
+    "no entendí",
+    "no te entendí",
+    "puedes aclarar",
+    "puedes completar",
+    "puedes repetir",
+    "qué necesitas",
+)
 
 
 async def stream_agent(
@@ -20,7 +34,7 @@ async def stream_agent(
     *,
     messages: Sequence[Message] | None = None,
     llm: LLMProvider | None = None,
-) -> AsyncIterator[tuple[str, dict[str, str]]]:
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm
     chain = get_model_chain()
@@ -33,6 +47,8 @@ async def stream_agent(
         else [config for config in chain for _ in range(attempts_per_model)]
     )
 
+    knowledge, used_rag, retrieval_topic = await _retrieve_knowledge(prompt, messages)
+
     attempt = 0
     permanent_failures: set[Provider] = set()
     use_tools = provider.capabilities.supports_tools
@@ -42,9 +58,9 @@ async def stream_agent(
         if config.provider in permanent_failures:
             continue
         emitted_tokens = False
+        answer_parts: list[str] = []
         try:
             if use_tools:
-                knowledge = await _knowledge_message(prompt, messages)
                 conversation: list[Message] = [*(messages or []), *knowledge, {"role": "user", "content": prompt}]
                 for _ in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
@@ -56,7 +72,9 @@ async def stream_agent(
                     ):
                         if kind == "token":
                             emitted_tokens = True
-                            yield "token", {"text": str(payload["text"])}
+                            text = str(payload["text"])
+                            answer_parts.append(text)
+                            yield "token", {"text": text}
                         elif kind == "tool_calls":
                             tool_calls = list(payload.get("calls") or [])
                     if not tool_calls:
@@ -107,10 +125,13 @@ async def stream_agent(
                     conversation.extend(tool_messages)
                 if not emitted_tokens:
                     raise ProviderError("Provider returned an empty stream")
+                rag_event = _build_rag_event("".join(answer_parts), knowledge, used_rag, retrieval_topic)
+                if rag_event:
+                    yield "rag.started", rag_event
+                    yield "rag.completed", rag_event
                 yield "done", {"provider": config.provider.value, "model": config.model}
                 return
 
-            knowledge = await _knowledge_message(prompt, messages)
             conversation: list[Message] | None = [*(messages or []), *knowledge, {"role": "user", "content": prompt}]
             async for kind, payload in provider.stream(
                 config,
@@ -121,9 +142,15 @@ async def stream_agent(
                 if kind != "token":
                     continue
                 emitted_tokens = True
-                yield "token", {"text": str(payload["text"])}
+                text = str(payload["text"])
+                answer_parts.append(text)
+                yield "token", {"text": text}
             if not emitted_tokens:
                 raise ProviderError("Provider returned an empty stream")
+            rag_event = _build_rag_event("".join(answer_parts), knowledge, used_rag, retrieval_topic)
+            if rag_event:
+                yield "rag.started", rag_event
+                yield "rag.completed", rag_event
             yield "done", {"provider": config.provider.value, "model": config.model}
             return
         except ProviderError as exc:
@@ -140,13 +167,89 @@ async def stream_agent(
 
 
 async def _knowledge_message(prompt: str, messages: Sequence[Message] | None) -> list[Message]:
+    knowledge, _used_rag, _retrieval_topic = await _retrieve_knowledge(prompt, messages)
+    return knowledge
+
+
+async def _retrieve_knowledge(
+    prompt: str,
+    messages: Sequence[Message] | None,
+) -> tuple[list[Message], bool, str | None]:
     try:
         result = await rag_retriever.search(prompt, conversation=list(messages or [])[-2:])
     except Exception:
         # Preserve the provider-facing history when knowledge infrastructure is
         # down; the runtime remains usable and must not fabricate context.
-        return []
+        return [], False, None
+
     if result.evidence_state == "INSUFFICIENT" or not result.hits:
-        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}]
-    context, _ = build_knowledge_context(result)
-    return [{"role": "system", "content": "knowledge_status=available\nIf supplied knowledge does not support the answer, do not claim that the document says it.\n" + context}]
+        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}], False, None
+    context, source_map = build_knowledge_context(result)
+    used_rag = result.evidence_state in {"SUFFICIENT", "AMBIGUOUS"} and bool(context)
+    if not used_rag:
+        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}], False, None
+    return [{"role": "system", "content": "knowledge_status=available\nIf supplied knowledge does not support the answer, do not claim that the document says it.\n" + context}], True, _retrieval_topic(source_map)
+
+
+def _meaningful_terms(text: str) -> set[str]:
+    return {
+        term
+        for term in re.findall(r"[a-záéíóúüñ]{4,}", text.casefold())
+        if term not in _RAG_STOP_WORDS
+    }
+
+
+def _terms_related(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    return len(left) >= 6 and len(right) >= 6 and left[:6] == right[:6]
+
+
+def _answer_uses_knowledge(answer: str, knowledge: Sequence[Message]) -> bool:
+    answer_terms = _meaningful_terms(answer)
+    context_text = "\n".join(str(message.get("content", "")) for message in knowledge)
+    context_terms = _meaningful_terms(context_text)
+    return any(_terms_related(answer_term, context_term) for answer_term in answer_terms for context_term in context_terms)
+
+
+def _is_clarification_answer(answer: str) -> bool:
+    normalized = " ".join(answer.casefold().split())
+    return any(marker in normalized for marker in _CLARIFICATION_MARKERS)
+
+
+def _clean_topic(value: object, *, strip_extension: bool = False) -> str | None:
+    if not isinstance(value, str):
+        return None
+    topic = " ".join(value.replace("_", " ").split()).strip(" -—")
+    if strip_extension:
+        topic = re.sub(r"\.[a-z0-9]+$", "", topic, flags=re.IGNORECASE).strip()
+    if not topic or topic.casefold() in {"general", "unknown", "none"}:
+        return None
+    return topic[:1].upper() + topic[1:]
+
+
+def _retrieval_topic(source_map: dict[str, Any]) -> str | None:
+    for citation in source_map.values():
+        metadata = getattr(citation, "metadata", {})
+        if not isinstance(metadata, dict):
+            continue
+        for key in ("section", "heading_path", "document_title"):
+            topic = _clean_topic(metadata.get(key))
+            if topic:
+                return topic
+        topic = _clean_topic(metadata.get("source_filename"), strip_extension=True)
+        if topic:
+            return topic
+    return None
+
+
+def _build_rag_event(
+    answer: str,
+    knowledge: Sequence[Message],
+    used_rag: bool,
+    retrieval_topic: str | None,
+) -> dict[str, object] | None:
+    """Expose only a useful, context-supported document topic to the UI."""
+    if not used_rag or _is_clarification_answer(answer) or not _answer_uses_knowledge(answer, knowledge):
+        return None
+    return {"used_rag": True, "message": retrieval_topic or "Contexto relevante"}

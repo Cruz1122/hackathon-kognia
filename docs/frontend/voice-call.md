@@ -37,7 +37,7 @@ features/voice-call/
 
 - Filtra envelopes por `kognia.auth.conversation-id` si está en `sessionStorage`.
 - Abre WS `/ws/events` y manda `{ type: "auth", token }` como primer mensaje.
-- Pinta parciales del cliente, tokens del agente y tools. No reproduce audio.
+- Pinta parciales del cliente, tokens del agente, tools y una fila mínima de contexto con el tópico del documento o sección recuperada, solo cuando esa respuesta usa el contexto recuperado. No reproduce audio.
 - Cierre `4401` → toast de sesión inválida. Sin auth válida el chip permanece en demo local.
 
 ## Estados de llamada (`CallState`)

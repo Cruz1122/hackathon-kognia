@@ -1,6 +1,7 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { showToast } from '../infrastructure/toast';
+import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
@@ -91,6 +92,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const authToken = typeof token === 'string' ? token.trim() : '';
   const attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
   const pendingTools = new Map<string, string>();
+  let pendingRetrievalId: string | null = null;
 
   let socket: WebSocket | null = null;
   let connected = false;
@@ -276,12 +278,38 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (loader) window.setTimeout(() => { loader.style.display = 'none'; }, 420);
   }
 
+  function addRetrieval(id: string, payload: unknown): void {
+    const markup = createRetrievalCardMarkup(id, payload);
+    if (!markup) return;
+    const row = appendRow('tool-row', markup);
+    const agentRow = agentBubble?.closest('.message-row');
+    if (agentRow && agentRow.parentElement === conversation) conversation.insertBefore(row, agentRow);
+  }
+
+  function completePendingRetrieval(payload: unknown): void {
+    if (!shouldRenderRetrieval(payload)) {
+      cancelPendingRetrieval();
+      return;
+    }
+    const id = pendingRetrievalId ?? `rag-${Date.now()}`;
+    if (!document.getElementById(id)) addRetrieval(id, payload);
+    completeRetrievalCard(id, payload);
+    pendingRetrievalId = null;
+  }
+
+  function cancelPendingRetrieval(): void {
+    if (!pendingRetrievalId) return;
+    document.getElementById(pendingRetrievalId)?.closest('.tool-row')?.remove();
+    pendingRetrievalId = null;
+  }
+
   function clearTranscript(): void {
     conversation.querySelectorAll('.message-row, .tool-row, .system-event').forEach((node) => node.remove());
     agentBubble = null;
     customerBubble = null;
     customerShown = '';
     pendingTools.clear();
+    pendingRetrievalId = null;
     setEmpty(false);
   }
 
@@ -350,6 +378,12 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     } else if (type === 'tool.completed') {
       const id = pendingTools.get(String(data.tool ?? 'tool'));
       if (id) completeTool(id, String(data.title ?? data.tool ?? 'Tool'), String(data.status ?? 'Completado'));
+    } else if (type === 'rag.started') {
+      const id = `rag-${Date.now()}`;
+      pendingRetrievalId = shouldRenderRetrieval(data) ? id : null;
+      if (pendingRetrievalId) addRetrieval(id, data);
+    } else if (type === 'rag.completed') {
+      completePendingRetrieval(data);
     } else if (type === 'turn.started') {
       ignoreTts = false;
       sentBarge = false;
@@ -358,6 +392,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       if (ignoreTts) return;
       ttsRate = Number(data.sample_rate) || 24000;
     } else if (type === 'tts.cancel' || type === 'turn.cancelled') {
+      cancelPendingRetrieval();
       ignoreTts = true;
       sentBarge = false;
       bargeHits = 0;
@@ -369,6 +404,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       hookMicWave();
       finishAgent();
     } else if (type === 'turn.completed') {
+      cancelPendingRetrieval();
       finishAgent();
       processing = false;
       pcmReady = false;

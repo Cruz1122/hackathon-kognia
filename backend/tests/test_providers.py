@@ -6,8 +6,10 @@ import httpx
 import pytest
 
 from app.config import AppEnv, Provider, get_model_chain
+from app.features.agent import service as agent_service
 from app.features.agent.service import stream_agent
 from app.features.agent.tools import CANONICAL_TOOLS
+from app.platform.rag.contracts import RetrievalHit, RetrievalResult
 from app.providers import FakeLLM, FakeSTT, FakeTTS, GeminiLLM, OpenAICompatibleLLM, ProviderError
 
 
@@ -45,6 +47,100 @@ async def test_fake_llm_without_tools_skips_tool_round(monkeypatch: pytest.Monke
         yield "token", {"text": "hola"}
 
     events = [event async for event in stream_agent("hola", llm=FakeLLM(handler, supports_tools=False))]
+    assert [kind for kind, _payload in events] == ["token", "done"]
+
+
+@pytest.mark.asyncio
+async def test_agent_emits_one_retrieval_event_pair_when_context_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+
+    class StubRetriever:
+        calls = 0
+
+        async def search(self, query, *, conversation=None):
+            self.calls += 1
+            assert query == "¿Cuál es la política?"
+            assert conversation == []
+            return RetrievalResult(
+                "SUFFICIENT",
+                [
+                    RetrievalHit(
+                        "doc:00001",
+                        "La política permite cambios hasta 24 horas antes de la llegada.",
+                        {
+                            "document_id": "doc",
+                            "document_title": "Políticas de reservas",
+                            "source_filename": "politicas.md",
+                            "section": "Políticas de reembolso",
+                            "line_start": 12,
+                            "line_end": 15,
+                            "source_type": "md",
+                        },
+                        0.1234,
+                        "semantic",
+                    )
+                ],
+                2,
+                False,
+            )
+
+    retriever = StubRetriever()
+    monkeypatch.setattr(agent_service, "rag_retriever", retriever)
+
+    async def handler(config, prompt, *, messages=None, tools=None):
+        del config, prompt, messages, tools
+        yield "token", {"text": "Claro. Encontré la política."}
+
+    events = [
+        event
+        async for event in stream_agent(
+            "¿Cuál es la política?",
+            llm=FakeLLM(handler, supports_tools=False),
+        )
+    ]
+
+    assert retriever.calls == 1
+    assert [kind for kind, _payload in events] == ["token", "rag.started", "rag.completed", "done"]
+    assert events[1][1] == {"used_rag": True, "message": "Políticas de reembolso"}
+    assert events[2][1] == {"used_rag": True, "message": "Políticas de reembolso"}
+
+
+@pytest.mark.asyncio
+async def test_agent_does_not_announce_retrieval_for_a_clarification_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+
+    class StubRetriever:
+        async def search(self, query, *, conversation=None):
+            del query, conversation
+            return RetrievalResult(
+                "SUFFICIENT",
+                [
+                    RetrievalHit(
+                        "doc:00001",
+                        "La política permite cambios hasta 24 horas antes de la llegada.",
+                        {"document_id": "doc", "source_filename": "politicas.md"},
+                        0.1234,
+                        "semantic",
+                    )
+                ],
+                2,
+                False,
+            )
+
+    monkeypatch.setattr(agent_service, "rag_retriever", StubRetriever())
+
+    async def handler(config, prompt, *, messages=None, tools=None):
+        del config, prompt, messages, tools
+        yield "token", {"text": "Parece que tu mensaje se cortó. ¿Puedes decirme qué necesitas?"}
+
+    events = [
+        event
+        async for event in stream_agent(
+            "¿Cuál es la política?",
+            llm=FakeLLM(handler, supports_tools=False),
+        )
+    ]
+
     assert [kind for kind, _payload in events] == ["token", "done"]
 
 

@@ -50,6 +50,7 @@ Estos van por el socket de llamada. Muchos se duplican al hub (ver tabla).
 | `turn.started` | `{}` | Sí |
 | `agent.token` | `{ text }` | Sí |
 | `tool.started` / `tool.completed` | tool metadata | Sí |
+| `rag.started` / `rag.completed` | `{ used_rag: true, message }`, solo cuando la respuesta usa el contexto RAG | Sí |
 | `tts.started` | `{ text }` | Sí |
 | `tts.format` | `{ sample_rate }` | No (send_json directo) |
 | `tts.completed` | `{}` | Sí |

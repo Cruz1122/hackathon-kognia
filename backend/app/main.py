@@ -702,7 +702,7 @@ class ErrorResponse(BaseModel):
     detail: str = Field(description="Descripción segura del error.")
 
 
-def _event(name: str, payload: dict[str, str]) -> str:
+def _event(name: str, payload: dict[str, object]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -741,8 +741,9 @@ async def _ask_stream(
         yield _event(name, payload)
 
 
-async def _replay_stream(first_chunk: str, stream: AsyncIterator[str]) -> AsyncIterator[str]:
-    yield first_chunk
+async def _replay_stream(buffered_chunks: list[str], stream: AsyncIterator[str]) -> AsyncIterator[str]:
+    for chunk in buffered_chunks:
+        yield chunk
     async for chunk in stream:
         yield chunk
 
@@ -753,7 +754,7 @@ async def _replay_stream(first_chunk: str, stream: AsyncIterator[str]) -> AsyncI
     response_model=None,
     summary="Pregunta a los modelos configurados",
     description=(
-        "Devuelve un stream SSE con eventos `token` y `done`. "
+        "Devuelve un stream SSE con eventos de retrieval, tools, `token` y `done`. "
         "Los fallos antes del primer token se devuelven como JSON con código HTTP "
         "4xx/5xx; los fallos posteriores se notifican dentro del stream."
     ),
@@ -831,18 +832,35 @@ async def ask(
         session=session if conversation_id is not None else None,
         conversation_id=conversation_id,
     )
+    buffered_chunks: list[str] = []
+    terminal_event = ""
     try:
-        first_chunk = await anext(stream)
+        while True:
+            chunk = await anext(stream)
+            buffered_chunks.append(chunk)
+            event_name = next(
+                (line.removeprefix("event: ").strip() for line in chunk.splitlines() if line.startswith("event:")),
+                "",
+            )
+            if event_name in {"token", "done", "error"}:
+                terminal_event = event_name
+                break
     except StopAsyncIteration:
+        pass
+
+    if not terminal_event:
+        close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
         return JSONResponse(status_code=502, content={"detail": "Los providers no respondieron."})
 
-    if first_chunk.startswith("event: error"):
+    if terminal_event == "error":
         close = getattr(stream, "aclose", None)
         if close is not None:
             await close()
         return JSONResponse(status_code=502, content={"detail": "Los providers no pudieron responder."})
 
-    return StreamingResponse(_replay_stream(first_chunk, stream), media_type="text/event-stream")
+    return StreamingResponse(_replay_stream(buffered_chunks, stream), media_type="text/event-stream")
 
 
 _TRANSCRIPT_LETTER = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]")
@@ -972,7 +990,7 @@ async def _run_call_turn(
                     conversation_id=conversation_id,
                 )
                 break
-            if name == "tool.started" or name == "tool.completed":
+            if name in {"tool.started", "tool.completed", "rag.started", "rag.completed"}:
                 await _send_call_event(
                     websocket,
                     name,

@@ -6,6 +6,7 @@
 
 - `token` `{ text }`
 - `tool.started` / `tool.completed`
+- `rag.started` / `rag.completed` con `{ used_rag: true, message }` solo cuando la respuesta útil coincide con el contexto RAG; `message` es el tópico normalizado del documento o de la sección recuperada
 - `done` `{ provider, model }`
 - `error` si el stream se corta **después** de haber emitido tokens
 
