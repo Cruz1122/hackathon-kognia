@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HOME=/app/backend \
-    SHERPA_MODEL_DIR=backend/models/sherpa-es \
+    SHERPA_MODEL_DIR=backend/models/sherpa-nemotron-35-560 \
     PIPER_MODEL_DIR=backend/models/piper-es \
     PIPER_TTS_VOICE=es_MX-claude-high
 
@@ -24,16 +24,16 @@ COPY requirements.txt backend/requirements.txt
 RUN python -m pip install --no-cache-dir -r backend/requirements.txt
 
 # Download speech models before copying app code so source edits keep this layer.
-RUN mkdir -p backend/models/sherpa-es \
+RUN mkdir -p backend/models/sherpa-nemotron-35-560 \
     && curl --fail --location --show-error \
-        -o /tmp/sherpa-es.tar.bz2 \
-        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06.tar.bz2" \
-    && tar -xjf /tmp/sherpa-es.tar.bz2 -C backend/models \
-    && extracted="$(find backend/models -maxdepth 1 -type d -name 'sherpa-onnx-streaming-zipformer-es-kroko-*' | head -n 1)" \
+        -o /tmp/sherpa-nemotron.tar.bz2 \
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2" \
+    && tar --no-same-owner -xjf /tmp/sherpa-nemotron.tar.bz2 -C backend/models \
+    && extracted="$(find backend/models -maxdepth 1 -type d -name 'sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-*' | head -n 1)" \
     && test -n "$extracted" \
-    && cp -a "$extracted"/. backend/models/sherpa-es/ \
-    && rm -rf "$extracted" /tmp/sherpa-es.tar.bz2 \
-    && test -f backend/models/sherpa-es/tokens.txt
+    && cp -a "$extracted"/. backend/models/sherpa-nemotron-35-560/ \
+    && rm -rf "$extracted" /tmp/sherpa-nemotron.tar.bz2 \
+    && test -f backend/models/sherpa-nemotron-35-560/tokens.txt
 
 RUN python -m piper.download_voices \
         --download-dir "$PIPER_MODEL_DIR" \

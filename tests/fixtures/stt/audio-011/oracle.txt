@@ -1,0 +1,1 @@
+Hola, estoy creando una aplicación con whisper...NO, NO, espera, me equivoque no estoy creando una aplicación con whisper, estoy creando una aplicación con NodeJs

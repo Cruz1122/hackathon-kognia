@@ -27,7 +27,7 @@ Plantilla: `backend/.env.example`. No versionar `.env` ni keys.
 
 | Variable | Default |
 | --- | --- |
-| `SHERPA_MODEL_DIR` | `backend/models/sherpa-es` |
+| `SHERPA_MODEL_DIR` | `backend/models/sherpa-nemotron-35-560` |
 | `SHERPA_THREADS` | `2` en Compose |
 | `PIPER_MODEL_DIR` | `backend/models/piper-es` |
 | `PIPER_TTS_VOICE` | `es_MX-claude-high` |

@@ -10,6 +10,7 @@ export class PcmAudioQueue {
   private lastLevel = 0.04;
   private inputRate = 24000;
   private tail = new Float32Array(0);
+  private sources = new Set<AudioBufferSourceNode>();
 
   frequencyAnalyser(): { analyser: AnalyserNode; sampleRate: number } | undefined {
     if (!this.context || !this.analyser) return undefined;
@@ -21,25 +22,37 @@ export class PcmAudioQueue {
     return this.lastLevel;
   }
 
+  prime(): void {
+    if (!this.context || this.context.state === 'closed') this.context = new AudioContext();
+    void this.context.resume();
+  }
+
   start(sampleRate: number): void {
-    this.cancel();
+    this.stopSources();
     this.generation += 1;
     this.inputRate = sampleRate || 24000;
-    this.context = new AudioContext();
-    this.analyser = this.context.createAnalyser();
-    this.analyser.fftSize = 2048;
-    this.analyser.smoothingTimeConstant = 0.18;
-    this.analyser.minDecibels = -90;
-    this.analyser.maxDecibels = -25;
-    this.analyser.connect(this.context.destination);
-    this.nextTime = 0;
-    this.lastLevel = 0.04;
+    this.pending = 0;
+    this.finished = false;
     this.tail = new Float32Array(0);
-    void this.context.resume();
+    this.lastLevel = 0.04;
+    this.nextTime = 0;
+    this.prime();
+    const context = this.context;
+    if (!context) return;
+    if (!this.analyser || this.analyser.context !== context) {
+      this.analyser = context.createAnalyser();
+      this.analyser.fftSize = 2048;
+      this.analyser.smoothingTimeConstant = 0.18;
+      this.analyser.minDecibels = -90;
+      this.analyser.maxDecibels = -12;
+      this.analyser.connect(context.destination);
+    }
+    void context.resume();
   }
 
   enqueue(chunk: Uint8Array, onStart: () => void, onEnd: () => void): void {
     if (!this.context || !this.analyser || chunk.byteLength < 2) return;
+    void this.context.resume();
     const copy = new Uint8Array(chunk.byteLength);
     copy.set(chunk);
     const usableLength = copy.byteLength - (copy.byteLength % 2);
@@ -71,9 +84,11 @@ export class PcmAudioQueue {
     source.start(this.nextTime);
     this.nextTime += buffer.duration;
     this.pending += 1;
+    this.sources.add(source);
     if (this.pending === 1) onStart();
     source.onended = () => {
-      this.pending -= 1;
+      this.sources.delete(source);
+      this.pending = Math.max(0, this.pending - 1);
       if (this.pending === 0) this.lastLevel = 0.04;
       if (generation === this.generation && this.finished && this.pending === 0 && this.tail.length === 0) onEnd();
     };
@@ -92,13 +107,33 @@ export class PcmAudioQueue {
 
   cancel(): void {
     this.generation += 1;
-    void this.context?.close();
-    this.context = undefined;
-    this.analyser = undefined;
+    this.stopSources();
     this.lastLevel = 0.04;
     this.pending = 0;
     this.finished = false;
     this.tail = new Float32Array(0);
+    this.nextTime = 0;
+  }
+
+  shutdown(): void {
+    this.cancel();
+    this.analyser?.disconnect();
+    this.analyser = undefined;
+    void this.context?.close();
+    this.context = undefined;
+  }
+
+  private stopSources(): void {
+    for (const source of this.sources) {
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        /* already stopped */
+      }
+      source.disconnect();
+    }
+    this.sources.clear();
   }
 
   get size(): number { return this.pending; }

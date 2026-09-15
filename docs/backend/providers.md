@@ -41,7 +41,7 @@ Si ningún modelo de la cadena tiene key, `/ask` responde 503.
 
 ## STT
 
-Sherpa-ONNX Zipformer español. Modelo en `backend/models/sherpa-es/` (gitignored). `SHERPA_MODEL_DIR`, `SHERPA_THREADS` (Compose default 2).
+Sherpa-ONNX Nemotron 3.5 streaming español (560 ms). Modelo en `backend/models/sherpa-nemotron-35-560/` (gitignored). `SHERPA_MODEL_DIR`, `SHERPA_THREADS` (Compose default 2). `language=es`; sin hot-frame.
 
 ## TTS
 

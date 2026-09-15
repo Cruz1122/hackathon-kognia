@@ -45,7 +45,7 @@ export function analyzeVoice(samples: ArrayLike<number>, sampleRate: number): { 
   const pitch = clamp01((Math.min(500, Math.max(70, pitchHz)) - 70) / 430);
   const voiced = rms >= 0.016 && pitchHz >= 85 && pitchHz <= 340 && freq > rms * 0.35;
   return {
-    level: clamp01(Math.max(rms * 9, freq * 4.4) * (0.45 + 0.55 * pitch)),
+    level: clamp01(rms * 4.2 * (0.5 + 0.5 * pitch)),
     voiced,
     rms,
   };
@@ -53,6 +53,41 @@ export function analyzeVoice(samples: ArrayLike<number>, sampleRate: number): { 
 
 export function voiceLevelFromSamples(samples: ArrayLike<number>, sampleRate: number): number {
   return analyzeVoice(samples, sampleRate).level;
+}
+
+export class LinearResampler {
+  private leftover = new Float32Array(0);
+  private frac = 0;
+
+  constructor(
+    private readonly inRate: number,
+    private readonly outRate = 16000,
+  ) {}
+
+  push(chunk: Float32Array): Float32Array {
+    if (chunk.length === 0) return new Float32Array(0);
+    if (this.inRate === this.outRate) return chunk;
+    const merged = new Float32Array(this.leftover.length + chunk.length);
+    merged.set(this.leftover);
+    merged.set(chunk, this.leftover.length);
+    const step = this.inRate / this.outRate;
+    if (merged.length < 2) {
+      this.leftover = merged;
+      return new Float32Array(0);
+    }
+    const out: number[] = [];
+    let pos = this.frac;
+    while (pos + 1 < merged.length) {
+      const index = Math.floor(pos);
+      const t = pos - index;
+      out.push(merged[index] * (1 - t) + merged[index + 1] * t);
+      pos += step;
+    }
+    const consumed = Math.min(Math.floor(pos), merged.length - 1);
+    this.frac = pos - consumed;
+    this.leftover = merged.slice(consumed);
+    return Float32Array.from(out);
+  }
 }
 
 export class AudioCaptureAdapter {
@@ -83,13 +118,21 @@ export class AudioCaptureAdapter {
   private pcmCallback?: (frame: Int16Array) => void;
   private workletReady?: Promise<void>;
   private captureMute?: GainNode;
+  private captureSink?: MediaStreamAudioDestinationNode;
+  private resampler?: LinearResampler;
   private levelListener?: (level: number) => void;
   private maxRecordTimer?: number;
 
   constructor(private readonly transcribeUrl: string) {}
 
   primeContext(): void {
-    if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContext();
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+      try {
+        this.audioContext = new AudioContext({ sampleRate: 16000 });
+      } catch {
+        this.audioContext = new AudioContext();
+      }
+    }
     void this.audioContext.resume();
   }
 
@@ -115,8 +158,8 @@ export class AudioCaptureAdapter {
     return {
       audio: {
         echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: false,
+        noiseSuppression: false,
+        autoGainControl: true,
         channelCount: 1,
       },
     };
@@ -129,7 +172,7 @@ export class AudioCaptureAdapter {
       this.speechAnalyser.fftSize = 2048;
       this.speechAnalyser.smoothingTimeConstant = 0.18;
       this.speechAnalyser.minDecibels = -90;
-      this.speechAnalyser.maxDecibels = -25;
+      this.speechAnalyser.maxDecibels = -12;
     }
     try {
       this.captureSource.connect(this.speechAnalyser);
@@ -159,12 +202,10 @@ export class AudioCaptureAdapter {
     this.speechAnalyser.fftSize = 2048;
     this.speechAnalyser.smoothingTimeConstant = 0.18;
     this.speechAnalyser.minDecibels = -90;
-    this.speechAnalyser.maxDecibels = -25;
+    this.speechAnalyser.maxDecibels = -12;
     source.connect(this.speechAnalyser);
-    const mute = context.createGain();
-    mute.gain.value = 0.0001;
+    const mute = this.ensureSilentTap(context);
     this.speechAnalyser.connect(mute);
-    mute.connect(context.destination);
     this.processor = context.createScriptProcessor(1024, 1, 1);
     source.connect(this.processor);
     this.processor.connect(mute);
@@ -279,6 +320,18 @@ export class AudioCaptureAdapter {
     this.discarding = false;
   }
 
+  private ensureSilentTap(context: AudioContext): GainNode {
+    if (!this.captureSink || this.captureSink.context !== context) {
+      this.captureSink = context.createMediaStreamDestination();
+    }
+    if (!this.captureMute || this.captureMute.context !== context) {
+      this.captureMute = context.createGain();
+      this.captureMute.gain.value = 0.0001;
+      this.captureMute.connect(this.captureSink);
+    }
+    return this.captureMute;
+  }
+
   async startPcmStream(onFrame: (frame: Int16Array) => void): Promise<boolean> {
     this.primeContext();
     const context = this.audioContext;
@@ -291,6 +344,7 @@ export class AudioCaptureAdapter {
       });
       this.pcmCallback = onFrame;
       this.pcmTail = new Int16Array(0);
+      this.resampler = new LinearResampler(context.sampleRate, 16000);
       if (this.workletNode || this.processor) {
         this.ensureCaptureAnalyser(context);
         return true;
@@ -315,10 +369,7 @@ export class AudioCaptureAdapter {
         this.workletReady = undefined;
       }
       this.captureSource = context.createMediaStreamSource(this.stream);
-      const mute = context.createGain();
-      mute.gain.value = 0.0001;
-      mute.connect(context.destination);
-      this.captureMute = mute;
+      const mute = this.ensureSilentTap(context);
       this.ensureCaptureAnalyser(context);
       if (this.workletReady) {
         this.workletNode = new AudioWorkletNode(context, 'pcm-capture');
@@ -345,6 +396,7 @@ export class AudioCaptureAdapter {
   stopPcmStream(): void {
     this.pcmCallback = undefined;
     this.pcmTail = new Int16Array(0);
+    this.resampler = undefined;
     if (this.workletNode) {
       this.workletNode.port.onmessage = null;
       this.workletNode.disconnect();
@@ -354,20 +406,21 @@ export class AudioCaptureAdapter {
       this.processor.disconnect();
     }
     this.captureSource?.disconnect();
+    this.captureMute?.disconnect();
     this.workletNode = undefined;
     this.processor = undefined;
     this.captureSource = undefined;
     this.captureMute = undefined;
+    this.captureSink = undefined;
   }
 
   private pushPcmFrame(input: Float32Array, inputRate: number): void {
-    const ratio = inputRate / 16000;
-    const length = Math.max(1, Math.floor(input.length / ratio));
-    const converted = new Int16Array(length);
-    const floats = new Float32Array(length);
-    for (let i = 0; i < length; i += 1) {
-      const sample = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)] ?? 0));
-      floats[i] = sample;
+    if (!this.resampler) this.resampler = new LinearResampler(inputRate, 16000);
+    const floats = this.resampler.push(input);
+    if (!floats.length) return;
+    const converted = new Int16Array(floats.length);
+    for (let i = 0; i < floats.length; i += 1) {
+      const sample = Math.max(-1, Math.min(1, floats[i] ?? 0));
       converted[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
     }
     const voice = analyzeVoice(floats, 16000);

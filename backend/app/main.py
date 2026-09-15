@@ -42,7 +42,7 @@ from .db.models import MessageRole, Organization, User, UserRole
 from .db.queries import create_conversation, get_conversation, list_messages
 from .db.session import check_database, dispose_engine, get_db
 from .features.agent.service import stream_agent
-from .features.transcription.service import pcm_speech_features
+from .features.transcription.service import pcm_speech_features, stt_label
 from .features.chat.schemas import (
     AskRequest,
     ConversationCreate,
@@ -91,11 +91,13 @@ sherpa_status = "starting"
 tts_status = "starting"
 db_status = "starting"
 DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
-CALL_SPEECH_LEVEL = 0.12
-CALL_BARGE_LEVEL = 0.45
-CALL_BARGE_STRONG = 0.6
+CALL_SPEECH_RMS = 0.02
+CALL_BARGE_RMS = 0.05
+CALL_BARGE_STRONG_RMS = 0.08
 CALL_SILENCE_SECONDS = 0.8
 CALL_MAX_UTTERANCE_SECONDS = 8.0
+CALL_TURN_GUARD_SECONDS = 2.5
+CALL_POST_TURN_GUARD_SECONDS = 0.45
 
 
 @asynccontextmanager
@@ -116,7 +118,7 @@ async def lifespan(_app: FastAPI):
     try:
         await asyncio.to_thread(stt_provider.preload)
         sherpa_status = "ready"
-        logger.info("Sherpa-ONNX is ready")
+        logger.info("Sherpa-ONNX is ready (%s)", stt_label())
     except Exception:
         sherpa_status = "error"
         # Keep the API alive so /health/live can distinguish process health from readiness.
@@ -153,7 +155,13 @@ app.add_middleware(
 
 
 def _health_status() -> dict[str, str]:
-    return {"status": "ok", "sherpa": sherpa_status, "tts": tts_status, "db": db_status}
+    return {
+        "status": "ok",
+        "sherpa": sherpa_status,
+        "tts": tts_status,
+        "db": db_status,
+        "stt_model": stt_label(),
+    }
 
 
 async def _refresh_database_readiness() -> None:
@@ -1213,6 +1221,7 @@ async def call_socket(
             {
                 "type": "call.connected",
                 "tts": tts_status,
+                "stt_model": stt_label(),
                 "conversation_id": str(conversation.id),
             }
         )
@@ -1241,7 +1250,7 @@ async def call_socket(
             last_partial = ""
             last_voice_at = 0.0
             first_voice_at = 0.0
-            ignore_until = time.monotonic() + 0.12
+            ignore_until = time.monotonic() + CALL_POST_TURN_GUARD_SECONDS
             try:
                 await task
             except asyncio.CancelledError:
@@ -1252,7 +1261,7 @@ async def call_socket(
                 await asyncio.to_thread(stt_provider.reset_stream, stream)
 
         async def _start_turn(prompt: str) -> None:
-            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, stream
+            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, stream, ignore_until
             flushed = ""
             if stream is not None:
                 try:
@@ -1260,10 +1269,14 @@ async def call_socket(
                 except Exception:
                     logger.exception("Sherpa flush failed")
                 stream = await asyncio.to_thread(stt_provider.create_stream)
-            final = flushed.strip() if _usable_transcript(flushed) else prompt
+            final = flushed.strip() if _usable_transcript(flushed) else prompt.strip()
             last_partial = ""
             last_voice_at = 0.0
             first_voice_at = 0.0
+            if not _usable_transcript(final):
+                ignore_until = 0.0
+                return
+            ignore_until = time.monotonic() + CALL_TURN_GUARD_SECONDS
             await _send_call_event(
                 websocket,
                 "customer.transcript",
@@ -1323,22 +1336,22 @@ async def call_socket(
             if raw is not None:
                 if pcm_mode:
                     await _reap_turn()
-                    level, voiced, _rms = pcm_speech_features(raw, sample_rate)
+                    level, voiced, rms = pcm_speech_features(raw, sample_rate)
                     await websocket.send_json({"type": "wave.level", "value": level, "source": "customer"})
                     now = time.monotonic()
                     busy = turn_task is not None and not turn_task.done()
-                    speaking = level >= CALL_SPEECH_LEVEL
-                    if speaking:
+                    speaking = voiced or rms >= CALL_SPEECH_RMS
+                    if speaking and not busy and now >= ignore_until:
                         last_voice_at = now
                         if first_voice_at <= 0:
                             first_voice_at = now
                     if busy:
-                        if voiced and level >= CALL_BARGE_LEVEL and now >= ignore_until:
+                        if voiced and rms >= CALL_BARGE_RMS and now >= ignore_until:
                             barge_hits += 1
                         else:
                             barge_hits = 0
                         if now >= ignore_until and (
-                            barge_hits >= 4 or (voiced and level >= CALL_BARGE_STRONG)
+                            barge_hits >= 6 or (voiced and rms >= CALL_BARGE_STRONG_RMS)
                         ):
                             barge_hits = 0
                             await _barge_in()
@@ -1369,21 +1382,13 @@ async def call_socket(
                                 conversation_id=conversation_id,
                             )
                     prompt = last_partial.strip()
-                    usable = _usable_transcript(prompt)
                     silent = last_voice_at > 0 and now - last_voice_at >= CALL_SILENCE_SECONDS
                     too_long = (
-                        usable
-                        and first_voice_at > 0
+                        first_voice_at > 0
                         and now - first_voice_at >= CALL_MAX_UTTERANCE_SECONDS
                     )
-                    if usable and (ended or silent or too_long):
+                    if silent or ended or too_long:
                         await _start_turn(prompt)
-                    elif ended and not usable:
-                        last_partial = ""
-                        last_voice_at = 0.0
-                        first_voice_at = 0.0
-                        if stream is not None:
-                            await asyncio.to_thread(stt_provider.reset_stream, stream)
                     continue
                 try:
                     async with transcription_lock:
@@ -1469,7 +1474,7 @@ async def call_socket(
                 continue
             if payload.get("type") == "barge":
                 busy = turn_task is not None and not turn_task.done()
-                if busy:
+                if busy and time.monotonic() >= ignore_until:
                     await _barge_in()
                 continue
             if payload.get("type") == "audio":

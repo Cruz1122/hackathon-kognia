@@ -12,7 +12,7 @@ Efectos (`scripts/setup.sh`):
 
 1. Crea `backend/.venv`
 2. Instala `backend/requirements.txt`
-3. Descarga Sherpa a `backend/models/sherpa-es/`
+3. Descarga Nemotron STT a `backend/models/sherpa-nemotron-35-560/`
 4. Descarga Piper a `backend/models/piper-es/`
 5. `pnpm install` en `frontend/`
 

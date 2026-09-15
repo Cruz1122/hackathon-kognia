@@ -40,9 +40,11 @@ Umbrales de VAD/barge-in en `main.py` (*verificado*):
 
 | Constante | Valor | Efecto |
 | --- | --- | --- |
-| `CALL_SPEECH_LEVEL` | 0.12 | Cuenta como habla |
-| `CALL_BARGE_LEVEL` | 0.45 | Acumula hits de barge-in |
-| `CALL_BARGE_STRONG` | 0.6 | Barge-in inmediato |
+| `CALL_SPEECH_RMS` | 0.02 | Cuenta como habla (o `voiced`) |
+| `CALL_BARGE_RMS` | 0.05 | Acumula hits de barge-in |
+| `CALL_BARGE_STRONG_RMS` | 0.08 | Barge-in inmediato |
+| `CALL_TURN_GUARD_SECONDS` | 2.5 | No barge al arrancar el turno |
+| `CALL_POST_TURN_GUARD_SECONDS` | 0.45 | No mete eco TTS al STT |
 | `CALL_SILENCE_SECONDS` | 0.8 | Cierra utterance |
 | `CALL_MAX_UTTERANCE_SECONDS` | 8.0 | Cierra utterance larga |
 

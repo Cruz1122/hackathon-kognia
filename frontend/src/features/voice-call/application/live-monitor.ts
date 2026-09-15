@@ -112,7 +112,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   let sentBarge = false;
   let bargeHits = 0;
   let bargeArmedAt = 0;
-  let noiseFloor = 0.2;
+  let noiseFloor = 0.08;
 
   function stamp(): string {
     return formatTime((performance.now() - startedAt) / 1000);
@@ -328,22 +328,22 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       const now = performance.now();
       waveApi?.setPlaying?.(true);
       waveApi?.pushAmplitude(Math.max(micLevel, pcm.voiceLevel()));
-      const agentBusy = processing || pcmReady;
-      if (!agentBusy) {
+      const agentSpeaking = pcmReady;
+      if (!agentSpeaking) {
         bargeHits = 0;
-        if (micLevel < noiseFloor + 0.04) noiseFloor = Math.max(0.2, noiseFloor * 0.94 + micLevel * 0.06);
+        if (micLevel < noiseFloor + 0.04) noiseFloor = Math.max(0.06, noiseFloor * 0.94 + micLevel * 0.06);
       } else if (!sentBarge && now >= bargeArmedAt) {
-        const floor = Math.max(0.2, noiseFloor);
-        const speech = voiced && micLevel >= Math.max(0.4, floor + 0.22);
-        const strong = voiced && micLevel >= Math.max(0.55, floor + 0.35);
+        const floor = Math.max(0.08, noiseFloor);
+        const speech = voiced && micLevel >= Math.max(0.28, floor + 0.18);
+        const strong = voiced && micLevel >= Math.max(0.4, floor + 0.28);
         bargeHits = speech ? bargeHits + 1 : 0;
-        if (strong || bargeHits >= 3) {
+        if (strong || bargeHits >= 6) {
           sentBarge = true;
           bargeHits = 0;
           sendSocketCommand({ type: 'barge' });
         }
       }
-      socket.send(frame.buffer);
+      socket.send(frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength));
     });
     if (!started) {
       note('No se pudo abrir el micrófono', 'mic-off');
@@ -358,8 +358,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (type === 'call.connected') {
       if (connected) return;
       connected = true;
-      showToast('Llamada conectada. Habla como en una llamada IP.', 'success');
-      note('Llamada conectada', 'phone');
+      const stt = String(data.stt_model ?? '').trim();
+      showToast(stt ? `Llamada conectada · ${stt}` : 'Llamada conectada. Habla como en una llamada IP.', 'success');
+      note(stt ? `Llamada conectada · ${stt}` : 'Llamada conectada', 'phone');
       if (live && !paused && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
     } else if (type === 'wave.level') {
       waveApi?.setPlaying?.(true);
@@ -388,6 +389,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       ignoreTts = false;
       sentBarge = false;
       bargeHits = 0;
+      bargeArmedAt = performance.now() + 2000;
     } else if (type === 'tts.format') {
       if (ignoreTts) return;
       ttsRate = Number(data.sample_rate) || 24000;
@@ -453,7 +455,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         }
         pcm.enqueue(bytes, () => undefined, () => undefined);
         hookTtsWave();
-        bargeArmedAt = Math.max(bargeArmedAt, performance.now() + 500);
+        bargeArmedAt = Math.max(bargeArmedAt, performance.now() + 900);
         waveApi?.setPlaying?.(true);
         waveApi?.pushAmplitude(Math.max(capture.voiceLevel(), pcm.voiceLevel()));
         return;
@@ -498,6 +500,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     }
     showToast('Conectando la llamada…', 'info');
     capture.primeContext();
+    pcm.prime();
     live = true;
     paused = false;
     connected = false;
@@ -521,6 +524,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   async function resumeCall(): Promise<void> {
     if (!live || !paused) return;
     capture.primeContext();
+    pcm.prime();
     paused = false;
     processing = false;
     pcmReady = false;
@@ -553,7 +557,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     capture.abort();
     sendSocketCommand({ type: 'pcm.stop' });
     connected = false;
-    pcm.cancel();
+    pcm.shutdown();
     waveApi?.setPlaying?.(false);
     waveFromAnalyser = false;
     waveApi?.disconnectAnalyser();

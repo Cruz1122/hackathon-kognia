@@ -8,6 +8,7 @@ from app import main
 async def test_health_live_does_not_require_model_readiness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(main, "stt_label", lambda: "test-stt")
     monkeypatch.setattr(main, "sherpa_status", "error")
     monkeypatch.setattr(main, "tts_status", "starting")
     monkeypatch.setattr(main, "db_status", "error")
@@ -24,6 +25,7 @@ async def test_health_live_does_not_require_model_readiness(
         "sherpa": "error",
         "tts": "starting",
         "db": "error",
+        "stt_model": "test-stt",
     }
 
 
@@ -31,6 +33,7 @@ async def test_health_live_does_not_require_model_readiness(
 async def test_health_ready_requires_sherpa_and_piper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(main, "stt_label", lambda: "test-stt")
     monkeypatch.setattr(main, "sherpa_status", "ready")
     monkeypatch.setattr(main, "tts_status", "error")
     monkeypatch.setattr(main, "db_status", "ready")
@@ -48,6 +51,7 @@ async def test_health_ready_requires_sherpa_and_piper(
         "sherpa": "ready",
         "tts": "error",
         "db": "ready",
+        "stt_model": "test-stt",
     }
 
 
@@ -55,6 +59,7 @@ async def test_health_ready_requires_sherpa_and_piper(
 async def test_health_ready_is_ok_when_both_models_are_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(main, "stt_label", lambda: "test-stt")
     monkeypatch.setattr(main, "sherpa_status", "ready")
     monkeypatch.setattr(main, "tts_status", "ready")
     monkeypatch.setattr(main, "db_status", "ready")
@@ -72,6 +77,7 @@ async def test_health_ready_is_ok_when_both_models_are_ready(
         "sherpa": "ready",
         "tts": "ready",
         "db": "ready",
+        "stt_model": "test-stt",
     }
 
 

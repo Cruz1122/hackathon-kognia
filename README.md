@@ -72,9 +72,9 @@ También están disponibles los scripts equivalentes `scripts/dev-api.sh` y `scr
 | `WS` | `/ws/call` | Sesión autenticada: auth + attach, PCM del mic, parciales Sherpa, agente, tools y TTS |
 | `WS` | `/ws/events` | Suscripción autenticada a eventos JSON del tenant |
 
-La web incluye una demo de llamada por voz en `index.astro`: captura PCM 16 kHz y lo envía por `/ws/call`. El backend lo transcribe en streaming con Sherpa-ONNX (Zipformer español), consume el stream del agente y pasa cada chunk semántico a Piper TTS con la voz mexicana `es_MX-claude-high`. El modelo se carga una sola vez y usa una configuración determinista para no omitir ni variar palabras entre generaciones. El backend serializa la generación con un único worker.
+La web incluye una demo de llamada por voz en `index.astro`: captura PCM 16 kHz y lo envía por `/ws/call`. El backend lo transcribe en streaming con Sherpa-ONNX (Nemotron 3.5 español, 560 ms), consume el stream del agente y pasa cada chunk semántico a Piper TTS con la voz mexicana `es_MX-claude-high`. El modelo se carga una sola vez y usa una configuración determinista para no omitir ni variar palabras entre generaciones. El backend serializa la generación con un único worker.
 
-`make setup` descarga el modelo Sherpa a `backend/models/sherpa-es/` (ignorado por git). También puedes correr `scripts/download-sherpa-model.sh`.
+`make setup` descarga el modelo STT a `backend/models/sherpa-nemotron-35-560/` (ignorado por git). También puedes correr `scripts/download-sherpa-model.sh`.
 
 `make setup` descarga la voz Piper Claude junto al modelo Sherpa. Al arrancar el backend, el `lifespan` carga Sherpa-ONNX y la voz Piper sin exigir API keys. `/health/live` indica que el proceso responde y `/health/ready` devuelve `200` solo cuando Sherpa-ONNX, Piper y PostgreSQL están listos (o `503` si alguna capacidad no está disponible). La página `/monitoring` se suscribe a `/ws/events` cuando hay un access token en `sessionStorage` (el mismo de la demo de llamada). Sin sesión sigue mostrando la línea de tiempo local de ejemplo. El hub es in-memory y no transporta PCM.
 
