@@ -1,0 +1,123 @@
+name: Deploy PostgreSQL Container App
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-postgres-container
+  cancel-in-progress: false
+
+jobs:
+  deploy-postgres:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+      DATABASE_APP_NAME: ${{ vars.AZURE_DATABASE_APP_NAME }}
+      BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create or update PostgreSQL Container App
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_ENVIRONMENT"
+          test -n "$DATABASE_APP_NAME"
+          test -n "$POSTGRES_PASSWORD"
+
+          if az containerapp show \
+            --name "$DATABASE_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            az containerapp secret set \
+              --name "$DATABASE_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --secrets postgres-password="$POSTGRES_PASSWORD"
+
+            az containerapp update \
+              --name "$DATABASE_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --image postgres:16.4-alpine \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --set-env-vars \
+                POSTGRES_DB=kognia \
+                POSTGRES_USER=kognia \
+                POSTGRES_PASSWORD=secretref:postgres-password
+
+            az containerapp ingress enable \
+              --name "$DATABASE_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --type internal \
+              --target-port 5432 \
+              --transport tcp
+          else
+            az containerapp create \
+              --name "$DATABASE_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --environment "$CONTAINER_ENVIRONMENT" \
+              --image postgres:16.4-alpine \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --ingress internal \
+              --target-port 5432 \
+              --transport tcp \
+              --secrets postgres-password="$POSTGRES_PASSWORD" \
+              --env-vars \
+                POSTGRES_DB=kognia \
+                POSTGRES_USER=kognia \
+                POSTGRES_PASSWORD=secretref:postgres-password
+          fi
+
+      - name: Configure backend database connection
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! az containerapp show \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            printf '%s\n' 'Backend Container App todavía no existe; se configurará en su primer despliegue.'
+            exit 0
+          fi
+
+          database_host="$(az containerapp show \
+            --name "$DATABASE_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$database_host"
+
+          database_url="$(DATABASE_HOST="$database_host" python - <<'PY'
+          import os
+          import urllib.parse
+
+          password = urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe="")
+          host = os.environ["DATABASE_HOST"]
+          print(f"postgresql+asyncpg://kognia:{password}@{host}:5432/kognia")
+          PY
+          )"
+
+          az containerapp secret set \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --secrets database-url="$database_url"
+
+          az containerapp update \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --set-env-vars DATABASE_URL=secretref:database-url
