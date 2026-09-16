@@ -1,4 +1,3 @@
-import { showToast } from '../infrastructure/toast';
 import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
@@ -87,7 +86,6 @@ export function bootEventsMonitor(apiUrl: string): void {
     conversation.querySelectorAll('.timeline-item').forEach((node) => node.remove());
     setEmpty(true);
     if (hubChip) hubChip.textContent = 'Hub en vivo';
-    showToast('Monitoreo conectado a /ws/events', 'info');
   }
 
   function setCustomerPartial(text: string): void {
@@ -215,7 +213,6 @@ export function bootEventsMonitor(apiUrl: string): void {
   });
   socket.addEventListener('message', (event) => {
     if (typeof event.data !== 'string') {
-      showToast('El hub envió un payload no JSON.', 'warning');
       return;
     }
     try {
@@ -223,12 +220,11 @@ export function bootEventsMonitor(apiUrl: string): void {
       if (!data || typeof data !== 'object' || Array.isArray(data)) return;
       handleEnvelope(data as RealtimeEnvelope);
     } catch {
-      showToast('El hub envió un evento inválido.', 'error');
+      return;
     }
   });
   socket.addEventListener('close', (event) => {
     if (event.code === 4401) {
-      showToast('La sesión del monitoreo no es válida.', 'error');
       if (hubChip) hubChip.textContent = 'Sesión inválida';
       return;
     }

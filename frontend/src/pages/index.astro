@@ -2321,7 +2321,6 @@ import '../styles/detail-panel.css';
        import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
        import { mountSessionPanel } from '../features/voice-call/application/detail-panel';
        import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
-       import { showToast } from '../features/voice-call/infrastructure/toast';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
@@ -2465,7 +2464,6 @@ import '../styles/detail-panel.css';
         appContent?.setAttribute('aria-hidden', 'true');
         restoreStrip();
         setFaceEmotion('neutral');
-        showToast(sessionError.message, 'warning');
       }
 
       async function createSession(email: string, password: string): Promise<void> {
@@ -2505,9 +2503,7 @@ import '../styles/detail-panel.css';
          void createSession(email, password)
            .catch((error: unknown) => {
               const message = errorMessage(error, 'No se pudo iniciar sesión.');
-              // Login errors are delivered through the shared toast only.
               setFaceEmotion(message.includes('inválidos') ? 'angry' : 'sad');
-              showToast(message, 'error');
            })
            .finally(() => {
              setLoginLoading(false);

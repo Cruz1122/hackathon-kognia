@@ -1,7 +1,6 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
-import { showToast } from '../infrastructure/toast';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
@@ -69,7 +68,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector('#conversationEmpty');
   if (!conversation) {
-    showToast('No se encontró el panel de la llamada.', 'error');
     return;
   }
   if (conversation instanceof HTMLElement && conversation.dataset.liveBooted === '1') return;
@@ -81,7 +79,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const callBtn = stealButton('startBtn');
   const pauseBtn = stealButton('playBtn');
   if (!callBtn || !restartBtn || !pauseBtn) {
-    showToast('No se pudieron conectar los controles de la llamada.', 'error');
     return;
   }
 
@@ -154,7 +151,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   }
 
   function showTransportError(message: string, icon = 'triangle-alert'): void {
-    showToast(message, 'error');
     note(message, icon);
   }
 
@@ -358,7 +354,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     });
     if (!started) {
       note('No se pudo abrir el micrófono', 'mic-off');
-      showToast('Permite el micrófono para enviar audio al agente.', 'error');
       return;
     }
     hookMicWave();
@@ -370,7 +365,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       if (connected) return;
       connected = true;
       const stt = String(data.stt_model ?? '').trim();
-      showToast(stt ? `Llamada conectada · ${stt}` : 'Llamada conectada. Habla como en una llamada IP.', 'success');
       note(stt ? `Llamada conectada · ${stt}` : 'Llamada conectada', 'phone');
       if (live && !paused && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
     } else if (type === 'wave.level') {
@@ -493,7 +487,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         showTransportError('Esta cuenta no puede adjuntar la conversación.');
       } else {
         note('La llamada se desconectó', 'unplug');
-        showToast('La llamada se desconectó.', 'warning');
       }
     });
   }
@@ -508,7 +501,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       await resumeCall();
       return;
     }
-    showToast('Conectando la llamada…', 'info');
     capture.primeContext();
     pcm.prime();
     live = true;
@@ -599,7 +591,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
-      showToast(message, 'error');
     });
   });
   pauseBtn.addEventListener('click', () => {
@@ -621,7 +612,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
-      showToast(message, 'error');
     });
   }
 }
