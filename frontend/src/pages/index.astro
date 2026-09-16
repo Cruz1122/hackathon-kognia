@@ -133,16 +133,39 @@ import '../styles/detail-panel.css';
       text-align: center;
     }
 
-    .login-face {
+    .login-face-wrap {
+      position: relative;
       width: min(55%, 280px);
       aspect-ratio: 1;
-      overflow: visible;
-      filter: drop-shadow(0 16px 32px rgba(65,65,65,.18));
+      border-radius: var(--radius-full);
       cursor: pointer;
+      user-select: none;
       transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
     }
 
-    .auth-panel.is-app .login-face {
+    .login-face {
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+      filter: drop-shadow(0 16px 32px rgba(65,65,65,.18));
+      pointer-events: none;
+    }
+
+    .login-face-hit {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      border: 0;
+      border-radius: var(--radius-full);
+      background: transparent;
+      cursor: pointer;
+      user-select: none;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .auth-panel.is-app .login-face-wrap {
       width: min(55%, 280px);
     }
 
@@ -151,7 +174,7 @@ import '../styles/detail-panel.css';
       right: 0;
     }
 
-    .login-face:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; border-radius: var(--radius-full); }
+    .login-face-wrap:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; }
 
     .face-eye-assembly {
       transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px));
@@ -238,7 +261,7 @@ import '../styles/detail-panel.css';
     .auth-panel.no-wipe,
     .auth-panel.no-wipe .login-form-content,
     .auth-panel.no-wipe .app-content,
-    .auth-panel.no-wipe .login-face,
+    .auth-panel.no-wipe .login-face-wrap,
     .auth-panel.no-wipe .login-name,
     .auth-panel.no-wipe .login-material {
       transition: none !important;
@@ -1039,7 +1062,7 @@ import '../styles/detail-panel.css';
       }
       .login-material { right: 0; width: 20%; }
       .login-brand { width: 100%; justify-self: center; }
-      .login-face { width: 150px; }
+      .login-face-wrap { width: 150px; }
       .login-name { width: auto; font-size: 2.5rem; }
       .login-right { min-height: 62dvh; padding: 0; }
       .auth-copy { margin-bottom: 34px; }
@@ -1051,7 +1074,7 @@ import '../styles/detail-panel.css';
       }
       .auth-panel.is-app .app-content { padding: 0 16px 72px; }
       .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
-      .auth-panel.is-app .login-face { width: 72px; }
+      .auth-panel.is-app .login-face-wrap { width: 72px; }
       .auth-panel.is-app .login-name { font-size: 1.4rem; margin-top: 8px; }
       .auth-panel.is-app .login-right { min-height: 78dvh; }
     }
@@ -1104,32 +1127,36 @@ import '../styles/detail-panel.css';
           </svg>
         </div>
         <div class="login-brand">
-          <svg class="login-face" id="demoFace" viewBox="0 0 512 512" role="button" tabindex="0" aria-label="Carita de Demo. Sigue el cursor y reacciona al formulario.">
-            <circle cx="256" cy="256" r="216" fill="#f7c974" />
+          <div class="login-face-wrap" id="demoFaceWrap" role="button" tabindex="0">
+            <span class="sr-only">Carita de Demo</span>
+            <svg class="login-face" id="demoFace" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+              <circle cx="256" cy="256" r="216" fill="#f7c974" />
 
-            <g class="face-eye-assembly" id="leftEyeAssembly">
-              <path id="leftFaceEye" d="M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
-              <g fill="#f7c974" pointer-events="none">
-                <rect class="face-lid" id="leftTopLid" x="122" y="160" width="78" height="25" rx="18" />
-                <rect class="face-lid" id="leftBottomLid" x="122" y="233" width="78" height="25" rx="18" />
+              <g class="face-eye-assembly" id="leftEyeAssembly">
+                <path id="leftFaceEye" d="M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+                <g fill="#f7c974" pointer-events="none">
+                  <rect class="face-lid" id="leftTopLid" x="122" y="160" width="78" height="25" rx="18" />
+                  <rect class="face-lid" id="leftBottomLid" x="122" y="233" width="78" height="25" rx="18" />
+                </g>
               </g>
-            </g>
 
-            <g class="face-eye-assembly" id="rightEyeAssembly">
-              <path id="rightFaceEye" d="M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
-              <g fill="#f7c974" pointer-events="none">
-                <rect class="face-lid" id="rightTopLid" x="312" y="160" width="78" height="25" rx="18" />
-                <rect class="face-lid" id="rightBottomLid" x="312" y="233" width="78" height="25" rx="18" />
+              <g class="face-eye-assembly" id="rightEyeAssembly">
+                <path id="rightFaceEye" d="M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+                <g fill="#f7c974" pointer-events="none">
+                  <rect class="face-lid" id="rightTopLid" x="312" y="160" width="78" height="25" rx="18" />
+                  <rect class="face-lid" id="rightBottomLid" x="312" y="233" width="78" height="25" rx="18" />
+                </g>
               </g>
-            </g>
 
-            <g class="face-folds" id="faceFolds" fill="none" stroke="#414141" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path id="leftFaceFold" d="M 142 166 C 166 156 188 154 209 160" />
-              <path id="rightFaceFold" d="M 303 160 C 324 154 346 156 370 166" />
-            </g>
+              <g class="face-folds" id="faceFolds" fill="none" stroke="#414141" stroke-width="0" stroke-linecap="round" stroke-linejoin="round">
+                <path id="leftFaceFold" d="M 142 166 C 166 156 188 154 209 160" />
+                <path id="rightFaceFold" d="M 303 160 C 324 154 346 156 370 166" />
+              </g>
 
-            <path class="face-mouth" id="faceMouth" d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
+              <path class="face-mouth" id="faceMouth" d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <div class="login-face-hit" id="demoFaceHit" aria-hidden="true"></div>
+          </div>
           <div class="login-name">Demo</div>
         </div>
       </section>
@@ -1175,6 +1202,8 @@ import '../styles/detail-panel.css';
     <script is:inline>
       (() => {
         const face = document.getElementById('demoFace');
+        const faceHit = document.getElementById('demoFaceHit');
+        const faceWrap = document.getElementById('demoFaceWrap');
         const authPanel = document.getElementById('authPanel');
         const form = document.getElementById('authForm');
         const email = document.getElementById('authEmail');
@@ -1193,7 +1222,7 @@ import '../styles/detail-panel.css';
           lb: document.getElementById('leftBottomLid'),
           rb: document.getElementById('rightBottomLid'),
         };
-        if (!face || !form || !email || !password || !leftEye || !rightEye || !mouth || !folds || !leftFold || !rightFold) return;
+        if (!face || !faceHit || !faceWrap || !form || !email || !password || !leftEye || !rightEye || !mouth || !folds || !leftFold || !rightFold) return;
 
         const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
         const emotions = {
@@ -1206,17 +1235,13 @@ import '../styles/detail-panel.css';
           attentive: { mouth: 'M 176 340 C 214 354 298 354 336 340', stroke: 27, gazeX: 6, gazeY: 0, top: 4, bottom: 2, leftAngle: -6, rightAngle: 6 },
           privacy: { mouth: 'M 190 351 C 224 351 288 351 322 351', stroke: 25, gazeX: 0, gazeY: 0, top: 0, bottom: 0, leftAngle: 0, rightAngle: 0, hideLids: true, eyes: ['M 130 210 C 147 224 175 224 192 210', 'M 320 210 C 337 224 365 224 382 210'], eyeStroke: 16 },
         };
-        const emotionLabels = {
-          happy: 'feliz', neutral: 'neutral', sad: 'triste', worried: 'preocupada',
-          angry: 'enojada', surprised: 'sorprendida',
-          attentive: 'atenta', privacy: 'discreta',
-        };
-
         let currentEmotion = 'happy';
         let pointerX = 0;
         let pointerY = 0;
         let idleTimer = 0;
         let emotionTimer = 0;
+        let pokeTimer = 0;
+        let pokeHeld = false;
         let blinkTimer = 0;
         let blinkFrame = 0;
         let expressionFrame = 0;
@@ -1323,6 +1348,8 @@ import '../styles/detail-panel.css';
         function setEmotion(name) {
           const emotion = emotions[name];
           if (!emotion) return;
+          if (pokeHeld && name !== 'angry') return;
+          if (name !== 'angry') window.clearTimeout(pokeTimer);
           if (name === currentEmotion && face.dataset.emotion === name) return;
           currentEmotion = name;
           Object.values(lids).forEach((lid) => {
@@ -1330,7 +1357,6 @@ import '../styles/detail-panel.css';
           });
           setGaze();
           face.dataset.emotion = name;
-          face.setAttribute('aria-label', `Carita de Demo ${emotionLabels[name]}. Sigue el cursor y reacciona al formulario.`);
           window.cancelAnimationFrame(blinkFrame);
           window.cancelAnimationFrame(expressionFrame);
           blinkFrame = 0;
@@ -1379,6 +1405,7 @@ import '../styles/detail-panel.css';
         }
 
         function restoreContext() {
+          if (pokeHeld) return;
           const next = document.activeElement === password
             ? 'privacy'
             : document.activeElement === email
@@ -1390,8 +1417,35 @@ import '../styles/detail-panel.css';
 
         function armIdle() {
           window.clearTimeout(idleTimer);
-          if (authPanel?.hidden) return;
+          if (authPanel?.hidden || pokeHeld) return;
           idleTimer = window.setTimeout(() => setEmotion(document.activeElement === password ? 'privacy' : 'neutral'), 10000);
+        }
+
+        function startPoke(event) {
+          pokeHeld = true;
+          window.clearTimeout(pokeTimer);
+          window.clearTimeout(emotionTimer);
+          window.clearTimeout(idleTimer);
+          setEmotion('angry');
+          const target = event?.currentTarget;
+          if (event && 'pointerId' in event && target?.setPointerCapture) {
+            try { target.setPointerCapture(event.pointerId); } catch {}
+          }
+        }
+
+        function endPoke() {
+          if (!pokeHeld) return;
+          pokeHeld = false;
+          window.clearTimeout(pokeTimer);
+          pokeTimer = window.setTimeout(() => {
+            const next = document.activeElement === password
+              ? 'privacy'
+              : document.activeElement === email
+                ? 'attentive'
+                : (email.value || password.value ? formEmotion() : 'happy');
+            setEmotion(next);
+            armIdle();
+          }, 1000);
         }
 
         function trackPointer(event) {
@@ -1442,12 +1496,27 @@ import '../styles/detail-panel.css';
         });
         window.addEventListener('keydown', armIdle, { passive: true });
         window.addEventListener('demo-face-emotion', (event) => setEmotion(event.detail));
-        face.addEventListener('pointerdown', () => { setEmotion('angry'); armIdle(); });
-        face.addEventListener('keydown', (event) => {
+        faceHit.addEventListener('pointerdown', (event) => {
+          if (event.button) return;
+          event.preventDefault();
+          startPoke(event);
+        });
+        faceHit.addEventListener('pointerup', endPoke);
+        faceHit.addEventListener('pointercancel', endPoke);
+        window.addEventListener('pointerup', endPoke);
+        window.addEventListener('pointercancel', endPoke);
+        faceWrap.addEventListener('keydown', (event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
-          setEmotion('angry');
-          armIdle();
+          if (event.repeat) return;
+          startPoke(event);
+        });
+        faceWrap.addEventListener('keyup', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          endPoke();
+        });
+        faceWrap.addEventListener('blur', () => {
+          if (pokeHeld) endPoke();
         });
         [email, password].forEach((input) => {
           input.addEventListener('focus', () => {
