@@ -111,56 +111,56 @@ export function readDetail(card: HTMLElement): DetailPayload | null {
   return null;
 }
 
-function fieldsMarkup(fields: DetailField[]): string {
-  if (!fields.length) return '<p class="detail-empty">Sin datos</p>';
-  return `<dl class="detail-fields">${fields.map((field) => `<div class="detail-field"><dt>${escapeHtml(field.label)}</dt><dd>${escapeHtml(field.value)}</dd></div>`).join('')}</dl>`;
+function isPendingValue(value: string): boolean {
+  return value.trim() === 'Pendiente';
+}
+
+function isLongValue(value: string): boolean {
+  return value.length > 64 || value.includes('\n');
+}
+
+function fieldRow(field: DetailField): string {
+  const pending = isPendingValue(field.value);
+  const long = !pending && isLongValue(field.value);
+  const status = !pending && !long && field.label === 'Estado';
+  const rowClass = ['detail-field', long ? 'is-long' : ''].filter(Boolean).join(' ');
+  const valueClass = [pending ? 'is-pending' : '', long ? 'is-long' : '', status ? 'is-status' : ''].filter(Boolean).join(' ');
+  const value = status
+    ? `<span class="detail-chip">${escapeHtml(field.value)}</span>`
+    : escapeHtml(field.value);
+  return `<div class="${rowClass}"><dt>${escapeHtml(field.label)}</dt><dd${valueClass ? ` class="${valueClass}"` : ''}>${value}</dd></div>`;
+}
+
+function fieldsMarkup(fields: DetailField[], empty = 'Sin datos'): string {
+  if (!fields.length) return `<p class="detail-empty">${escapeHtml(empty)}</p>`;
+  return `<dl class="detail-fields">${fields.map(fieldRow).join('')}</dl>`;
+}
+
+function groupedFields(groups: { title: string; fields?: DetailField[]; empty?: string }[]): string {
+  return `<div class="detail-sheet">${groups.map((group) => `<section class="detail-group"><h3>${escapeHtml(group.title)}</h3>${fieldsMarkup(group.fields ?? [], group.empty)}</section>`).join('')}</div>`;
 }
 
 type SessionState = {
   name: string;
   phone: string;
   status: string;
-  extras: DetailField[];
 };
 
 const session: SessionState = {
   name: '',
   phone: '',
   status: 'En espera',
-  extras: [],
 };
 
 function pendingValue(value: string): string {
   return value.trim() || 'Pendiente';
 }
 
-function upsertExtra(label: string, value: string): void {
-  const cleaned = value.trim();
-  if (!cleaned) return;
-  const existing = session.extras.find((field) => field.label === label);
-  if (existing) existing.value = cleaned;
-  else session.extras.push({ label, value: cleaned });
-}
-
-export function patchSession(partial: { name?: string; phone?: string; status?: string; fields?: DetailField[] }): void {
+export function patchSession(partial: { name?: string; phone?: string; status?: string }): void {
   if (typeof partial.name === 'string') session.name = partial.name.trim();
   if (typeof partial.phone === 'string') session.phone = partial.phone.trim();
   if (typeof partial.status === 'string' && partial.status.trim()) session.status = partial.status.trim();
-  for (const field of partial.fields ?? []) {
-    const label = field.label.trim();
-    const value = field.value.trim();
-    if (!label || !value) continue;
-    const key = label.toLocaleLowerCase();
-    if (key.includes('nombre')) session.name = value;
-    else if (key.includes('tel')) session.phone = value;
-    else upsertExtra(key === 'estado' ? 'Reserva' : label, value);
-  }
   renderSession();
-}
-
-export function patchSessionFromDetail(detail: DetailPayload): void {
-  if (detail.kind !== 'tool') return;
-  patchSession({ fields: [...detail.inputs, ...(detail.outputs ?? [])] });
 }
 
 function sessionFields(): DetailField[] {
@@ -168,7 +168,6 @@ function sessionFields(): DetailField[] {
     { label: 'Nombre', value: pendingValue(session.name) },
     { label: 'Teléfono', value: pendingValue(session.phone) },
     { label: 'Estado', value: pendingValue(session.status) },
-    ...session.extras.filter((field) => !['Nombre', 'Teléfono', 'Estado'].includes(field.label)),
   ];
 }
 
@@ -176,14 +175,7 @@ function renderSession(): void {
   const root = document.getElementById('detailPanel');
   const panel = root?.querySelector('#sessionPanel');
   if (!panel) return;
-  const fields = sessionFields();
-  panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado de la llamada</h2><section class="detail-section">${fieldsMarkup(fields)}</section>`;
-  if (!root?.classList.contains('is-tool')) {
-    const pending = panel.querySelectorAll('.detail-field dd');
-    pending.forEach((node) => {
-      if (node.textContent === 'Pendiente') node.classList.add('is-pending');
-    });
-  }
+  panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado de la llamada</h2><div class="detail-sheet"><section class="detail-group">${fieldsMarkup(sessionFields())}</section></div>`;
 }
 
 function showSessionView(): void {
@@ -204,12 +196,12 @@ function showSessionView(): void {
 function renderBody(detail: DetailPayload): string {
   if (detail.kind === 'source') {
     const content = detail.content ? renderMarkdown(detail.content) : 'Sin contenido recuperado';
-    return `<p class="detail-kicker">Fuente</p><h2 class="detail-title">${escapeHtml(detail.title)}</h2><section class="detail-section"><h3>Contenido</h3><div class="detail-content">${content}</div></section>`;
+    return `<p class="detail-kicker">Fuente</p><h2 class="detail-title">${escapeHtml(detail.title)}</h2><div class="detail-content">${content}</div>`;
   }
-  const result = detail.outputs?.length
-    ? fieldsMarkup(detail.outputs)
-    : '<p class="detail-empty">En curso…</p>';
-  return `<p class="detail-kicker">Herramienta usada</p><h2 class="detail-title">${escapeHtml(detail.name)}</h2><section class="detail-section"><h3>Entrada</h3>${fieldsMarkup(detail.inputs)}</section><section class="detail-section"><h3>Resultado</h3>${result}</section>`;
+  return `<p class="detail-kicker">Herramienta usada</p><h2 class="detail-title">${escapeHtml(detail.name)}</h2>${groupedFields([
+    { title: 'Entrada', fields: detail.inputs },
+    { title: 'Resultado', fields: detail.outputs, empty: 'En curso…' },
+  ])}`;
 }
 
 function lucideRefresh(): void {
@@ -260,7 +252,6 @@ export function openDetail(detail: DetailPayload, cardId?: string): void {
   const sessionNode = root?.querySelector('#sessionPanel');
   const close = root?.querySelector('.detail-panel__close');
   if (!root || !body) return;
-  patchSessionFromDetail(detail);
   body.innerHTML = renderBody(detail);
   if (body instanceof HTMLElement) body.hidden = false;
   if (sessionNode instanceof HTMLElement) sessionNode.hidden = true;

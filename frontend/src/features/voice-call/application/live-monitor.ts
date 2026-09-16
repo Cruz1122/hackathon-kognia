@@ -3,7 +3,7 @@ import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { showToast } from '../infrastructure/toast';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
-import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromDetail, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
@@ -262,7 +262,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
 
   function addTool(id: string, payload: Record<string, unknown>): void {
     const detail = toolDetailFromEvent(payload);
-    patchSessionFromDetail(detail);
     const title = detail.name;
     const status = String(payload.status ?? 'Ejecutando');
     appendRow(
@@ -278,7 +277,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     const previous = readDetail(tool);
     const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
     writeDetail(tool, detail);
-    patchSessionFromDetail(detail);
     refreshOpenDetail(id, detail);
     const titleNode = tool.querySelector('.tool-title');
     const statusNode = tool.querySelector('.tool-status');

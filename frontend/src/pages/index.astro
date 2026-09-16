@@ -1532,13 +1532,15 @@ import '../styles/detail-panel.css';
       <div class="detail-panel__session" id="sessionPanel">
         <p class="detail-kicker">Cliente</p>
         <h2 class="detail-title">Estado de la llamada</h2>
-        <section class="detail-section">
-          <dl class="detail-fields">
-            <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
-            <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-            <div class="detail-field"><dt>Estado</dt><dd>En espera</dd></div>
-          </dl>
-        </section>
+        <div class="detail-sheet">
+          <section class="detail-group">
+            <dl class="detail-fields">
+              <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
+              <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
+              <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
+            </dl>
+          </section>
+        </div>
       </div>
       <div class="detail-panel__body" hidden></div>
     </aside>

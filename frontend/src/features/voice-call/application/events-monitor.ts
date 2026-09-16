@@ -1,7 +1,7 @@
 import { showToast } from '../infrastructure/toast';
 import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
-import { bindDetailClicks, mountSessionPanel, patchSessionFromDetail, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -170,7 +170,6 @@ export function bootEventsMonitor(apiUrl: string): void {
         const previous = readDetail(tool);
         const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
         writeDetail(tool, detail);
-        patchSessionFromDetail(detail);
         refreshOpenDetail(id, detail);
         const titleNode = tool.querySelector('.tool-title');
         if (titleNode) titleNode.textContent = detail.name;

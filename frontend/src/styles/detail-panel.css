@@ -73,37 +73,88 @@ body.detail-open .demo-switcher {
   line-height: 1.15;
 }
 
-.detail-section {
-  margin-top: 22px;
+.detail-sheet {
+  display: grid;
+  gap: 18px;
 }
 
-.detail-section h3 {
-  margin: 0 0 10px;
-  font-size: 13px;
-  font-weight: 700;
-  opacity: .58;
+.detail-group h3 {
+  margin: 0 0 8px;
+  padding: 0 18px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  opacity: .46;
 }
 
 .detail-fields {
   margin: 0;
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }
 
 .detail-field {
   display: grid;
-  gap: 2px;
+  grid-template-columns: minmax(96px, 38%) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px 16px;
+  min-height: 44px;
+  padding: 8px 20px;
+  background: #fff;
+  border: 1px solid rgba(65, 65, 65, .12);
+  border-radius: var(--radius-full);
 }
 
 .detail-field dt {
-  font-size: 12px;
+  margin: 0;
+  font-size: 13px;
   font-weight: 600;
-  opacity: .54;
+  line-height: 1.25;
+  opacity: .56;
+}
+
+.detail-field dd {
+  margin: 0;
+  text-align: right;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.detail-field.is-long {
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 6px;
+  padding: 14px 20px 16px;
+}
+
+.detail-field.is-long dd {
+  text-align: left;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 .detail-field dd.is-pending {
   font-weight: 600;
-  opacity: .46;
+  opacity: .58;
+}
+
+.detail-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--ui-amber);
+  color: var(--ui-graphite);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .detail-content {
@@ -217,9 +268,16 @@ body.detail-open .demo-switcher {
 
 .detail-empty {
   margin: 0;
-  font-size: 15px;
+  min-height: 44px;
+  display: grid;
+  align-items: center;
+  padding: 10px 20px;
+  border-radius: var(--radius-full);
+  background: #fff;
+  border: 1px solid rgba(65, 65, 65, .12);
+  color: rgba(65, 65, 65, .52);
+  font-size: 14px;
   font-weight: 600;
-  opacity: .58;
 }
 
 @media (max-width: 760px) {
