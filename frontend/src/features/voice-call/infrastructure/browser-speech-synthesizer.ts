@@ -1,3 +1,5 @@
+import { BackendError, backendErrorFromResponse } from './backend-error';
+
 export class BrowserSpeechSynthesizer {
   private voices: SpeechSynthesisVoice[] = [];
   private speaking = false;
@@ -115,7 +117,8 @@ export class BrowserSpeechSynthesizer {
         body: JSON.stringify({ text }),
         signal: request.signal,
       });
-      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) throw await backendErrorFromResponse(response, 'No se pudo reproducir el audio.');
+      if (!response.body) throw new Error('La API no devolvió un stream de audio.');
       const sampleRate = Number(response.headers.get('X-Audio-Sample-Rate') ?? 24000);
       context = new AudioContext({ sampleRate });
       this.fallbackContext = context;
@@ -152,7 +155,7 @@ export class BrowserSpeechSynthesizer {
     } catch (error) {
       if (generation !== this.generation || (error instanceof DOMException && error.name === 'AbortError')) return;
       this.speaking = false;
-      onError?.('No se pudo reproducir el audio de Qwen3-TTS.');
+      onError?.(error instanceof BackendError ? error.message : 'No se pudo reproducir el audio.');
       onEnd();
     } finally {
       if (this.fallbackRequest === request) this.fallbackRequest = undefined;
@@ -182,7 +185,7 @@ export class BrowserSpeechSynthesizer {
         body: JSON.stringify({ text }),
         signal: request.signal,
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) throw await backendErrorFromResponse(response, 'No se pudo reproducir el audio.');
       const audioBlob = await response.blob();
       if (generation !== this.generation) return;
       objectUrl = URL.createObjectURL(audioBlob);
@@ -206,7 +209,7 @@ export class BrowserSpeechSynthesizer {
     } catch (error) {
       if (objectUrl) this.releaseFallbackAudio(objectUrl);
       if (generation !== this.generation || (error instanceof DOMException && error.name === 'AbortError')) return;
-      finish(() => { onError?.('No se pudo usar el TTS local de Qwen3-TTS.'); onEnd(); });
+      finish(() => { onError?.(error instanceof BackendError ? error.message : 'No se pudo reproducir el audio.'); onEnd(); });
     } finally {
       if (this.fallbackRequest === request) this.fallbackRequest = undefined;
     }

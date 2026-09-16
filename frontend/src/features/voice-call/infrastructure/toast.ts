@@ -8,6 +8,8 @@ const ICONS: Record<ToastVariant, { face: string; target: string }> = {
   neutral: { face: 'annoyed', target: 'clock-3' },
 };
 
+const MAX_VISIBLE_TOASTS = 3;
+
 export function showToast(message: string, variant: ToastVariant = 'info'): void {
   const stack = document.querySelector('.toast-stack');
   if (!stack) return;
@@ -34,6 +36,7 @@ export function showToast(message: string, variant: ToastVariant = 'info'): void
   const copy = stage.querySelector('.toast-message');
   if (copy) copy.textContent = message;
   stack.prepend(stage);
+  while (stack.children.length > MAX_VISIBLE_TOASTS) stack.lastElementChild?.remove();
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
   lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
   window.setTimeout(() => stage.remove(), 4650);

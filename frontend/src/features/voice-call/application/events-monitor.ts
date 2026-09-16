@@ -1,4 +1,5 @@
 import { showToast } from '../infrastructure/toast';
+import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
 
 function lucideRefresh(): void {
@@ -192,7 +193,7 @@ export function bootEventsMonitor(apiUrl: string): void {
       enterLiveFeed();
       appendRow(
         'system-event',
-        `<span class="call-ended-label"><i data-lucide="triangle-alert"></i><span>${escapeHtml(String(payload.message ?? 'Error'))}</span></span>`,
+        `<span class="call-ended-label"><i data-lucide="triangle-alert"></i><span>${escapeHtml(backendMessage(payload, 'El backend reportó un error.'))}</span></span>`,
       );
     }
   }

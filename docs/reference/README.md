@@ -18,6 +18,8 @@ Tablas de apoyo. El contrato vivo está en el código enlazado.
 
 ## Dependencias clave
 
-Backend (`requirements.txt`): FastAPI 0.141.1, Uvicorn 0.52.4, SQLAlchemy 2.0.41, asyncpg, Alembic, bcrypt, PyJWT, httpx, sherpa-onnx, piper-tts, pytest.
+Backend runtime (`requirements.txt`): FastAPI 0.141.1, Uvicorn 0.52.4, SQLAlchemy 2.0.41, asyncpg, Alembic, bcrypt, PyJWT, httpx, sherpa-onnx, piper-tts, Chroma HTTP client, Sentence Transformers E5.
+
+Backend development (`requirements-dev.txt`): runtime dependencies plus pytest and pytest-asyncio.
 
 Frontend: solo `astro@7.3.1`.

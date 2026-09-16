@@ -1,4 +1,5 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
+import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { showToast } from '../infrastructure/toast';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
@@ -421,7 +422,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       processing = false;
     } else if (type === 'error') {
       processing = false;
-      const message = String(data.message ?? 'Error en la llamada');
+      const message = backendMessage(data, 'Error en la llamada.');
       if (!/no detect[eé] una frase/i.test(message)) note(message, 'triangle-alert');
     }
   }
@@ -585,7 +586,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
 
   callBtn.addEventListener('click', () => {
     void startCall().catch((error) => {
-      const message = error instanceof Error ? error.message : 'No se pudo iniciar la llamada';
+      const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
       showToast(message, 'error');
     });
@@ -595,7 +596,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   });
   restartBtn.addEventListener('click', () => {
     void restartCall().catch((error) => {
-      note(error instanceof Error ? error.message : 'No se pudo reiniciar la llamada', 'phone-off');
+      note(errorMessage(error, 'No se pudo reiniciar la llamada.'), 'phone-off');
     });
   });
   syncControls();
@@ -607,7 +608,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
 
   if (autoStart) {
     void startCall().catch((error) => {
-      const message = error instanceof Error ? error.message : 'No se pudo iniciar la llamada';
+      const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
       showToast(message, 'error');
     });

@@ -1,7 +1,7 @@
 .PHONY: help setup smoke \
 	dev-api dev-web \
 	build build-api build-web \
-	check-venv
+	check-venv check-image-size
 
 PYTHON := backend/.venv/bin/python
 HOST := 127.0.0.1
@@ -16,6 +16,7 @@ help:
 	@echo "make build-api  compileall de Python"
 	@echo "make build-web  build de Astro"
 	@echo "make smoke      health check de la API"
+	@echo "make check-image-size  mide las imágenes únicas de Compose"
 
 setup:
 	./scripts/setup.sh
@@ -42,3 +43,6 @@ build-web:
 
 smoke:
 	./scripts/smoke.sh
+
+check-image-size:
+	./scripts/check-compose-image-size.sh

@@ -11,12 +11,13 @@ make setup
 Efectos (`scripts/setup.sh`):
 
 1. Crea `backend/.venv`
-2. Instala `backend/requirements.txt`
+2. Instala `backend/requirements-dev.txt` (runtime + pytest)
 3. Descarga Nemotron STT a `backend/models/sherpa-nemotron-35-560/`
 4. Descarga Piper a `backend/models/piper-es/`
-5. `pnpm install` en `frontend/`
+5. Descarga E5 a `backend/models/multilingual-e5-small/`
+6. `pnpm install` en `frontend/`
 
-Los modelos no se versionan. Re-descarga: `scripts/download-sherpa-model.sh`, `scripts/download-piper-model.sh`.
+Los modelos no se versionan. Re-descarga STT/Piper con `scripts/download-sherpa-model.sh` y `scripts/download-piper-model.sh`; el E5 se descarga con `backend/scripts/download-e5-model.py`.
 
 Copiar `backend/.env.example` → `backend/.env` y rellenar `JWT_SECRET_KEY` (≥ 32) y API keys que uses. El backend también lee `.env` en la raíz del repo.
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
+from pathlib import Path
 from typing import Protocol
 
 
@@ -21,14 +23,40 @@ class E5EmbeddingProvider:
 
     def _encode(self, texts: list[str], prefix: str) -> list[list[float]]:
         if self._model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(self.model_name)
-            except ImportError:
-                self._model = False
-        if self._model not in (None, False):
-            values = self._model.encode([f"{prefix}: {text}" for text in texts], normalize_embeddings=True)
-            return [list(map(float, value)) for value in values]
+            from sentence_transformers import SentenceTransformer
+
+            default_path = Path(__file__).resolve().parents[3] / "models" / "multilingual-e5-small"
+            configured_path = os.getenv("E5_MODEL_DIR")
+            model_source = Path(configured_path) if configured_path else default_path
+            is_local_model = model_source.is_dir()
+            self._model = SentenceTransformer(
+                str(model_source) if is_local_model else self.model_name,
+                device="cpu",
+                local_files_only=is_local_model,
+            )
+        values = self._model.encode(
+            [f"{prefix}: {text}" for text in texts],
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        )
+        return [list(map(float, value)) for value in values]
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        return self._encode(texts, "query")
+
+    def embed_passages(self, texts: list[str]) -> list[list[float]]:
+        return self._encode(texts, "passage")
+
+
+class HashEmbeddingProvider:
+    """Small deterministic fake for fast unit tests without model weights."""
+
+    dimensions = 384
+
+    def __init__(self, model_name: str = "test-hash-embedding") -> None:
+        self.model_name = model_name
+
+    def _encode(self, texts: list[str]) -> list[list[float]]:
         result = []
         for text in texts:
             vector = [0.0] * self.dimensions
@@ -43,7 +71,7 @@ class E5EmbeddingProvider:
         return result
 
     def embed_queries(self, texts: list[str]) -> list[list[float]]:
-        return self._encode(texts, "query")
+        return self._encode([f"query: {text}" for text in texts])
 
     def embed_passages(self, texts: list[str]) -> list[list[float]]:
-        return self._encode(texts, "passage")
+        return self._encode([f"passage: {text}" for text in texts])

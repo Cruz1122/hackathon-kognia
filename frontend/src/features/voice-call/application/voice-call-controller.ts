@@ -7,6 +7,7 @@ import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { SpeechQueue } from '../infrastructure/speech-queue';
 import { SemanticChunker } from '../services/semantic-chunker';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
+import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 
 type Listener = (snapshot: VoiceSnapshot) => void;
 
@@ -127,7 +128,7 @@ export class VoiceCallController {
           this.patch({ assistantText: answer, metrics: nextMetrics });
           for (const chunk of this.chunker.push(event.text)) this.enqueueChunk(chunk, turn.id);
         } else if (event.type === 'error') {
-          throw new Error(event.message ?? 'El agente se interrumpió');
+          throw new Error(backendMessage(event, 'El agente se interrumpió.'));
         }
       }
       for (const chunk of this.chunker.flush()) this.enqueueChunk(chunk, turn.id);
@@ -138,7 +139,7 @@ export class VoiceCallController {
     } catch (error) {
       if (!this.cancellation.isCurrent(turn.id)) return;
       if (turn.signal.aborted) return;
-      this.patch({ state: 'error', error: error instanceof Error ? error.message : 'Error inesperado del agente' });
+      this.patch({ state: 'error', error: errorMessage(error, 'Error inesperado del agente.') });
     }
   }
 
@@ -176,7 +177,7 @@ export class VoiceCallController {
     } catch (error) {
       if (!this.cancellation.isCurrent(turn.id) || turn.signal.aborted) return;
       this.pcmQueue.cancel();
-      this.patch({ state: 'error', error: error instanceof Error ? error.message : 'Error inesperado del agente' });
+      this.patch({ state: 'error', error: errorMessage(error, 'Error inesperado del agente.') });
     }
   }
 

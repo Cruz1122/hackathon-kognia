@@ -33,7 +33,7 @@ Desde la raíz del repositorio:
 make setup
 ```
 
-El setup crea `backend/.venv`, instala las dependencias de `backend/requirements.txt` y ejecuta `pnpm install` dentro de `frontend/`.
+El setup crea `backend/.venv`, instala las dependencias runtime y de desarrollo de `backend/requirements-dev.txt`, descarga los modelos locales de voz y RAG, y ejecuta `pnpm install` dentro de `frontend/`.
 
 Levanta la API y la web en terminales separadas:
 

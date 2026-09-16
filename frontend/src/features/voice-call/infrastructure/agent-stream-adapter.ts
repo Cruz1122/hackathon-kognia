@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../domain/types';
+import { backendErrorFromResponse, backendMessage } from './backend-error';
 import { parseSse } from './sse-parser';
 
 type TokenEvent = { text?: unknown };
@@ -35,7 +36,7 @@ export class AgentStreamAdapter {
       body: JSON.stringify(body),
       signal,
     });
-    if (!response.ok) throw new Error(`El agente no está disponible (HTTP ${response.status})`);
+    if (!response.ok) throw await backendErrorFromResponse(response, 'El agente no está disponible.');
     for await (const event of parseSse(response)) {
       if (event.event === 'token') {
         const payload = event.data as TokenEvent;
@@ -43,8 +44,8 @@ export class AgentStreamAdapter {
       } else if (event.event === 'done') {
         yield { type: 'done' };
       } else if (event.event === 'error') {
-        const payload = event.data as { message?: unknown };
-        yield { type: 'error', message: typeof payload.message === 'string' ? payload.message : 'El agente se interrumpió' };
+          const payload = event.data as { message?: unknown };
+          yield { type: 'error', message: backendMessage(payload, 'El agente se interrumpió.') };
       } else if (event.event === 'rag.started' || event.event === 'rag.completed') {
         yield { type: event.event, data: event.data };
       }
@@ -67,7 +68,8 @@ export class AgentStreamAdapter {
       body: audio,
       signal,
     });
-    if (!response.ok || !response.body) throw new Error(`El agente no está disponible (HTTP ${response.status})`);
+    if (!response.ok) throw await backendErrorFromResponse(response, 'El agente no está disponible.');
+    if (!response.body) throw new Error('El agente no devolvió un stream de audio.');
     const sampleRate = Number(response.headers.get('X-Audio-Sample-Rate') ?? 24000);
     const reader = response.body.getReader();
     while (true) {

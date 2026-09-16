@@ -18,7 +18,7 @@ import '../styles/toast.css';
       --ui-amber: #f7c974;
       --ui-cream: #faeccf;
       --ui-paper: #f8f8f8;
-      --ui-control: #e8e8e8;
+      --ui-control: var(--ui-cream);
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
     }
@@ -43,54 +43,232 @@ import '../styles/toast.css';
       padding: 32px 0 84px;
     }
 
+    .page:has(#authPanel:not([hidden])) {
+      width: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
     .app-content[hidden], .state-view[hidden], .auth-panel[hidden] { display: none !important; }
 
     .auth-panel {
+      position: relative;
       display: grid;
-      gap: 16px;
-      margin: 0 12px 22px;
-      padding: 20px;
-      border-radius: var(--radius-full);
-      background: var(--ui-cream);
-      box-shadow: 0 8px 28px rgba(65,65,65,.08);
+      grid-template-columns: 56% 44%;
+      width: 100%;
+      min-height: 100dvh;
+      margin: 0;
+      padding: 0;
+      background: var(--ui-paper);
+      overflow: hidden;
     }
 
-    .auth-copy { display: grid; gap: 5px; }
-    .auth-copy h2 { margin: 0; font-size: 22px; line-height: 1.05; letter-spacing: -.025em; }
+    .login-left {
+      position: relative;
+      z-index: 1;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      overflow: visible;
+      background: var(--ui-graphite);
+    }
+
+    /* Dos teselas idénticas: al desplazar una tesela completa, el último
+       fotograma es exactamente igual al primero y el loop no salta. */
+    .login-material {
+      position: absolute;
+      inset: -100% 0 auto auto;
+      right: -6%;
+      width: 24%;
+      height: 200%;
+      filter: url(#ui-goo);
+      -webkit-filter: url(#ui-goo);
+      animation: liquid-flow 12s linear infinite;
+      will-change: transform;
+    }
+
+    .login-left-svg { display: block; width: 100%; height: 100%; }
+    .amber-shape { fill: var(--ui-amber); }
+    .graphite-shape { fill: var(--ui-graphite); }
+
+    @keyframes liquid-flow {
+      from { transform: translateY(0); }
+      to { transform: translateY(50%); }
+    }
+
+    .login-brand {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      width: 100%;
+      justify-self: center;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      color: var(--ui-amber);
+      text-align: center;
+    }
+
+    .login-face {
+      width: min(55%, 280px);
+      aspect-ratio: 1;
+      overflow: visible;
+      filter: drop-shadow(0 16px 32px rgba(65,65,65,.18));
+      cursor: pointer;
+    }
+
+    .login-face:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; border-radius: var(--radius-full); }
+
+    .face-eye-assembly {
+      transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px));
+      transition: transform .22s cubic-bezier(.2,.8,.2,1);
+      will-change: transform;
+    }
+
+    .face-lid {
+      transform-box: view-box;
+    }
+
+    .face-mouth,
+    .face-folds {
+      transform-box: view-box;
+      transform-origin: 256px 340px;
+    }
+
+    .login-name {
+      width: min(80%, 300px);
+      margin-top: 22px;
+      font-size: clamp(2.2rem, 4vw, 4rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+
+    .login-right {
+      position: relative;
+      z-index: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      padding: clamp(32px, 6vw, 90px);
+      background: var(--ui-paper);
+    }
+
+    .auth-copy { display: grid; gap: 5px; margin-bottom: 42px; }
+    .auth-copy h2 { margin: 0; font-size: clamp(2.5rem, 4vw, 4rem); line-height: .95; letter-spacing: -.04em; font-weight: 800; }
     .auth-copy p:last-child { margin: 0; color: rgba(65,65,65,.68); font-size: 14px; line-height: 1.35; }
 
-    .auth-form {
-      display: flex;
-      align-items: flex-end;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .auth-field { display: grid; gap: 5px; min-width: min(220px, 100%); flex: 1 1 220px; }
-    .auth-field span { padding-inline: 14px; font-size: 12px; font-weight: 700; }
+    .auth-form { display: grid; gap: 0; width: min(100%, 430px); }
+    .auth-field { display: grid; gap: 8px; min-width: 0; margin-bottom: 22px; }
+    .auth-field span { padding-inline: 14px; font-size: 14px; font-weight: 700; }
     .auth-field input {
       width: 100%;
-      border: 0;
+      height: 54px;
+      border: 4px solid var(--ui-graphite);
       border-radius: var(--radius-full);
-      padding: 12px 15px;
-      background: var(--ui-paper);
+      padding: 0 18px;
+      background: transparent;
       color: var(--ui-graphite);
       font: inherit;
+      font-size: 18px;
       outline: 0;
     }
     .auth-field input:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
-    .auth-submit {
+    .auth-password-field {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .auth-password-field input[type="password"] {
+      font-size: 22px;
+      letter-spacing: .12em;
+    }
+    .auth-password-field input {
+      grid-area: 2 / 1;
+      padding-right: 62px;
+    }
+    .auth-password-toggle {
+      position: relative;
+      grid-area: 2 / 1;
+      justify-self: end;
+      align-self: center;
+      z-index: 1;
+      margin-right: 8px;
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
       border: 0;
       border-radius: var(--radius-full);
-      padding: 12px 20px;
+      background: transparent;
+      color: var(--ui-graphite);
+      cursor: pointer;
+    }
+    .auth-password-toggle:hover { background: var(--ui-cream); }
+    .auth-password-toggle:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
+    .auth-password-toggle svg { width: 20px; height: 20px; stroke-width: 2.5; }
+    .auth-submit-wrap { position: relative; height: 58px; margin-top: 3px; }
+    .auth-submit-wrap::before {
+      content: "";
+      position: absolute;
+      inset: 6px -8px -10px 8px;
+      border-radius: var(--radius-full);
+      background: var(--ui-amber);
+      filter: url(#ui-goo);
+      -webkit-filter: url(#ui-goo);
+    }
+    .auth-submit {
+      position: relative;
+      width: 100%;
+      height: 58px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: 0;
+      border-radius: var(--radius-full);
       background: var(--ui-graphite);
       color: var(--ui-paper);
+      font-size: 20px;
       font-weight: 700;
       cursor: pointer;
     }
     .auth-submit:disabled { cursor: wait; opacity: .62; }
-    .auth-submit:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
-    .auth-status { min-height: 1.25em; margin: 0; padding-inline: 14px; font-size: 13px; font-weight: 600; }
+    .auth-submit:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 3px; }
+    .auth-submit-loader {
+      position: relative;
+      display: none;
+      width: 25px;
+      height: 25px;
+      filter: url(#ui-goo);
+      -webkit-filter: url(#ui-goo);
+      animation: auth-loader-drift 1.5s linear infinite;
+    }
+    .auth-submit-loader-dot,
+    .auth-submit-loader-runner {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      border-radius: 50%;
+      background: var(--ui-amber);
+      transform-origin: 0 0;
+    }
+    .auth-submit-loader-dot {
+      width: 3px;
+      height: 3px;
+      margin: -1.5px;
+      transform: rotate(var(--angle)) translateY(-8px);
+      opacity: .78;
+    }
+    .auth-submit-loader-runner {
+      width: 5px;
+      height: 5px;
+      margin: -2.5px;
+      animation: auth-loader-orbit 780ms cubic-bezier(.55, .02, .45, .98) infinite;
+    }
+    .auth-submit.is-loading .auth-submit-loader { display: block; }
+    .auth-submit.is-loading .auth-submit-label { opacity: .84; }
+    @keyframes auth-loader-drift { to { transform: rotate(360deg); } }
+    @keyframes auth-loader-orbit { to { transform: rotate(360deg) translateY(-8px); } }
 
     .topline {
       display: flex;
@@ -740,9 +918,17 @@ import '../styles/toast.css';
       .tool-call { width: 92%; }
       .conversation { margin-top: 18px; padding-inline: 2px; }
       .demo-switcher { right: 10px; bottom: 10px; }
-      .auth-panel { margin-inline: 0; padding: 16px; }
-      .auth-form { align-items: stretch; }
-      .auth-submit { width: 100%; }
+      .auth-panel {
+        grid-template-columns: 1fr;
+        min-height: 100dvh;
+      }
+      .login-left { min-height: 38dvh; overflow: hidden; }
+      .login-material { right: 0; width: 20%; }
+      .login-brand { width: 100%; justify-self: center; }
+      .login-face { width: 150px; }
+      .login-name { width: auto; font-size: 2.5rem; }
+      .login-right { min-height: 62dvh; padding: 42px 25px 48px; }
+      .auth-copy { margin-bottom: 34px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -769,7 +955,7 @@ import '../styles/toast.css';
           1 0 0 0 0
           0 1 0 0 0
           0 0 1 0 0
-          0 0 0 22 -10" result="goo" />
+          0 0 0 22 -8" result="goo" />
         <feComposite in="SourceGraphic" in2="goo" operator="atop" />
       </filter>
     </defs>
@@ -779,24 +965,377 @@ import '../styles/toast.css';
 
   <main class="page">
     <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
-      <div class="auth-copy">
-        <p class="eyebrow">Acceso de demo</p>
-        <h2 id="authTitle">Inicia sesión para abrir una llamada</h2>
-        <p>Usa un ADMIN creado por el bootstrap de la API.</p>
-      </div>
-      <form class="auth-form" id="authForm">
-        <label class="auth-field">
-          <span>Correo</span>
-          <input id="authEmail" name="email" type="email" autocomplete="username" required maxlength="320" />
-        </label>
-        <label class="auth-field">
-          <span>Contraseña</span>
-          <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
-        </label>
-        <button class="auth-submit" type="submit" id="authSubmit">Entrar</button>
-      </form>
-      <p class="auth-status" id="authStatus" role="status" aria-live="polite"></p>
+      <section class="login-left" aria-label="Demo">
+        <div class="login-material" aria-hidden="true">
+          <svg class="login-left-svg" viewBox="0 0 600 2400" preserveAspectRatio="none">
+            <g>
+              <path class="amber-shape" d="M0 0 H600 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 H0 Z" />
+              <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
+            </g>
+            <g transform="translate(0 1200)">
+              <path class="amber-shape" d="M0 0 H600 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 H0 Z" />
+              <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
+            </g>
+          </svg>
+        </div>
+        <div class="login-brand">
+          <svg class="login-face" id="demoFace" viewBox="0 0 512 512" role="button" tabindex="0" aria-labelledby="demoFaceTitle demoFaceDescription">
+            <title id="demoFaceTitle">Carita de Demo</title>
+            <desc id="demoFaceDescription">Carita amarilla que sigue el cursor y reacciona al formulario.</desc>
+            <circle cx="256" cy="256" r="216" fill="#f7c974" />
+
+            <g class="face-eye-assembly" id="leftEyeAssembly">
+              <path id="leftFaceEye" d="M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+              <g fill="#f7c974" pointer-events="none">
+                <rect class="face-lid" id="leftTopLid" x="122" y="160" width="78" height="25" rx="18" />
+                <rect class="face-lid" id="leftBottomLid" x="122" y="233" width="78" height="25" rx="18" />
+              </g>
+            </g>
+
+            <g class="face-eye-assembly" id="rightEyeAssembly">
+              <path id="rightFaceEye" d="M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+              <g fill="#f7c974" pointer-events="none">
+                <rect class="face-lid" id="rightTopLid" x="312" y="160" width="78" height="25" rx="18" />
+                <rect class="face-lid" id="rightBottomLid" x="312" y="233" width="78" height="25" rx="18" />
+              </g>
+            </g>
+
+            <g class="face-folds" id="faceFolds" fill="none" stroke="#414141" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path id="leftFaceFold" d="M 142 166 C 166 156 188 154 209 160" />
+              <path id="rightFaceFold" d="M 303 160 C 324 154 346 156 370 166" />
+            </g>
+
+            <path class="face-mouth" id="faceMouth" d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <div class="login-name">Demo</div>
+        </div>
+      </section>
+
+      <section class="login-right">
+        <div class="login-form-content">
+          <div class="auth-copy">
+            <p class="eyebrow">Acceso de demo</p>
+            <h2 id="authTitle">Iniciar sesión</h2>
+            <p>Usa un ADMIN creado por el bootstrap de la API.</p>
+          </div>
+          <form class="auth-form" id="authForm">
+            <label class="auth-field">
+              <span>Usuario</span>
+              <input id="authEmail" name="email" type="email" autocomplete="username" required maxlength="320" />
+            </label>
+            <label class="auth-field auth-password-field">
+              <span>Contraseña</span>
+              <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
+              <button class="auth-password-toggle" type="button" id="authPasswordToggle" aria-label="Mostrar contraseña" aria-pressed="false">
+                <i data-lucide="eye" aria-hidden="true"></i>
+              </button>
+            </label>
+            <div class="auth-submit-wrap">
+              <button class="auth-submit" type="submit" id="authSubmit">
+                <span class="auth-submit-label">Iniciar sesión</span>
+                <span class="auth-submit-loader" aria-hidden="true">
+                  <span class="auth-submit-loader-dot" style="--angle:0deg"></span>
+                  <span class="auth-submit-loader-dot" style="--angle:45deg"></span>
+                  <span class="auth-submit-loader-dot" style="--angle:90deg"></span>
+                  <span class="auth-submit-loader-dot" style="--angle:135deg"></span>
+                  <span class="auth-submit-loader-dot" style="--angle:180deg"></span>
+                  <span class="auth-submit-loader-dot" style="--angle:225deg"></span>
+                  <span class="auth-submit-loader-dot" style="--angle:270deg"></span>
+                  <span class="auth-submit-loader-dot" style="--angle:315deg"></span>
+                  <span class="auth-submit-loader-runner"></span>
+                </span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
     </section>
+
+    <script is:inline>
+      (() => {
+        const face = document.getElementById('demoFace');
+        const authPanel = document.getElementById('authPanel');
+        const form = document.getElementById('authForm');
+        const email = document.getElementById('authEmail');
+        const password = document.getElementById('authPassword');
+        const leftEyeAssembly = document.getElementById('leftEyeAssembly');
+        const rightEyeAssembly = document.getElementById('rightEyeAssembly');
+        const leftEye = document.getElementById('leftFaceEye');
+        const rightEye = document.getElementById('rightFaceEye');
+        const mouth = document.getElementById('faceMouth');
+        const folds = document.getElementById('faceFolds');
+        const leftFold = document.getElementById('leftFaceFold');
+        const rightFold = document.getElementById('rightFaceFold');
+        const lids = {
+          lt: document.getElementById('leftTopLid'),
+          rt: document.getElementById('rightTopLid'),
+          lb: document.getElementById('leftBottomLid'),
+          rb: document.getElementById('rightBottomLid'),
+        };
+        if (!face || !form || !email || !password || !leftEye || !rightEye || !mouth || !folds || !leftFold || !rightFold) return;
+
+        const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const emotions = {
+          happy: { mouth: 'M 141 319 C 181 369 331 369 371 319', stroke: 32, gazeX: 0, gazeY: 0, top: 0, bottom: 0, leftAngle: 0, rightAngle: 0, hideLids: true },
+          neutral: { mouth: 'M 166 340 C 211 340 301 340 346 340', stroke: 28, gazeX: 0, gazeY: 0, top: 0, bottom: 0, leftAngle: 0, rightAngle: 0 },
+          sad: { mouth: 'M 151 363 C 195 311 317 311 361 363', stroke: 30, gazeX: 0, gazeY: 5, top: 10, bottom: 0, leftAngle: -15, rightAngle: 15 },
+          worried: { mouth: 'M 148 354 C 185 318 213 375 256 344 C 299 313 327 370 364 342', stroke: 27, gazeX: 0, gazeY: 3, top: 7, bottom: 0, leftAngle: -20, rightAngle: 20, folds: ['M 137 181 C 162 169 185 157 210 153', 'M 302 153 C 327 157 350 169 375 181'] },
+          angry: { mouth: 'M 168 357 C 207 320 305 320 344 357', stroke: 30, gazeX: 0, gazeY: 2, top: 13, bottom: 0, leftAngle: 20, rightAngle: -20, folds: ['M 135 157 C 161 157 184 168 210 181', 'M 302 181 C 328 168 351 157 377 157'] },
+          surprised: { mouth: 'M 251 351 C 253 351 259 351 261 351', stroke: 34, gazeX: 0, gazeY: -4, top: 0, bottom: 0, leftAngle: 0, rightAngle: 0 },
+          attentive: { mouth: 'M 176 340 C 214 354 298 354 336 340', stroke: 27, gazeX: 6, gazeY: 0, top: 4, bottom: 2, leftAngle: -6, rightAngle: 6 },
+          privacy: { mouth: 'M 190 351 C 224 351 288 351 322 351', stroke: 25, gazeX: 0, gazeY: 0, top: 0, bottom: 0, leftAngle: 0, rightAngle: 0, hideLids: true, eyes: ['M 130 210 C 147 224 175 224 192 210', 'M 320 210 C 337 224 365 224 382 210'], eyeStroke: 16 },
+        };
+        const emotionLabels = {
+          happy: 'feliz', neutral: 'neutral', sad: 'triste', worried: 'preocupada',
+          angry: 'enojada', surprised: 'sorprendida',
+          attentive: 'atenta', privacy: 'discreta',
+        };
+
+        let currentEmotion = 'happy';
+        let pointerX = 0;
+        let pointerY = 0;
+        let idleTimer = 0;
+        let blinkTimer = 0;
+        let blinkFrame = 0;
+        let expressionFrame = 0;
+
+        const collapsedFolds = [
+          'M 161 178 C 161 178 161 178 161 178',
+          'M 351 178 C 351 178 351 178 351 178',
+        ];
+        const openEyes = [
+          'M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5',
+          'M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5',
+        ];
+
+        function pathNumbers(path) {
+          return (path.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+        }
+
+        function normalizeDoubleCubic(path) {
+          const values = pathNumbers(path);
+          if (values.length === 14) return values;
+          const [x0, y0, x1, y1, x2, y2, x3, y3] = values;
+          return [
+            x0, y0,
+            (x0 + x1) / 2, (y0 + y1) / 2,
+            (x0 + 2 * x1 + x2) / 4, (y0 + 2 * y1 + y2) / 4,
+            (x0 + 3 * x1 + 3 * x2 + x3) / 8, (y0 + 3 * y1 + 3 * y2 + y3) / 8,
+            (x1 + 2 * x2 + x3) / 4, (y1 + 2 * y2 + y3) / 4,
+            (x2 + x3) / 2, (y2 + y3) / 2,
+            x3, y3,
+          ];
+        }
+
+        function doubleCubicPath(values) {
+          return `M ${values[0]} ${values[1]} C ${values[2]} ${values[3]} ${values[4]} ${values[5]} ${values[6]} ${values[7]} C ${values[8]} ${values[9]} ${values[10]} ${values[11]} ${values[12]} ${values[13]}`;
+        }
+
+        function expressionState(emotion) {
+          const foldPaths = emotion.folds || collapsedFolds;
+          const eyePaths = emotion.eyes || openEyes;
+          return {
+            mouth: normalizeDoubleCubic(emotion.mouth),
+            stroke: emotion.stroke,
+            leftEye: normalizeDoubleCubic(eyePaths[0]),
+            rightEye: normalizeDoubleCubic(eyePaths[1]),
+            eyeStroke: emotion.eyeStroke || 48,
+            top: emotion.top,
+            bottom: emotion.bottom,
+            leftAngle: emotion.leftAngle,
+            rightAngle: emotion.rightAngle,
+            leftFold: normalizeDoubleCubic(foldPaths[0]),
+            rightFold: normalizeDoubleCubic(foldPaths[1]),
+            foldStroke: emotion.folds ? 20 : 0,
+          };
+        }
+
+        function interpolate(from, to, progress) {
+          return from + (to - from) * progress;
+        }
+
+        function interpolateList(from, to, progress) {
+          return from.map((value, index) => interpolate(value, to[index], progress));
+        }
+
+        let renderedExpression = expressionState(emotions.happy);
+
+        lids.lt.style.transformOrigin = lids.lb.style.transformOrigin = '161px 209px';
+        lids.rt.style.transformOrigin = lids.rb.style.transformOrigin = '351px 209px';
+
+        function setGaze(x = pointerX, y = pointerY) {
+          const emotion = emotions[currentEmotion] || emotions.happy;
+          const followsPointer = currentEmotion !== 'privacy';
+          const gazeX = emotion.gazeX + (followsPointer ? x : 0);
+          const gazeY = emotion.gazeY + (followsPointer ? y : 0);
+          [leftEyeAssembly, rightEyeAssembly].forEach((eye) => {
+            eye?.style.setProperty('--gaze-x', `${gazeX}px`);
+            eye?.style.setProperty('--gaze-y', `${gazeY}px`);
+          });
+        }
+
+        function setLids(expression) {
+          lids.lt.setAttribute('height', String(25 + expression.top));
+          lids.rt.setAttribute('height', String(25 + expression.top));
+          lids.lb.setAttribute('y', String(233 - expression.bottom));
+          lids.rb.setAttribute('y', String(233 - expression.bottom));
+          lids.lb.setAttribute('height', String(25 + expression.bottom));
+          lids.rb.setAttribute('height', String(25 + expression.bottom));
+          lids.lt.style.transform = lids.lb.style.transform = `rotate(${expression.leftAngle}deg)`;
+          lids.rt.style.transform = lids.rb.style.transform = `rotate(${expression.rightAngle}deg)`;
+        }
+
+        function renderExpression(expression) {
+          leftEye.setAttribute('d', doubleCubicPath(expression.leftEye));
+          rightEye.setAttribute('d', doubleCubicPath(expression.rightEye));
+          leftEye.setAttribute('stroke-width', String(expression.eyeStroke));
+          rightEye.setAttribute('stroke-width', String(expression.eyeStroke));
+          mouth.setAttribute('d', doubleCubicPath(expression.mouth));
+          mouth.setAttribute('stroke-width', String(expression.stroke));
+          leftFold.setAttribute('d', doubleCubicPath(expression.leftFold));
+          rightFold.setAttribute('d', doubleCubicPath(expression.rightFold));
+          folds.setAttribute('stroke-width', String(expression.foldStroke));
+          setLids(expression);
+        }
+
+        function setEmotion(name) {
+          const emotion = emotions[name];
+          if (!emotion) return;
+          if (name === currentEmotion && face.dataset.emotion === name) return;
+          currentEmotion = name;
+          Object.values(lids).forEach((lid) => {
+            lid.style.visibility = emotion.hideLids ? 'hidden' : 'visible';
+          });
+          setGaze();
+          face.dataset.emotion = name;
+          face.setAttribute('aria-label', `Carita de Demo ${emotionLabels[name]}. Sigue el cursor y reacciona al formulario.`);
+          window.cancelAnimationFrame(blinkFrame);
+          window.cancelAnimationFrame(expressionFrame);
+          blinkFrame = 0;
+          expressionFrame = 0;
+          const from = {
+            ...renderedExpression,
+            mouth: [...renderedExpression.mouth],
+            leftEye: [...renderedExpression.leftEye],
+            rightEye: [...renderedExpression.rightEye],
+            leftFold: [...renderedExpression.leftFold],
+            rightFold: [...renderedExpression.rightFold],
+          };
+          const target = expressionState(emotion);
+          const duration = reducedMotion ? 0 : 460;
+          const startedAt = performance.now();
+
+          function morph(now) {
+            const linear = duration ? Math.min(1, (now - startedAt) / duration) : 1;
+            const progress = 1 - Math.pow(1 - linear, 3);
+            renderedExpression = {
+              mouth: interpolateList(from.mouth, target.mouth, progress),
+              stroke: interpolate(from.stroke, target.stroke, progress),
+              leftEye: interpolateList(from.leftEye, target.leftEye, progress),
+              rightEye: interpolateList(from.rightEye, target.rightEye, progress),
+              eyeStroke: interpolate(from.eyeStroke, target.eyeStroke, progress),
+              top: interpolate(from.top, target.top, progress),
+              bottom: interpolate(from.bottom, target.bottom, progress),
+              leftAngle: interpolate(from.leftAngle, target.leftAngle, progress),
+              rightAngle: interpolate(from.rightAngle, target.rightAngle, progress),
+              leftFold: interpolateList(from.leftFold, target.leftFold, progress),
+              rightFold: interpolateList(from.rightFold, target.rightFold, progress),
+              foldStroke: interpolate(from.foldStroke, target.foldStroke, progress),
+            };
+            renderExpression(renderedExpression);
+            if (linear < 1) expressionFrame = requestAnimationFrame(morph);
+            else expressionFrame = 0;
+          }
+
+          morph(startedAt);
+        }
+
+        function formEmotion() {
+          if (!email.value && !password.value) return 'neutral';
+          if (email.checkValidity() && password.checkValidity()) return 'happy';
+          return 'attentive';
+        }
+
+        function restoreContext() {
+          if (document.activeElement === password) setEmotion('privacy');
+          else if (document.activeElement === email) setEmotion('attentive');
+          else setEmotion(formEmotion());
+        }
+
+        function armIdle() {
+          window.clearTimeout(idleTimer);
+          if (authPanel?.hidden) return;
+          idleTimer = window.setTimeout(() => setEmotion(document.activeElement === password ? 'privacy' : 'neutral'), 10000);
+        }
+
+        function trackPointer(event) {
+          if (reducedMotion || authPanel?.hidden) return;
+          const rect = face.getBoundingClientRect();
+          const nx = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width * .75)));
+          const ny = Math.max(-1, Math.min(1, (event.clientY - (rect.top + rect.height / 2)) / (rect.height * .75)));
+          pointerX = nx * 13;
+          pointerY = ny * 10;
+          setGaze();
+          armIdle();
+        }
+
+        function scheduleBlink() {
+          if (reducedMotion) return;
+          window.clearTimeout(blinkTimer);
+          blinkTimer = window.setTimeout(() => {
+            if (expressionFrame || currentEmotion === 'privacy') {
+              scheduleBlink();
+              return;
+            }
+            const base = { ...renderedExpression };
+            const startedAt = performance.now();
+            function renderBlink(now) {
+              const progress = Math.min(1, (now - startedAt) / 210);
+              const coverage = Math.sin(Math.PI * progress);
+              setLids({
+                ...base,
+                top: interpolate(base.top, 34, coverage),
+                bottom: interpolate(base.bottom, 14, coverage),
+              });
+              if (progress < 1) blinkFrame = requestAnimationFrame(renderBlink);
+              else {
+                blinkFrame = 0;
+                scheduleBlink();
+              }
+            }
+            blinkFrame = requestAnimationFrame(renderBlink);
+          }, 3200 + Math.random() * 3600);
+        }
+
+        window.addEventListener('pointermove', trackPointer, { passive: true });
+        window.addEventListener('pointerout', (event) => {
+          if (event.relatedTarget) return;
+          pointerX = 0;
+          pointerY = 0;
+          setGaze();
+        });
+        window.addEventListener('keydown', armIdle, { passive: true });
+        window.addEventListener('demo-face-emotion', (event) => setEmotion(event.detail));
+        face.addEventListener('pointerdown', () => { setEmotion('angry'); armIdle(); });
+        face.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          setEmotion('angry');
+          armIdle();
+        });
+        [email, password].forEach((input) => {
+          input.addEventListener('focus', () => { setEmotion(input === password ? 'privacy' : 'attentive'); armIdle(); });
+          input.addEventListener('input', () => { setEmotion(input === password ? 'privacy' : 'attentive'); armIdle(); });
+          input.addEventListener('blur', () => { window.setTimeout(restoreContext, 0); armIdle(); });
+          input.addEventListener('invalid', () => { setEmotion('worried'); armIdle(); });
+        });
+        form.addEventListener('submit', () => setEmotion('surprised'));
+
+        setEmotion('happy');
+        armIdle();
+        scheduleBlink();
+      })();
+    </script>
 
     <div class="app-content" id="appContent" hidden>
       <header class="topline">
@@ -1571,38 +2110,65 @@ import '../styles/toast.css';
     requestAnimationFrame(tick);
   </script>
 
-    <script>
-      import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
-      import { showToast } from '../features/voice-call/infrastructure/toast';
+      <script>
+       import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
+       import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
+       import { showToast } from '../features/voice-call/infrastructure/toast';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
       const authForm = document.getElementById('authForm');
-      const authEmail = document.getElementById('authEmail');
-      const authPassword = document.getElementById('authPassword');
-      const authSubmit = document.getElementById('authSubmit');
-      const authStatus = document.getElementById('authStatus');
-      const appContent = document.getElementById('appContent');
-      const tokenKey = 'kognia.auth.access-token';
-      const conversationKey = 'kognia.auth.conversation-id';
+       const authEmail = document.getElementById('authEmail');
+        const authPassword = document.getElementById('authPassword');
+        const authPasswordToggle = document.getElementById('authPasswordToggle');
+        const authSubmit = document.getElementById('authSubmit');
+       const appContent = document.getElementById('appContent');
+       const tokenKey = 'kognia.auth.access-token';
+       const conversationKey = 'kognia.auth.conversation-id';
 
-      function setStatus(message: string): void {
-        if (authStatus) authStatus.textContent = message;
-      }
+       function setFaceEmotion(emotion: string): void {
+         window.dispatchEvent(new CustomEvent('demo-face-emotion', { detail: emotion }));
+       }
+
+        function setLoginLoading(loading: boolean): void {
+         if (!(authSubmit instanceof HTMLButtonElement)) return;
+         authSubmit.disabled = loading;
+         authSubmit.classList.toggle('is-loading', loading);
+          authSubmit.setAttribute('aria-busy', String(loading));
+        }
+
+        function setPasswordVisibility(visible: boolean): void {
+          if (!(authPassword instanceof HTMLInputElement) || !(authPasswordToggle instanceof HTMLButtonElement)) return;
+          authPassword.type = visible ? 'text' : 'password';
+          authPasswordToggle.setAttribute('aria-label', visible ? 'Ocultar contraseña' : 'Mostrar contraseña');
+          authPasswordToggle.setAttribute('aria-pressed', String(visible));
+          authPasswordToggle.innerHTML = `<i data-lucide="${visible ? 'eye-off' : 'eye'}" aria-hidden="true"></i>`;
+          const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+          lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+        }
+
+        authPasswordToggle?.addEventListener('click', () => {
+          if (!(authPassword instanceof HTMLInputElement)) return;
+          const visible = authPassword.type === 'password';
+          setPasswordVisibility(visible);
+          authPassword.focus({ preventScroll: true });
+        });
+        setPasswordVisibility(false);
 
        function showApp(token: string, conversationId: string): void {
-        if (authPanel) authPanel.hidden = true;
-        if (appContent) appContent.hidden = false;
+         setFaceEmotion('happy');
+         if (authPanel) authPanel.hidden = true;
+         if (appContent) appContent.hidden = false;
          bootLiveMonitor(apiUrl, token, conversationId, true);
-         void refreshKnowledge();
+         void refreshKnowledge().catch((error: unknown) => showToast(errorMessage(error, 'No se pudo consultar el documento de conocimiento.'), 'error'));
        }
 
        const knowledgeForm = document.getElementById('knowledgeForm');
        const knowledgeFile = document.getElementById('knowledgeFile');
        const knowledgeStatus = document.getElementById('knowledgeStatus');
-       async function refreshKnowledge(): Promise<void> {
-         const response = await fetch(`${apiUrl}/api/rag/status`);
-         const status = await responseData(response);
+        async function refreshKnowledge(): Promise<void> {
+          const response = await fetch(`${apiUrl}/api/rag/status`);
+          const status = await responseData(response, 'No se pudo consultar el documento de conocimiento.');
          const document = status.document as Record<string, unknown> | null;
          if (knowledgeStatus) knowledgeStatus.textContent = document ? `${String(document.filename)} · ${String(document.chunks)} fragmentos` : 'Sin documento activo';
        }
@@ -1613,14 +2179,15 @@ import '../styles/toast.css';
          if (!file || !token) return;
          const button = knowledgeForm.querySelector('button');
          if (button instanceof HTMLButtonElement) button.disabled = true;
-         void fetch(`${apiUrl}/api/rag/document`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'X-Filename': file.name }, body: file })
-           .then(async (response) => { if (!response.ok) throw new Error('No se pudo indexar el documento.'); await refreshKnowledge(); showToast('Documento listo', 'success'); })
-           .catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Error de documento', 'error'))
+          void fetch(`${apiUrl}/api/rag/document`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'X-Filename': file.name }, body: file })
+            .then(async (response) => { await responseData(response, 'No se pudo indexar el documento.'); await refreshKnowledge(); showToast('Documento listo', 'success'); })
+            .catch((error: unknown) => showToast(errorMessage(error, 'No se pudo indexar el documento.'), 'error'))
            .finally(() => { if (button instanceof HTMLButtonElement) button.disabled = false; });
        });
 
-      async function responseData(response: Response): Promise<Record<string, unknown>> {
-        try {
+       async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {
+         if (!response.ok) throw await backendErrorFromResponse(response, fallback);
+         try {
           const data: unknown = await response.json();
           return data && typeof data === 'object' && !Array.isArray(data)
             ? data as Record<string, unknown>
@@ -1634,6 +2201,7 @@ import '../styles/toast.css';
         const token = sessionStorage.getItem(tokenKey)?.trim() ?? '';
         const conversationId = sessionStorage.getItem(conversationKey)?.trim() ?? '';
         if (!token || !conversationId) return;
+        setFaceEmotion('surprised');
         const [me, conversation] = await Promise.all([
           fetch(`${apiUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${apiUrl}/conversations/${encodeURIComponent(conversationId)}`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -1642,8 +2210,12 @@ import '../styles/toast.css';
           showApp(token, conversationId);
           return;
         }
+        const failedResponse = me.ok ? conversation : me;
+        const sessionError = await backendErrorFromResponse(failedResponse, 'La sesión ya no está disponible.');
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
+        setFaceEmotion('neutral');
+        showToast(sessionError.message, 'warning');
       }
 
       async function createSession(email: string, password: string): Promise<void> {
@@ -1652,8 +2224,7 @@ import '../styles/toast.css';
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
         });
-        if (!loginResponse.ok) throw new Error('Correo o contraseña inválidos.');
-        const login = await responseData(loginResponse);
+         const login = await responseData(loginResponse, 'No se pudo iniciar sesión.');
         const token = typeof login.access_token === 'string' ? login.access_token.trim() : '';
         if (!token) throw new Error('La API no devolvió una sesión válida.');
 
@@ -1665,8 +2236,7 @@ import '../styles/toast.css';
           },
           body: JSON.stringify({ channel: 'voice-demo' }),
         });
-        if (!conversationResponse.ok) throw new Error('El usuario no puede abrir una conversación.');
-        const conversation = await responseData(conversationResponse);
+         const conversation = await responseData(conversationResponse, 'El usuario no puede abrir una conversación.');
         const conversationId = typeof conversation.id === 'string' ? conversation.id.trim() : '';
         if (!conversationId) throw new Error('La API no devolvió una conversación válida.');
 
@@ -1675,21 +2245,22 @@ import '../styles/toast.css';
         showApp(token, conversationId);
       }
 
-      authForm?.addEventListener('submit', (event) => {
-        event.preventDefault();
+       authForm?.addEventListener('submit', (event) => {
+         event.preventDefault();
         const email = authEmail instanceof HTMLInputElement ? authEmail.value : '';
         const password = authPassword instanceof HTMLInputElement ? authPassword.value : '';
-        if (!(authSubmit instanceof HTMLButtonElement)) return;
-        authSubmit.disabled = true;
-        setStatus('Conectando…');
-        void createSession(email, password)
-          .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : 'No se pudo iniciar sesión.';
-            setStatus(message);
-            showToast(message, 'error');
-          })
-          .finally(() => {
-            authSubmit.disabled = false;
+         if (!(authSubmit instanceof HTMLButtonElement)) return;
+          setLoginLoading(true);
+         setFaceEmotion('surprised');
+         void createSession(email, password)
+           .catch((error: unknown) => {
+              const message = errorMessage(error, 'No se pudo iniciar sesión.');
+              // Login errors are delivered through the shared toast only.
+              setFaceEmotion(message.includes('inválidos') ? 'angry' : 'sad');
+              showToast(message, 'error');
+           })
+           .finally(() => {
+             setLoginLoading(false);
           });
       });
 

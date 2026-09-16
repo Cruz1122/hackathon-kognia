@@ -1,3 +1,5 @@
+import { BackendError, backendErrorFromResponse } from './backend-error';
+
 type CaptureHandlers = {
   onResult: (result: { transcript: string; isFinal: boolean }) => void;
   onAudio?: (audio: Blob, mimeType: string) => void;
@@ -557,13 +559,15 @@ export class AudioCaptureAdapter {
     this.request = request;
     try {
       const response = await fetch(this.transcribeUrl, { method: 'POST', headers: { 'Content-Type': mimeType }, body: blob, signal: request.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) throw await backendErrorFromResponse(response, 'No se pudo transcribir el audio.');
       const payload = await response.json() as { text?: unknown };
       const text = typeof payload.text === 'string' ? payload.text.trim() : '';
       if (generation === this.captureGeneration && text) handlers.onResult({ transcript: text, isFinal: true });
       else if (generation === this.captureGeneration && !this.discarding) handlers.onError('No se detectó una frase.');
     } catch (error) {
-      if (generation === this.captureGeneration && !this.discarding && !(error instanceof DOMException && error.name === 'AbortError')) handlers.onError('No se pudo transcribir el audio.');
+      if (generation === this.captureGeneration && !this.discarding && !(error instanceof DOMException && error.name === 'AbortError')) {
+        handlers.onError(error instanceof BackendError ? error.message : 'No se pudo transcribir el audio.');
+      }
     } finally {
       if (this.request === request) this.request = undefined;
       if (generation === this.captureGeneration) {

@@ -32,6 +32,10 @@
     .toast-shell {
       position: absolute;
       inset: 0;
+      box-sizing: border-box;
+      border: 2px solid var(--toast-color);
+      border-radius: var(--radius-full);
+      overflow: hidden;
       opacity: 0;
       will-change: opacity;
       animation: shell-visibility var(--cycle) linear 1 forwards;
@@ -181,30 +185,30 @@
     }
 
     .toast--success {
-      --toast-color: var(--ui-amber);
-      --icon-color: var(--ui-graphite);
+      --toast-color: #22c55e;
+      --icon-color: #ffffff;
       --outer-bg: var(--ui-paper);
       --message-color: var(--ui-graphite);
     }
 
     .toast--info {
-      --toast-color: var(--ui-cream);
+      --toast-color: #ffffff;
       --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-graphite);
       --message-color: var(--ui-paper);
     }
 
     .toast--warning {
-      --toast-color: var(--ui-amber);
-      --icon-color: var(--ui-graphite);
+      --toast-color: #facc15;
+      --icon-color: #ffffff;
       --outer-bg: var(--ui-paper);
       --message-color: var(--ui-graphite);
     }
 
     .toast--error {
-      --toast-color: var(--ui-graphite);
-      --icon-color: var(--ui-amber);
-      --outer-bg: var(--ui-cream);
+      --toast-color: #ef4444;
+      --icon-color: #ffffff;
+      --outer-bg: var(--ui-paper);
       --message-color: var(--ui-graphite);
     }
 

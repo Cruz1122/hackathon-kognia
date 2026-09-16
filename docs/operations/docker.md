@@ -6,6 +6,17 @@
 docker compose up --build
 ```
 
+The backend image keeps the full Sentence Transformers E5 model and quality,
+but installs CPU-only PyTorch, uses the HTTP-only Chroma client, and packages
+the model offline. Measure unique Compose images with:
+
+```bash
+make check-image-size
+```
+
+The default guardrail is 3.5 GB. Override it with
+`COMPOSE_IMAGE_SIZE_LIMIT_BYTES` when comparing a different deployment budget.
+
 ## Orden
 
 ```text
