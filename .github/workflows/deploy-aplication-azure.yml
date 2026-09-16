@@ -1,0 +1,175 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+
+  changes:
+    runs-on: ubuntu-latest
+
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          base: ${{ github.ref }}
+          filters: |
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
+
+  build-frontend:
+    needs: [changes, deploy-backend]
+    if: >-
+      always() &&
+      needs.changes.outputs.frontend == 'true' &&
+      needs.deploy-backend.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          build-args: |
+            PUBLIC_API_URL=${{ needs.deploy-backend.outputs.backend-url }}
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
+
+  build-backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
+
+  deploy-backend:
+    needs: [changes, build-backend]
+    if: >-
+      always() &&
+      (needs.changes.outputs.backend == 'true' ||
+       needs.changes.outputs.frontend == 'true') &&
+      (needs.changes.outputs.backend != 'true' ||
+       needs.build-backend.result == 'success')
+    runs-on: ubuntu-latest
+    outputs:
+      backend-url: ${{ steps.backend-url.outputs.url }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy backend Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
+          registryUrl: docker.io
+          registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
+          registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
+          containerAppName: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+          containerAppEnvironment: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+          location: ${{ vars.AZURE_LOCATION }}
+          targetPort: 18474
+          ingress: external
+          disableTelemetry: true
+
+      - name: Get backend URL
+        id: backend-url
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          fqdn="$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$fqdn"
+          echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
+
+  deploy-frontend:
+    needs: [build-frontend, deploy-backend]
+    if: >-
+      always() &&
+      needs.build-frontend.result == 'success' &&
+      needs.deploy-backend.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy frontend Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
+          registryUrl: docker.io
+          registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
+          registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
+          containerAppName: ${{ vars.AZURE_FRONTEND_APP_NAME }}
+          resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+          containerAppEnvironment: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+          location: ${{ vars.AZURE_LOCATION }}
+          targetPort: 80
+          ingress: external
+          disableTelemetry: true
+
+      - name: Link backend CORS to frontend
+        shell: bash
+        env:
+          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          FRONTEND_APP_NAME: ${{ vars.AZURE_FRONTEND_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          fqdn="$(az containerapp show \
+            --name "$FRONTEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$fqdn"
+          az containerapp update \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --set-env-vars "FRONTEND_ORIGIN=https://${fqdn}"
