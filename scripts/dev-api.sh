@@ -9,4 +9,4 @@ if [[ ! -x "$ROOT/backend/.venv/bin/python" ]]; then
 fi
 
 cd "$ROOT/backend"
-exec .venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 18474
+exec .venv/bin/python -m uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port 18474

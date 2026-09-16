@@ -13,6 +13,6 @@ echo "[backend] Compilando módulos Python"
 
 echo "[frontend] Generando build de Astro/Vite"
 cd "$ROOT/frontend"
-pnpm run build
+PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:18474}" pnpm run build
 
 echo "Build OK"

@@ -12,3 +12,4 @@ Este repositorio prioriza velocidad de entrega, claridad y demo funcional.
 8. Haz cambios verticales: frontend + API + dato mínimo necesario en el mismo incremento.
 9. Ante una decisión reversible, elige rápido la opción más simple y continúa.
 10. Antes de cerrar una feature, comprueba que la demo real funciona de punta a punta.
+11. Usa el toast reutilizable para todo feedback inmediato de acciones, conexiones, errores, tools y TTS; no dependas únicamente de cambios visuales silenciosos.

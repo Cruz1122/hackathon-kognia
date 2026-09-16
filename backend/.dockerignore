@@ -1,0 +1,31 @@
+.git
+.gitignore
+.dockerignore
+
+# Secrets and local configuration
+.env
+.env.*
+
+# Local Python environments and generated files
+.venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Local model copies; the Dockerfile downloads the required model
+models
+
+# Tests, fixtures and local tooling
+tests
+.agents
+skills-lock.json
+
+# Build, editor and OS files
+dist
+.DS_Store
+.vscode
+.idea

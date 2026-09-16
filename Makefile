@@ -1,7 +1,7 @@
 .PHONY: help setup smoke \
 	dev-api dev-web \
 	build build-api build-web \
-	check-venv
+	check-venv check-image-size
 
 PYTHON := backend/.venv/bin/python
 HOST := 127.0.0.1
@@ -16,6 +16,7 @@ help:
 	@echo "make build-api  compileall de Python"
 	@echo "make build-web  build de Astro"
 	@echo "make smoke      health check de la API"
+	@echo "make check-image-size  mide las imágenes únicas de Compose"
 
 setup:
 	./scripts/setup.sh
@@ -24,7 +25,7 @@ check-venv:
 	@test -x "$(PYTHON)" || { echo "Falta backend/.venv. Ejecuta make setup" >&2; exit 1; }
 
 dev-api: check-venv
-	cd backend && .venv/bin/python -m uvicorn app.main:app --reload --host $(HOST) --port $(API_PORT)
+	cd backend && .venv/bin/python -m uvicorn app.main:app --reload --reload-dir app --host $(HOST) --port $(API_PORT)
 
 dev-web:
 	cd frontend && pnpm run dev
@@ -38,7 +39,10 @@ build-api: check-venv
 
 build-web:
 	@echo "[web] Generando build de Astro/Vite"
-	cd frontend && pnpm run build
+	cd frontend && PUBLIC_API_URL="$${PUBLIC_API_URL:-http://localhost:18474}" pnpm run build
 
 smoke:
 	./scripts/smoke.sh
+
+check-image-size:
+	./scripts/check-compose-image-size.sh
