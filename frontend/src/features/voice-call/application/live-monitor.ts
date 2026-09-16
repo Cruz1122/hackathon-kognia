@@ -3,7 +3,7 @@ import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { showToast } from '../infrastructure/toast';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
-import { bindDetailClicks, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromDetail, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
@@ -75,6 +75,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   if (conversation instanceof HTMLElement && conversation.dataset.liveBooted === '1') return;
   if (conversation instanceof HTMLElement) conversation.dataset.liveBooted = '1';
   bindDetailClicks(conversation);
+  mountSessionPanel();
 
   const restartBtn = stealButton('rewindBtn');
   const callBtn = stealButton('startBtn');
@@ -261,6 +262,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
 
   function addTool(id: string, payload: Record<string, unknown>): void {
     const detail = toolDetailFromEvent(payload);
+    patchSessionFromDetail(detail);
     const title = detail.name;
     const status = String(payload.status ?? 'Ejecutando');
     appendRow(
@@ -276,6 +278,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     const previous = readDetail(tool);
     const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
     writeDetail(tool, detail);
+    patchSessionFromDetail(detail);
     refreshOpenDetail(id, detail);
     const titleNode = tool.querySelector('.tool-title');
     const statusNode = tool.querySelector('.tool-status');
@@ -517,6 +520,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     pcmReady = false;
     closing = false;
     startedAt = performance.now();
+    patchSession({ status: 'En vivo' });
     syncControls();
     bindSocket();
     if (!waveApi) {
@@ -576,6 +580,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     finishAgent();
     syncControls();
     if (notify) {
+      patchSession({ status: 'Finalizada' });
       appendRow(
         'system-event call-ended',
         `<span class="call-ended-label"><i data-lucide="phone-off"></i><span>Llamada finalizada · ${stamp()}</span></span>`,

@@ -20,8 +20,21 @@ import '../styles/detail-panel.css';
       --ui-cream: #faeccf;
       --ui-paper: #f8f8f8;
       --ui-control: var(--ui-cream);
+      --rail: 420px;
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
+    }
+
+    @property --left-rail {
+      syntax: '<length-percentage>';
+      inherits: false;
+      initial-value: 56%;
+    }
+
+    @property --right-rail {
+      syntax: '<length-percentage>';
+      inherits: false;
+      initial-value: 0%;
     }
 
     * { box-sizing: border-box; }
@@ -39,12 +52,6 @@ import '../styles/detail-panel.css';
     button { font: inherit; color: inherit; }
 
     .page {
-      width: min(1080px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 32px 0 84px;
-    }
-
-    .page:has(#authPanel:not([hidden])) {
       width: 100%;
       margin: 0;
       padding: 0;
@@ -55,13 +62,23 @@ import '../styles/detail-panel.css';
     .auth-panel {
       position: relative;
       display: grid;
-      grid-template-columns: minmax(0, 56%) minmax(0, 44%);
+      --left-rail: 56%;
+      --right-rail: 0%;
+      grid-template-columns: var(--left-rail) minmax(0, 1fr) var(--right-rail);
       width: 100%;
       min-height: 100dvh;
       margin: 0;
       padding: 0;
       background: var(--ui-paper);
       overflow: hidden;
+      transition:
+        --left-rail 1.55s cubic-bezier(.32, .04, .18, 1),
+        --right-rail 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app {
+      --left-rail: var(--rail, 420px);
+      --right-rail: var(--rail, 420px);
     }
 
     .login-left {
@@ -82,10 +99,16 @@ import '../styles/detail-panel.css';
       right: -6%;
       width: 24%;
       height: 200%;
+      transform-origin: 100% 50%;
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
       animation: liquid-flow 12s linear infinite;
-      will-change: transform;
+      will-change: width, transform;
+      transition: width .85s cubic-bezier(.32, .04, .18, 1) 1.55s, right .85s cubic-bezier(.32, .04, .18, 1) 1.55s;
+    }
+
+    .login-material.is-gone {
+      display: none !important;
     }
 
     .login-left-svg { display: block; width: 100%; height: 100%; }
@@ -116,6 +139,16 @@ import '../styles/detail-panel.css';
       overflow: visible;
       filter: drop-shadow(0 16px 32px rgba(65,65,65,.18));
       cursor: pointer;
+      transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-face {
+      width: min(55%, 280px);
+    }
+
+    .auth-panel.is-app .login-material {
+      width: 0;
+      right: 0;
     }
 
     .login-face:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; border-radius: var(--radius-full); }
@@ -143,17 +176,72 @@ import '../styles/detail-panel.css';
       font-weight: 800;
       line-height: 1;
       letter-spacing: -.04em;
+      transition: font-size 1.55s cubic-bezier(.32, .04, .18, 1), margin-top 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-name {
+      margin-top: 12px;
+      font-size: clamp(1.35rem, 1.8vw, 2rem);
     }
 
     .login-right {
       position: relative;
       z-index: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      min-width: 0;
       min-height: 100dvh;
-      padding: clamp(32px, 6vw, 90px);
+      padding: 0;
       background: var(--ui-paper);
+    }
+
+    .login-form-content {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 1;
+      width: min(calc(100% - 50px), 430px);
+      transform: translate(-50%, -50%);
+      transition: opacity .55s cubic-bezier(.32, .04, .18, 1), transform .55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-form-content {
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -50%) translateX(-12px);
+    }
+
+    .app-content {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      overflow: auto;
+      width: 100%;
+      padding: 0 clamp(16px, 3vw, 40px) 84px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity .65s .28s cubic-bezier(.32, .04, .18, 1), visibility 0s 1s;
+    }
+
+    .auth-panel.is-app .app-content {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transition: opacity .65s .28s cubic-bezier(.32, .04, .18, 1), visibility 0s 0s;
+    }
+
+    .login-right > .state-view {
+      position: absolute;
+      inset: 0;
+      min-height: 0;
+    }
+
+    .auth-panel.no-wipe,
+    .auth-panel.no-wipe .login-form-content,
+    .auth-panel.no-wipe .app-content,
+    .auth-panel.no-wipe .login-face,
+    .auth-panel.no-wipe .login-name,
+    .auth-panel.no-wipe .login-material {
+      transition: none !important;
     }
 
     .auth-copy { display: grid; gap: 5px; margin-bottom: 42px; }
@@ -273,12 +361,26 @@ import '../styles/detail-panel.css';
     @keyframes auth-loader-drift { to { transform: rotate(360deg); } }
     @keyframes auth-loader-orbit { to { transform: rotate(360deg) translateY(-8px); } }
 
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
     .topline {
       display: flex;
       align-items: flex-end;
-      justify-content: space-between;
+      justify-content: flex-end;
       gap: 24px;
-      padding: 0 12px 18px;
+      width: min(880px, 100%);
+      margin-inline: auto;
+      padding: 0 10px 18px;
     }
 
     .eyebrow {
@@ -362,10 +464,9 @@ import '../styles/detail-panel.css';
       position: sticky;
       top: 0;
       z-index: 20;
-      padding: 12px 0 14px;
-      background: rgba(248,248,248,.96);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      margin: 0 calc(-1 * clamp(16px, 3vw, 40px));
+      padding: 18px clamp(16px, 3vw, 40px) 16px;
+      background: var(--ui-paper);
     }
 
     .player {
@@ -373,7 +474,9 @@ import '../styles/detail-panel.css';
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: end;
       gap: 24px;
-      padding: 6px 12px 2px;
+      width: min(880px, 100%);
+      margin-inline: auto;
+      padding: 6px 10px 2px;
       color: var(--ui-graphite);
     }
 
@@ -886,13 +989,6 @@ import '../styles/detail-panel.css';
       color: rgba(65,65,65,.70);
     }
 
-    .knowledge-panel { margin: 28px auto 0; padding: 20px; border-radius: var(--radius-full); background: var(--ui-cream); display: grid; gap: 12px; }
-    .knowledge-panel h2, .knowledge-panel p { margin: 0; }
-    .knowledge-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .knowledge-form input[type=file] { flex: 1 1 220px; }
-    .knowledge-form button { border: 0; border-radius: var(--radius-full); background: var(--ui-graphite); color: var(--ui-paper); padding: 11px 18px; font-weight: 700; cursor: pointer; }
-    .knowledge-form button:disabled { opacity: .6; cursor: wait; }
-
     .demo-switcher {
       position: fixed;
       right: 18px;
@@ -920,8 +1016,8 @@ import '../styles/detail-panel.css';
     .demo-switcher button:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
 
     @media (max-width: 760px) {
-      .page { width: min(100% - 20px, 1080px); padding-top: 20px; }
-      .topline { align-items: flex-start; flex-direction: column; gap: 14px; }
+      .page { width: 100%; padding: 0; }
+      .topline { justify-content: flex-start; }
       .call-meta { justify-content: flex-start; }
       .player { grid-template-columns: 1fr; gap: 9px; }
       .monitor { height: 65px; }
@@ -931,17 +1027,33 @@ import '../styles/detail-panel.css';
       .tool-call { width: 92%; }
       .conversation { margin-top: 18px; padding-inline: 2px; }
       .demo-switcher { right: 10px; bottom: 10px; }
-      .auth-panel {
+      .auth-panel,
+      .auth-panel.is-app {
         grid-template-columns: 1fr;
         min-height: 100dvh;
       }
-      .login-left { min-height: 38dvh; overflow: hidden; }
+      .login-left {
+        min-height: 38dvh;
+        overflow: hidden;
+        transition: min-height 1.55s cubic-bezier(.32, .04, .18, 1);
+      }
       .login-material { right: 0; width: 20%; }
       .login-brand { width: 100%; justify-self: center; }
       .login-face { width: 150px; }
       .login-name { width: auto; font-size: 2.5rem; }
-      .login-right { min-height: 62dvh; padding: 42px 25px 48px; }
+      .login-right { min-height: 62dvh; padding: 0; }
       .auth-copy { margin-bottom: 34px; }
+      .auth-panel.is-app .login-left {
+        min-height: 22dvh;
+        width: auto;
+        min-width: 0;
+        max-width: none;
+      }
+      .auth-panel.is-app .app-content { padding: 0 16px 72px; }
+      .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
+      .auth-panel.is-app .login-face { width: 72px; }
+      .auth-panel.is-app .login-name { font-size: 1.4rem; margin-top: 8px; }
+      .auth-panel.is-app .login-right { min-height: 78dvh; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1059,8 +1171,6 @@ import '../styles/detail-panel.css';
             </div>
           </form>
         </div>
-      </section>
-    </section>
 
     <script is:inline>
       (() => {
@@ -1366,19 +1476,8 @@ import '../styles/detail-panel.css';
       })();
     </script>
 
-    <div class="app-content" id="appContent" hidden>
-      <header class="topline">
-        <div>
-          <p class="eyebrow">Monitoreo</p>
-          <h1 id="screenTitle">Llamada en tiempo real</h1>
-        </div>
-        <div class="call-meta" aria-label="Estado de la llamada">
-          <span class="chip name-chip" id="nameChip"><span class="name-value" id="nameValue">Sin nombre</span></span>
-          <span class="chip">+57 310 ••• ••42</span>
-          <span class="chip mode-live" id="modeChip"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span class="mode-end-icon" id="endIconWrap" hidden aria-hidden="true"><i data-lucide="phone-off"></i></span><span id="modeChipText">EN VIVO</span></span>
-        </div>
-      </header>
-
+    <div class="app-content" id="appContent" aria-hidden="true">
+      <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
       <div class="player-wrap">
         <section class="player" aria-label="Reproductor de llamada">
           <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
@@ -1416,10 +1515,6 @@ import '../styles/detail-panel.css';
           <div class="conversation-empty__copy"><i data-lucide="message-circle" aria-hidden="true"></i><p>Aún no hay mensajes.</p></div>
         </div>
       </section>
-        <section class="knowledge-panel" aria-labelledby="knowledgeTitle">
-          <div><p class="eyebrow">Conocimiento</p><h2 id="knowledgeTitle">Documento de conocimiento</h2><p id="knowledgeStatus">Sin documento activo</p></div>
-          <form class="knowledge-form" id="knowledgeForm"><input id="knowledgeFile" type="file" accept=".txt,.md,.pdf" required /><button type="submit">Reemplazar documento</button></form>
-        </section>
     </div>
 
     <section class="state-view" id="emptyState" hidden aria-label="Sin llamadas">
@@ -1429,14 +1524,40 @@ import '../styles/detail-panel.css';
     <section class="state-view" id="errorState" hidden aria-label="Error de monitoreo">
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
+      </section>
+    <aside class="detail-panel" id="detailPanel" aria-label="Cliente">
+      <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+      <div class="detail-panel__session" id="sessionPanel">
+        <p class="detail-kicker">Cliente</p>
+        <h2 class="detail-title">Estado de la llamada</h2>
+        <section class="detail-section">
+          <dl class="detail-fields">
+            <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
+            <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
+            <div class="detail-field"><dt>Estado</dt><dd>En espera</dd></div>
+          </dl>
+        </section>
+      </div>
+      <div class="detail-panel__body" hidden></div>
+    </aside>
+    </section>
+    <script is:inline>
+      (() => {
+        const panel = document.getElementById('authPanel');
+        const form = document.querySelector('.login-form-content');
+        const token = sessionStorage.getItem('kognia.auth.access-token')?.trim();
+        const conversation = sessionStorage.getItem('kognia.auth.conversation-id')?.trim();
+        if (!panel || !token || !conversation) return;
+        panel.classList.add('is-app', 'no-wipe');
+        panel.setAttribute('aria-labelledby', 'screenTitle');
+        form?.setAttribute('inert', '');
+        form?.setAttribute('aria-hidden', 'true');
+        document.querySelector('.login-material')?.classList.add('is-gone');
+      })();
+    </script>
   </main>
-
-  <aside class="detail-panel" id="detailPanel" aria-label="Detalle">
-    <button class="detail-panel__close" type="button" data-detail-close="true" aria-label="Cerrar detalle">
-      <i data-lucide="x" aria-hidden="true"></i>
-    </button>
-    <div class="detail-panel__body"></div>
-  </aside>
 
   
 
@@ -1472,10 +1593,6 @@ import '../styles/detail-panel.css';
     const emptyState = document.getElementById('emptyState');
     const errorState = document.getElementById('errorState');
     const screenTitle = document.getElementById('screenTitle');
-    const modeChip = document.getElementById('modeChip');
-    const modeChipText = document.getElementById('modeChipText');
-    const liveDot = document.getElementById('liveDot');
-    const endIconWrap = document.getElementById('endIconWrap');
     const waveShell = document.getElementById('waveShell');
     const currentTimeEl = document.getElementById('currentTime');
     const durationEl = document.getElementById('duration');
@@ -1485,8 +1602,6 @@ import '../styles/detail-panel.css';
     const conversationEmpty = document.getElementById('conversationEmpty');
     const waveCanvas = document.getElementById('waveCanvas');
     const waveCtx = waveCanvas.getContext('2d', { alpha: true });
-    const nameChip = document.getElementById('nameChip');
-    const nameValue = document.getElementById('nameValue');
     const reconnect = document.getElementById('reconnect');
     const reconnectText = document.getElementById('reconnectText');
     const timelineItems = [...document.querySelectorAll('.timeline-item')];
@@ -1851,15 +1966,12 @@ import '../styles/detail-panel.css';
       if (message) resetMessage(message);
     }
 
+    function patchSession(partial) {
+      window.dispatchEvent(new CustomEvent('call-session-patch', { detail: partial }));
+    }
+
     function setNameResolved(resolved, animate) {
-      const target = resolved ? 'Sofía Martínez' : 'Sin nombre';
-      if (nameValue.textContent === target) return;
-      if (!animate) { nameValue.textContent = target; nameChip.classList.remove('updating'); return; }
-      nameChip.classList.remove('updating');
-      void nameChip.offsetWidth;
-      nameChip.classList.add('updating');
-      setTimeout(() => { nameValue.textContent = target; }, 300);
-      setTimeout(() => nameChip.classList.remove('updating'), 720);
+      patchSession({ name: resolved ? 'Sofía Martínez' : '' });
     }
 
     function setToolState(id, done, instant = false) {
@@ -1983,8 +2095,6 @@ import '../styles/detail-panel.css';
       messages.forEach(resetMessage);
       setToolState('tool1', false, true);
       setToolState('tool2', false, true);
-      nameValue.textContent = 'Sin nombre';
-      nameChip.classList.remove('updating');
       reconnect?.classList.remove('reconnected');
       if (reconnectText) reconnectText.textContent = 'Reconectando';
       conversationEmpty.hidden = false;
@@ -1994,7 +2104,7 @@ import '../styles/detail-panel.css';
     function setMode(next) {
       mode = next;
       document.querySelectorAll('.demo-switcher button').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
-      if (!authPanel || authPanel.hidden) {
+      if (authPanel?.classList.contains('is-app')) {
         appContent.hidden = mode === 'empty' || mode === 'error';
       }
       emptyState.hidden = mode !== 'empty';
@@ -2009,25 +2119,19 @@ import '../styles/detail-panel.css';
       resetConversation();
       current = 0;
       callEnded = false;
-      endIconWrap.hidden = true;
       setPlaying(true);
 
       if (mode === 'live') {
         liveEdge = 0;
         liveSamples.length = 0;
         sampleAccumulator = 0;
-        screenTitle.textContent = 'Llamada en tiempo real';
-        modeChip.className = 'chip mode-live';
-        modeChipText.textContent = 'EN VIVO';
-        liveDot.hidden = false;
+        if (screenTitle) screenTitle.textContent = 'Llamada en tiempo real';
+        patchSession({ status: 'En vivo' });
         liveSamples.push(.025);
       } else {
         liveEdge = DEMO_DURATION;
-        screenTitle.textContent = 'Grabación de llamada';
-        modeChip.className = 'chip mode-recorded';
-        modeChipText.textContent = 'GRABADA';
-        liveDot.hidden = true;
-        endIconWrap.hidden = true;
+        if (screenTitle) screenTitle.textContent = 'Grabación de llamada';
+        patchSession({ status: 'Grabada' });
         renderWave();
       }
 
@@ -2041,11 +2145,8 @@ import '../styles/detail-panel.css';
       liveEdge = DEMO_DURATION;
       current = DEMO_DURATION;
       setPlaying(false);
-      screenTitle.textContent = 'Llamada finalizada';
-      modeChip.className = 'chip mode-recorded';
-      modeChipText.textContent = 'FINALIZADA';
-      liveDot.hidden = true;
-      endIconWrap.hidden = false;
+      if (screenTitle) screenTitle.textContent = 'Llamada finalizada';
+      patchSession({ status: 'Finalizada' });
       previousTimelineTime = Math.min(previousTimelineTime, DEMO_DURATION - .001);
       syncTimeline(DEMO_DURATION, true);
       renderPlayer();
@@ -2147,6 +2248,7 @@ import '../styles/detail-panel.css';
 
       <script>
        import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
+       import { mountSessionPanel } from '../features/voice-call/application/detail-panel';
        import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
        import { showToast } from '../features/voice-call/infrastructure/toast';
 
@@ -2158,6 +2260,7 @@ import '../styles/detail-panel.css';
         const authPasswordToggle = document.getElementById('authPasswordToggle');
         const authSubmit = document.getElementById('authSubmit');
        const appContent = document.getElementById('appContent');
+       const loginFormContent = document.querySelector('.login-form-content');
        const tokenKey = 'kognia.auth.access-token';
        const conversationKey = 'kognia.auth.conversation-id';
 
@@ -2192,35 +2295,69 @@ import '../styles/detail-panel.css';
         });
         setPasswordVisibility(false);
 
-       function showApp(token: string, conversationId: string): void {
-         setFaceEmotion('happy');
-         if (authPanel) authPanel.hidden = true;
-         if (appContent) appContent.hidden = false;
-         bootLiveMonitor(apiUrl, token, conversationId, true);
-         void refreshKnowledge().catch((error: unknown) => showToast(errorMessage(error, 'No se pudo consultar el documento de conocimiento.'), 'error'));
+       function setFormInert(inert: boolean): void {
+         if (!(loginFormContent instanceof HTMLElement)) return;
+         if (inert) {
+           loginFormContent.setAttribute('inert', '');
+           loginFormContent.setAttribute('aria-hidden', 'true');
+           return;
+         }
+         loginFormContent.removeAttribute('inert');
+         loginFormContent.removeAttribute('aria-hidden');
        }
 
-       const knowledgeForm = document.getElementById('knowledgeForm');
-       const knowledgeFile = document.getElementById('knowledgeFile');
-       const knowledgeStatus = document.getElementById('knowledgeStatus');
-        async function refreshKnowledge(): Promise<void> {
-          const response = await fetch(`${apiUrl}/api/rag/status`);
-          const status = await responseData(response, 'No se pudo consultar el documento de conocimiento.');
-         const document = status.document as Record<string, unknown> | null;
-         if (knowledgeStatus) knowledgeStatus.textContent = document ? `${String(document.filename)} · ${String(document.chunks)} fragmentos` : 'Sin documento activo';
+       function loginMaterial(): HTMLElement | null {
+         const material = document.querySelector('.login-material');
+         return material instanceof HTMLElement ? material : null;
        }
-       knowledgeForm?.addEventListener('submit', (event) => {
-         event.preventDefault();
-         const file = knowledgeFile instanceof HTMLInputElement ? knowledgeFile.files?.[0] : undefined;
-         const token = sessionStorage.getItem(tokenKey) ?? '';
-         if (!file || !token) return;
-         const button = knowledgeForm.querySelector('button');
-         if (button instanceof HTMLButtonElement) button.disabled = true;
-          void fetch(`${apiUrl}/api/rag/document`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'X-Filename': file.name }, body: file })
-            .then(async (response) => { await responseData(response, 'No se pudo indexar el documento.'); await refreshKnowledge(); showToast('Documento listo', 'success'); })
-            .catch((error: unknown) => showToast(errorMessage(error, 'No se pudo indexar el documento.'), 'error'))
-           .finally(() => { if (button instanceof HTMLButtonElement) button.disabled = false; });
-       });
+
+       function collapseStrip(immediate: boolean): void {
+         const material = loginMaterial();
+         if (!material) return;
+         if (immediate) {
+           material.classList.add('is-gone');
+           return;
+         }
+         const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+         let fallback = 0;
+         const onEnd = (event: TransitionEvent) => {
+           if (event.propertyName !== 'width') return;
+           window.clearTimeout(fallback);
+           material.removeEventListener('transitionend', onEnd);
+           material.classList.add('is-gone');
+         };
+         fallback = window.setTimeout(() => {
+           material.removeEventListener('transitionend', onEnd);
+           material.classList.add('is-gone');
+         }, reduced ? 40 : 2800);
+         material.addEventListener('transitionend', onEnd);
+       }
+
+       function restoreStrip(): void {
+         loginMaterial()?.classList.remove('is-gone');
+       }
+
+       function revealApp(animate: boolean): void {
+         if (!authPanel) return;
+         if (!animate) authPanel.classList.add('no-wipe');
+         authPanel.classList.add('is-app');
+         authPanel.setAttribute('aria-labelledby', 'screenTitle');
+         setFormInert(true);
+         appContent?.removeAttribute('aria-hidden');
+         collapseStrip(!animate);
+         if (!animate) {
+           requestAnimationFrame(() => {
+             requestAnimationFrame(() => authPanel.classList.remove('no-wipe'));
+           });
+         }
+       }
+
+       function showApp(token: string, conversationId: string, animate = true): void {
+         setFaceEmotion('happy');
+         revealApp(animate);
+         mountSessionPanel();
+         bootLiveMonitor(apiUrl, token, conversationId, true);
+       }
 
        async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {
          if (!response.ok) throw await backendErrorFromResponse(response, fallback);
@@ -2244,13 +2381,18 @@ import '../styles/detail-panel.css';
           fetch(`${apiUrl}/conversations/${encodeURIComponent(conversationId)}`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         if (me.ok && conversation.ok) {
-          showApp(token, conversationId);
+          showApp(token, conversationId, false);
           return;
         }
         const failedResponse = me.ok ? conversation : me;
         const sessionError = await backendErrorFromResponse(failedResponse, 'La sesión ya no está disponible.');
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
+        authPanel?.classList.remove('is-app', 'no-wipe');
+        authPanel?.setAttribute('aria-labelledby', 'authTitle');
+        setFormInert(false);
+        appContent?.setAttribute('aria-hidden', 'true');
+        restoreStrip();
         setFaceEmotion('neutral');
         showToast(sessionError.message, 'warning');
       }
@@ -2304,6 +2446,11 @@ import '../styles/detail-panel.css';
       void restoreSession().catch(() => {
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
+        authPanel?.classList.remove('is-app', 'no-wipe');
+        authPanel?.setAttribute('aria-labelledby', 'authTitle');
+        setFormInert(false);
+        appContent?.setAttribute('aria-hidden', 'true');
+        restoreStrip();
       });
     </script>
   </body>

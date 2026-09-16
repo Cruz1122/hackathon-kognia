@@ -1,31 +1,29 @@
 .detail-panel {
-  display: none;
-}
-
-.detail-panel.open {
   display: flex;
   flex-direction: column;
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 40;
-  width: min(420px, 100%);
+  min-width: 0;
+  width: 100%;
   height: 100dvh;
   overflow: auto;
+  overflow-x: hidden;
   background: var(--ui-paper);
   color: var(--ui-graphite);
   font-family: var(--font-ui);
-  box-shadow: -18px 0 40px rgba(65, 65, 65, .12);
+  border-left: 1px solid rgba(65, 65, 65, .16);
   padding: 28px 28px 40px;
 }
 
+.auth-panel:not(.is-app) .detail-panel {
+  border-left: 0;
+  padding: 0;
+}
+
 body.detail-open {
-  padding-right: min(420px, 100%);
+  padding-right: 0;
 }
 
 body.detail-open .demo-switcher {
-  right: calc(min(420px, 100%) + 16px);
+  right: 16px;
 }
 
 .detail-panel__close {
@@ -41,6 +39,10 @@ body.detail-open .demo-switcher {
   cursor: pointer;
   margin: 0 0 18px auto;
   flex: 0 0 auto;
+}
+
+.detail-panel__close[hidden] {
+  display: none !important;
 }
 
 .detail-panel__close:focus-visible {
@@ -99,13 +101,9 @@ body.detail-open .demo-switcher {
   opacity: .54;
 }
 
-.detail-field dd {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.35;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.detail-field dd.is-pending {
+  font-weight: 600;
+  opacity: .46;
 }
 
 .detail-content {
@@ -230,7 +228,11 @@ body.detail-open .demo-switcher {
     padding-bottom: 0;
   }
 
-  .detail-panel.open {
+  .detail-panel {
     width: 100%;
+    height: auto;
+    min-height: 36dvh;
+    border-left: 0;
+    border-top: 1px solid rgba(65, 65, 65, .16);
   }
 }

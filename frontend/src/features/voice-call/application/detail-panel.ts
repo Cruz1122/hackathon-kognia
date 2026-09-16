@@ -116,6 +116,91 @@ function fieldsMarkup(fields: DetailField[]): string {
   return `<dl class="detail-fields">${fields.map((field) => `<div class="detail-field"><dt>${escapeHtml(field.label)}</dt><dd>${escapeHtml(field.value)}</dd></div>`).join('')}</dl>`;
 }
 
+type SessionState = {
+  name: string;
+  phone: string;
+  status: string;
+  extras: DetailField[];
+};
+
+const session: SessionState = {
+  name: '',
+  phone: '',
+  status: 'En espera',
+  extras: [],
+};
+
+function pendingValue(value: string): string {
+  return value.trim() || 'Pendiente';
+}
+
+function upsertExtra(label: string, value: string): void {
+  const cleaned = value.trim();
+  if (!cleaned) return;
+  const existing = session.extras.find((field) => field.label === label);
+  if (existing) existing.value = cleaned;
+  else session.extras.push({ label, value: cleaned });
+}
+
+export function patchSession(partial: { name?: string; phone?: string; status?: string; fields?: DetailField[] }): void {
+  if (typeof partial.name === 'string') session.name = partial.name.trim();
+  if (typeof partial.phone === 'string') session.phone = partial.phone.trim();
+  if (typeof partial.status === 'string' && partial.status.trim()) session.status = partial.status.trim();
+  for (const field of partial.fields ?? []) {
+    const label = field.label.trim();
+    const value = field.value.trim();
+    if (!label || !value) continue;
+    const key = label.toLocaleLowerCase();
+    if (key.includes('nombre')) session.name = value;
+    else if (key.includes('tel')) session.phone = value;
+    else upsertExtra(key === 'estado' ? 'Reserva' : label, value);
+  }
+  renderSession();
+}
+
+export function patchSessionFromDetail(detail: DetailPayload): void {
+  if (detail.kind !== 'tool') return;
+  patchSession({ fields: [...detail.inputs, ...(detail.outputs ?? [])] });
+}
+
+function sessionFields(): DetailField[] {
+  return [
+    { label: 'Nombre', value: pendingValue(session.name) },
+    { label: 'Teléfono', value: pendingValue(session.phone) },
+    { label: 'Estado', value: pendingValue(session.status) },
+    ...session.extras.filter((field) => !['Nombre', 'Teléfono', 'Estado'].includes(field.label)),
+  ];
+}
+
+function renderSession(): void {
+  const root = document.getElementById('detailPanel');
+  const panel = root?.querySelector('#sessionPanel');
+  if (!panel) return;
+  const fields = sessionFields();
+  panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado de la llamada</h2><section class="detail-section">${fieldsMarkup(fields)}</section>`;
+  if (!root?.classList.contains('is-tool')) {
+    const pending = panel.querySelectorAll('.detail-field dd');
+    pending.forEach((node) => {
+      if (node.textContent === 'Pendiente') node.classList.add('is-pending');
+    });
+  }
+}
+
+function showSessionView(): void {
+  const root = document.getElementById('detailPanel');
+  if (!root) return;
+  root.classList.remove('open', 'is-tool');
+  document.body.classList.remove('detail-open');
+  delete root.dataset.cardId;
+  const close = root.querySelector('.detail-panel__close');
+  const body = root.querySelector('.detail-panel__body');
+  const sessionNode = root.querySelector('#sessionPanel');
+  if (close instanceof HTMLElement) close.hidden = true;
+  if (body instanceof HTMLElement) body.hidden = true;
+  if (sessionNode instanceof HTMLElement) sessionNode.hidden = false;
+  renderSession();
+}
+
 function renderBody(detail: DetailPayload): string {
   if (detail.kind === 'source') {
     const content = detail.content ? renderMarkdown(detail.content) : 'Sin contenido recuperado';
@@ -136,7 +221,7 @@ function bindPanelChrome(root: HTMLElement): void {
   if (root.dataset.bound === '1') return;
   root.dataset.bound = '1';
   document.addEventListener('keydown', (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && root.classList.contains('open')) closeDetail();
+    if (event.key === 'Escape' && root.classList.contains('is-tool')) showSessionView();
   });
   root.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
@@ -144,32 +229,51 @@ function bindPanelChrome(root: HTMLElement): void {
   });
 }
 
+let sessionEventsBound = false;
+
+function bindSessionEvents(): void {
+  if (sessionEventsBound) return;
+  sessionEventsBound = true;
+  window.addEventListener('call-session-patch', (event: Event) => {
+    const detail = (event as CustomEvent<Parameters<typeof patchSession>[0]>).detail;
+    if (detail) patchSession(detail);
+  });
+}
+
 function ensurePanel(): HTMLElement | null {
   const existing = document.getElementById('detailPanel');
   if (!existing) return null;
   bindPanelChrome(existing);
+  bindSessionEvents();
   return existing;
+}
+
+export function mountSessionPanel(): void {
+  const root = ensurePanel();
+  if (!root) return;
+  showSessionView();
 }
 
 export function openDetail(detail: DetailPayload, cardId?: string): void {
   const root = ensurePanel();
   const body = root?.querySelector('.detail-panel__body');
+  const sessionNode = root?.querySelector('#sessionPanel');
+  const close = root?.querySelector('.detail-panel__close');
   if (!root || !body) return;
+  patchSessionFromDetail(detail);
   body.innerHTML = renderBody(detail);
+  if (body instanceof HTMLElement) body.hidden = false;
+  if (sessionNode instanceof HTMLElement) sessionNode.hidden = true;
+  if (close instanceof HTMLElement) close.hidden = false;
   const heading = body.querySelector('.detail-title');
   if (heading) heading.id = 'detailPanelTitle';
   if (cardId) root.dataset.cardId = cardId;
-  root.classList.add('open');
-  document.body.classList.add('detail-open');
+  root.classList.add('open', 'is-tool');
   lucideRefresh();
 }
 
 export function closeDetail(): void {
-  const root = document.getElementById('detailPanel');
-  if (!root) return;
-  root.classList.remove('open');
-  document.body.classList.remove('detail-open');
-  delete root.dataset.cardId;
+  showSessionView();
 }
 
 export function refreshOpenDetail(cardId: string, detail: DetailPayload): void {

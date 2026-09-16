@@ -1,7 +1,7 @@
 import { showToast } from '../infrastructure/toast';
 import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
-import { bindDetailClicks, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, patchSessionFromDetail, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -23,6 +23,7 @@ export function bootEventsMonitor(apiUrl: string): void {
   const hubChip = document.querySelector('#hubChipText');
   if (!conversation) return;
   bindDetailClicks(conversation);
+  mountSessionPanel();
 
   const conversationId = sessionStorage.getItem('kognia.auth.conversation-id')?.trim() ?? '';
   const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
@@ -169,6 +170,7 @@ export function bootEventsMonitor(apiUrl: string): void {
         const previous = readDetail(tool);
         const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
         writeDetail(tool, detail);
+        patchSessionFromDetail(detail);
         refreshOpenDetail(id, detail);
         const titleNode = tool.querySelector('.tool-title');
         if (titleNode) titleNode.textContent = detail.name;
