@@ -34,6 +34,9 @@ async def test_fake_llm_agent_uses_explicit_tool_capability(monkeypatch: pytest.
         "token",
         "done",
     ]
+    assert events[0][1]["title"] == "Suma de números"
+    assert events[0][1]["inputs"] == [{"label": "Números", "value": "3, 4"}]
+    assert events[1][1]["outputs"] == [{"label": "Total", "value": "7"}]
     assert events[2][1]["text"] == "7"
 
 
@@ -88,7 +91,9 @@ async def test_agent_emits_one_retrieval_event_pair_when_context_is_used(monkeyp
     monkeypatch.setattr(agent_service, "rag_retriever", retriever)
 
     async def handler(config, prompt, *, messages=None, tools=None):
-        del config, prompt, messages, tools
+        del config, prompt, tools
+        assert messages and messages[0]["role"] == "system"
+        assert "knowledge_status=available" in str(messages[0]["content"])
         yield "token", {"text": "Claro. Encontré la política."}
 
     events = [
@@ -101,8 +106,13 @@ async def test_agent_emits_one_retrieval_event_pair_when_context_is_used(monkeyp
 
     assert retriever.calls == 1
     assert [kind for kind, _payload in events] == ["token", "rag.started", "rag.completed", "done"]
-    assert events[1][1] == {"used_rag": True, "message": "Políticas de reembolso"}
-    assert events[2][1] == {"used_rag": True, "message": "Políticas de reembolso"}
+    assert events[1][1] == {
+        "used_rag": True,
+        "message": "Políticas de reembolso",
+        "title": "Políticas de reservas",
+        "content": "La política permite cambios hasta 24 horas antes de la llegada.",
+    }
+    assert events[2][1] == events[1][1]
 
 
 @pytest.mark.asyncio
@@ -192,6 +202,44 @@ async def test_openai_adapter_translates_canonical_tools() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_merges_knowledge_into_the_system_prompt() -> None:
+    captured: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured
+        captured = request
+        body = (
+            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    config = next(item for item in get_model_chain(AppEnv.TEST) if item.provider is Provider.OPENAI)
+    config = config.__class__(config.provider, config.model, "secret", config.base_url)
+    knowledge = "knowledge_status=available\ncontent:\nLa política permite cambios."
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async for _event in OpenAICompatibleLLM().stream(
+            config,
+            "¿Cuál es la política?",
+            messages=[
+                {"role": "system", "content": knowledge},
+                {"role": "user", "content": "hola"},
+                {"role": "user", "content": "¿Cuál es la política?"},
+            ],
+            client=client,
+        ):
+            pass
+
+    assert captured is not None
+    payload = json.loads(captured.content)
+    system = payload["messages"][0]
+    assert system["role"] == "system"
+    assert "agente de voz" in system["content"]
+    assert knowledge in system["content"]
+    assert [message["role"] for message in payload["messages"][1:]] == ["user", "user"]
+
+
+@pytest.mark.asyncio
 async def test_gemini_adapter_translates_canonical_tools() -> None:
     captured: httpx.Request | None = None
 
@@ -213,6 +261,39 @@ async def test_gemini_adapter_translates_canonical_tools() -> None:
     payload = json.loads(captured.content)
     assert payload["tools"][0]["functionDeclarations"][0]["name"] == "generate_lorem_ipsum"
     assert events == [("token", {"text": "Hola"})]
+
+
+@pytest.mark.asyncio
+async def test_gemini_puts_knowledge_in_system_instruction() -> None:
+    captured: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured
+        captured = request
+        body = 'data: {"candidates":[{"content":{"parts":[{"text":"Hola"}]}}]}\n\n'
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    config = next(item for item in get_model_chain(AppEnv.TEST) if item.provider is Provider.GEMINI)
+    config = config.__class__(config.provider, config.model, "secret", config.base_url)
+    knowledge = "knowledge_status=available\ncontent:\nLa política permite cambios."
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async for _event in GeminiLLM().stream(
+            config,
+            "¿Cuál es la política?",
+            messages=[
+                {"role": "system", "content": knowledge},
+                {"role": "user", "content": "¿Cuál es la política?"},
+            ],
+            client=client,
+        ):
+            pass
+
+    assert captured is not None
+    payload = json.loads(captured.content)
+    system_text = payload["systemInstruction"]["parts"][0]["text"]
+    assert "agente de voz" in system_text
+    assert knowledge in system_text
+    assert payload["contents"][0]["role"] == "user"
 
 
 @pytest.mark.asyncio

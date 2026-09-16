@@ -54,8 +54,18 @@ class ChromaVectorStore:
 
     async def get_active_document(self) -> str | None:
         collection = await self._get_collection()
-        metadata = collection.metadata
-        return (metadata or {}).get("active_document_id")
+        metadata = collection.metadata or {}
+        active = metadata.get("active_document_id")
+        if active:
+            return active
+        response = await collection.get(include=["metadatas"], limit=1)
+        metadatas = response.get("metadatas") or []
+        first = metadatas[0] if metadatas else None
+        if isinstance(first, dict):
+            document_id = first.get("document_id")
+            if isinstance(document_id, str) and document_id:
+                return document_id
+        return None
 
     async def delete_document(self, document_id: str) -> None:
         collection = await self._get_collection()

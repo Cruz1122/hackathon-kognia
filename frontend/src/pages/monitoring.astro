@@ -1,6 +1,7 @@
 ---
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 import '../styles/toast.css';
+import '../styles/detail-panel.css';
 ---
 <html lang="es">
   <head>
@@ -452,18 +453,28 @@ import '../styles/toast.css';
     .tool-row { display: flex; justify-content: flex-start; margin: 21px 0; }
 
     .tool-call {
+      appearance: none;
+      border: 0;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
       position: relative;
       width: min(520px, 84%);
       min-height: 82px;
       border-radius: var(--radius-full);
-      background: var(--ui-control);
-      color: var(--ui-graphite);
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
       padding: 15px 18px;
       display: flex;
       align-items: center;
       gap: 14px;
       overflow: hidden;
       transform-origin: 0 50%;
+    }
+
+    .tool-call:focus-visible {
+      outline: 3px solid var(--ui-amber);
+      outline-offset: 3px;
     }
 
     .tool-row.enter .tool-call { animation: tool-arrive .72s cubic-bezier(.16,.9,.28,1) both; }
@@ -482,8 +493,8 @@ import '../styles/toast.css';
       border-radius: 50%;
       display: grid;
       place-items: center;
-      background: var(--ui-graphite);
-      color: var(--ui-control);
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
     }
 
     .tool-row.enter .tool-icon { animation: tool-icon-pop .82s .08s cubic-bezier(.18,.9,.25,1) both; }
@@ -541,7 +552,7 @@ import '../styles/toast.css';
       left: 50%;
       top: 50%;
       border-radius: 50%;
-      background: var(--ui-graphite);
+      background: var(--ui-amber);
       transform-origin: 0 0;
     }
 
@@ -572,8 +583,8 @@ import '../styles/toast.css';
       width: 38px;
       height: 38px;
       border-radius: 50%;
-      background: var(--ui-graphite);
-      color: var(--ui-control);
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
       place-items: center;
       opacity: 0;
       transform: scale(.3);
@@ -777,13 +788,13 @@ import '../styles/toast.css';
 
         <div class="system-event timeline-item" data-at="12.6" id="reconnect" role="status"><span class="reconnect-label"><span class="reconnect-mass" aria-hidden="true"></span><span class="reconnect-shine" aria-hidden="true"></span><span id="reconnectText">Reconectando</span></span></div>
 
-        <div class="tool-row timeline-item" data-at="15.6" id="tool1Row"><div class="tool-call" id="tool1"><div class="tool-icon" aria-hidden="true"><i data-lucide="search"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title" id="tool1Title">Consultando la reserva de Sofía Martínez</div><div class="tool-status loading" id="tool1Status">Buscando disponibilidad y condiciones</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></div></div>
+        <div class="tool-row timeline-item" data-at="15.6" id="tool1Row"><button type="button" class="tool-call" id="tool1" data-detail="{&quot;kind&quot;:&quot;tool&quot;,&quot;name&quot;:&quot;Consulta de disponibilidad&quot;,&quot;inputs&quot;:[{&quot;label&quot;:&quot;Nombre&quot;,&quot;value&quot;:&quot;Sofía Martínez&quot;},{&quot;label&quot;:&quot;Comensales&quot;,&quot;value&quot;:&quot;2&quot;}],&quot;outputs&quot;:[{&quot;label&quot;:&quot;Disponible&quot;,&quot;value&quot;:&quot;Sí&quot;},{&quot;label&quot;:&quot;Hora&quot;,&quot;value&quot;:&quot;15:00&quot;}]}"><div class="tool-icon" aria-hidden="true"><i data-lucide="search"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title" id="tool1Title">Consultando la reserva de Sofía Martínez</div><div class="tool-status loading" id="tool1Status">Buscando disponibilidad y condiciones</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button></div>
 
         <div class="message-row agent timeline-item" data-at="20.3" id="m4"><div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message" data-text="Ya encontré tu reserva. La llegada estaba programada para las 3:00 p. m.; todavía puedo moverla a las 5:30 p. m. sin costo adicional." data-time="00:20"></div></div></div>
         <div class="message-row customer timeline-item" data-at="25.8" id="m5"><div class="message-wrap"><div class="message-meta"><span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i></div><div class="message" data-text="Perfecto, a las 5:30 está bien." data-time="00:26"></div></div></div>
         <div class="system-event timeline-item" data-at="28.0" id="changeEvent">Cambio de reserva solicitado</div>
 
-        <div class="tool-row timeline-item" data-at="29.0" id="tool2Row"><div class="tool-call" id="tool2"><div class="tool-icon" aria-hidden="true"><i data-lucide="calendar-sync"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title" id="tool2Title">Actualizando hora de llegada</div><div class="tool-status loading" id="tool2Status">Guardando el cambio</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></div></div>
+        <div class="tool-row timeline-item" data-at="29.0" id="tool2Row"><button type="button" class="tool-call" id="tool2" data-detail="{&quot;kind&quot;:&quot;tool&quot;,&quot;name&quot;:&quot;Creación de reserva&quot;,&quot;inputs&quot;:[{&quot;label&quot;:&quot;Nombre&quot;,&quot;value&quot;:&quot;Sofía Martínez&quot;},{&quot;label&quot;:&quot;Hora&quot;,&quot;value&quot;:&quot;17:30&quot;},{&quot;label&quot;:&quot;Comensales&quot;,&quot;value&quot;:&quot;2&quot;}],&quot;outputs&quot;:[{&quot;label&quot;:&quot;Estado&quot;,&quot;value&quot;:&quot;Confirmada&quot;}]}"><div class="tool-icon" aria-hidden="true"><i data-lucide="calendar-sync"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title" id="tool2Title">Actualizando hora de llegada</div><div class="tool-status loading" id="tool2Status">Guardando el cambio</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button></div>
 
         <div class="message-row agent timeline-item" data-at="32.2" id="m6"><div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message" data-text="Listo. Ya quedó actualizada para mañana a las 5:30 p. m. ¿Necesitas que revise algo más de la reserva?" data-time="00:32"></div></div></div>
 
@@ -801,6 +812,13 @@ import '../styles/toast.css';
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
   </main>
+
+  <aside class="detail-panel" id="detailPanel" aria-label="Detalle">
+    <button class="detail-panel__close" type="button" data-detail-close="true" aria-label="Cerrar detalle">
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+    <div class="detail-panel__body"></div>
+  </aside>
 
   <nav class="demo-switcher" aria-label="Cambiar estado de la demo">
     <button type="button" class="active" data-mode="live">En vivo</button>

@@ -7,9 +7,17 @@ from ...providers import ProviderError, llm_provider as default_llm
 from ...providers.contracts import LLMProvider
 from ...agent.tools.contracts import ToolContext
 from ...agent.tools.loader import load_tool_registry
+from ...platform.rag.contracts import RetrievalHit
 from ...platform.rag.runtime import retriever as rag_retriever
 from ...platform.rag.citations import build_knowledge_context
-from .tools import CANONICAL_TOOLS, describe_tool_done, describe_tool_start, execute_tool, parse_arguments
+from .tools import (
+    CANONICAL_TOOLS,
+    describe_tool_done,
+    describe_tool_start,
+    parse_arguments,
+    present_tool_inputs,
+    present_tool_outputs,
+)
 
 Message = dict[str, Any]
 MAX_TOOL_ROUNDS = 4
@@ -47,7 +55,7 @@ async def stream_agent(
         else [config for config in chain for _ in range(attempts_per_model)]
     )
 
-    knowledge, used_rag, retrieval_topic = await _retrieve_knowledge(prompt, messages)
+    knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, messages)
 
     attempt = 0
     permanent_failures: set[Provider] = set()
@@ -61,7 +69,7 @@ async def stream_agent(
         answer_parts: list[str] = []
         try:
             if use_tools:
-                conversation: list[Message] = [*(messages or []), *knowledge, {"role": "user", "content": prompt}]
+                conversation: list[Message] = [*knowledge, *(messages or []), {"role": "user", "content": prompt}]
                 for _ in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
                     async for kind, payload in provider.stream(
@@ -87,7 +95,8 @@ async def stream_agent(
                         raw_arguments = call.get("arguments") or "{}"
                         arguments = parse_arguments(raw_arguments)
                         title, status = describe_tool_start(name, arguments)
-                        yield "tool.started", {"tool": name, "title": title, "status": status}
+                        inputs = present_tool_inputs(name, arguments)
+                        yield "tool.started", {"tool": name, "title": title, "status": status, "inputs": inputs}
                         tool_result = await TOOL_REGISTRY.execute(
                             name,
                             arguments,
@@ -103,6 +112,8 @@ async def stream_agent(
                             "title": done_title,
                             "status": done_status,
                             "result": result,
+                            "inputs": inputs,
+                            "outputs": present_tool_outputs(name, result),
                         }
                         assistant_calls.append(
                             {
@@ -125,14 +136,14 @@ async def stream_agent(
                     conversation.extend(tool_messages)
                 if not emitted_tokens:
                     raise ProviderError("Provider returned an empty stream")
-                rag_event = _build_rag_event("".join(answer_parts), knowledge, used_rag, retrieval_topic)
+                rag_event = _build_rag_event("".join(answer_parts), knowledge, used_rag, retrieval_topic, retrieval_hits)
                 if rag_event:
                     yield "rag.started", rag_event
                     yield "rag.completed", rag_event
                 yield "done", {"provider": config.provider.value, "model": config.model}
                 return
 
-            conversation: list[Message] | None = [*(messages or []), *knowledge, {"role": "user", "content": prompt}]
+            conversation: list[Message] | None = [*knowledge, *(messages or []), {"role": "user", "content": prompt}]
             async for kind, payload in provider.stream(
                 config,
                 prompt,
@@ -147,7 +158,7 @@ async def stream_agent(
                 yield "token", {"text": text}
             if not emitted_tokens:
                 raise ProviderError("Provider returned an empty stream")
-            rag_event = _build_rag_event("".join(answer_parts), knowledge, used_rag, retrieval_topic)
+            rag_event = _build_rag_event("".join(answer_parts), knowledge, used_rag, retrieval_topic, retrieval_hits)
             if rag_event:
                 yield "rag.started", rag_event
                 yield "rag.completed", rag_event
@@ -167,28 +178,30 @@ async def stream_agent(
 
 
 async def _knowledge_message(prompt: str, messages: Sequence[Message] | None) -> list[Message]:
-    knowledge, _used_rag, _retrieval_topic = await _retrieve_knowledge(prompt, messages)
+    knowledge, _used_rag, _retrieval_topic, _hits = await _retrieve_knowledge(prompt, messages)
     return knowledge
 
 
 async def _retrieve_knowledge(
     prompt: str,
     messages: Sequence[Message] | None,
-) -> tuple[list[Message], bool, str | None]:
+) -> tuple[list[Message], bool, str | None, list[RetrievalHit]]:
     try:
         result = await rag_retriever.search(prompt, conversation=list(messages or [])[-2:])
     except Exception:
         # Preserve the provider-facing history when knowledge infrastructure is
         # down; the runtime remains usable and must not fabricate context.
-        return [], False, None
+        return [], False, None, []
 
     if result.evidence_state == "INSUFFICIENT" or not result.hits:
-        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}], False, None
+        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}], False, None, []
     context, source_map = build_knowledge_context(result)
     used_rag = result.evidence_state in {"SUFFICIENT", "AMBIGUOUS"} and bool(context)
     if not used_rag:
-        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}], False, None
-    return [{"role": "system", "content": "knowledge_status=available\nIf supplied knowledge does not support the answer, do not claim that the document says it.\n" + context}], True, _retrieval_topic(source_map)
+        return [{"role": "system", "content": "knowledge_status=insufficient. Do not claim the document supports an answer."}], False, None, []
+    included = {citation.chunk_id for citation in source_map.values()}
+    hits = [hit for hit in result.hits if hit.chunk_id in included]
+    return [{"role": "system", "content": "knowledge_status=available\nIf supplied knowledge does not support the answer, do not claim that the document says it.\n" + context}], True, _retrieval_topic(source_map), hits
 
 
 def _meaningful_terms(text: str) -> set[str]:
@@ -243,13 +256,32 @@ def _retrieval_topic(source_map: dict[str, Any]) -> str | None:
     return None
 
 
+def _document_title(hits: Sequence[RetrievalHit], fallback: str) -> str:
+    for hit in hits:
+        metadata = hit.metadata if isinstance(hit.metadata, dict) else {}
+        title = _clean_topic(metadata.get("document_title"))
+        if title:
+            return title
+        title = _clean_topic(metadata.get("source_filename"), strip_extension=True)
+        if title:
+            return title
+    return fallback
+
+
 def _build_rag_event(
     answer: str,
     knowledge: Sequence[Message],
     used_rag: bool,
     retrieval_topic: str | None,
+    hits: Sequence[RetrievalHit],
 ) -> dict[str, object] | None:
-    """Expose only a useful, context-supported document topic to the UI."""
+    """Expose the document topic and the raw hits that supported the answer."""
     if not used_rag or _is_clarification_answer(answer) or not _answer_uses_knowledge(answer, knowledge):
         return None
-    return {"used_rag": True, "message": retrieval_topic or "Contexto relevante"}
+    message = retrieval_topic or "Contexto relevante"
+    return {
+        "used_rag": True,
+        "message": message,
+        "title": _document_title(hits, message),
+        "content": "\n\n".join(hit.content.strip() for hit in hits if hit.content.strip()),
+    }

@@ -1,6 +1,7 @@
 import { showToast } from '../infrastructure/toast';
 import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
+import { bindDetailClicks, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -21,6 +22,7 @@ export function bootEventsMonitor(apiUrl: string): void {
   const conversationEmpty = document.querySelector('#conversationEmpty');
   const hubChip = document.querySelector('#hubChipText');
   if (!conversation) return;
+  bindDetailClicks(conversation);
 
   const conversationId = sessionStorage.getItem('kognia.auth.conversation-id')?.trim() ?? '';
   const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
@@ -152,18 +154,24 @@ export function bootEventsMonitor(apiUrl: string): void {
       ensureAgent().append(node);
     } else if (type === 'tool.started') {
       enterLiveFeed();
-      const title = String(payload.title ?? payload.tool ?? 'Tool');
       const id = `hub-tool-${Date.now()}`;
       pendingTools.set(String(payload.tool ?? 'tool'), id);
+      const detail = toolDetailFromEvent(payload);
       appendRow(
         'tool-row',
-        `<div class="tool-call" id="${id}"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">${escapeHtml(String(payload.status ?? 'Ejecutando'))}</div></div></div>`,
+        `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status loading">${escapeHtml(String(payload.status ?? 'Ejecutando'))}</div></div></button>`,
       );
     } else if (type === 'tool.completed') {
       const id = pendingTools.get(String(payload.tool ?? 'tool'));
       const tool = id ? document.getElementById(id) : null;
-      if (tool) {
+      if (tool && id) {
         tool.classList.add('done');
+        const previous = readDetail(tool);
+        const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
+        writeDetail(tool, detail);
+        refreshOpenDetail(id, detail);
+        const titleNode = tool.querySelector('.tool-title');
+        if (titleNode) titleNode.textContent = detail.name;
         const statusNode = tool.querySelector('.tool-status');
         if (statusNode) {
           statusNode.textContent = String(payload.status ?? 'Completado');

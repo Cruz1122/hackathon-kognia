@@ -1,0 +1,236 @@
+.detail-panel {
+  display: none;
+}
+
+.detail-panel.open {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  width: min(420px, 100%);
+  height: 100dvh;
+  overflow: auto;
+  background: var(--ui-paper);
+  color: var(--ui-graphite);
+  font-family: var(--font-ui);
+  box-shadow: -18px 0 40px rgba(65, 65, 65, .12);
+  padding: 28px 28px 40px;
+}
+
+body.detail-open {
+  padding-right: min(420px, 100%);
+}
+
+body.detail-open .demo-switcher {
+  right: calc(min(420px, 100%) + 16px);
+}
+
+.detail-panel__close {
+  appearance: none;
+  border: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-full);
+  background: var(--ui-graphite);
+  color: var(--ui-paper);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  margin: 0 0 18px auto;
+  flex: 0 0 auto;
+}
+
+.detail-panel__close:focus-visible {
+  outline: 3px solid var(--ui-amber);
+  outline-offset: 3px;
+}
+
+.detail-panel__close i,
+.detail-panel__close svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.5;
+}
+
+.detail-kicker {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .54;
+}
+
+.detail-title {
+  margin: 0 0 22px;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.detail-section {
+  margin-top: 22px;
+}
+
+.detail-section h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: .58;
+}
+
+.detail-fields {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.detail-field {
+  display: grid;
+  gap: 2px;
+}
+
+.detail-field dt {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: .54;
+}
+
+.detail-field dd {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.detail-content {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.detail-content > :first-child {
+  margin-top: 0;
+}
+
+.detail-content > :last-child {
+  margin-bottom: 0;
+}
+
+.detail-content p,
+.detail-content ul,
+.detail-content ol,
+.detail-content pre,
+.detail-content blockquote,
+.detail-content table {
+  margin: 0 0 12px;
+}
+
+.detail-content h1,
+.detail-content h2,
+.detail-content h3,
+.detail-content h4 {
+  margin: 18px 0 8px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.detail-content h1 { font-size: 22px; }
+.detail-content h2 { font-size: 19px; }
+.detail-content h3,
+.detail-content h4 { font-size: 16px; }
+
+.detail-content ul,
+.detail-content ol {
+  padding-left: 1.3em;
+}
+
+.detail-content li {
+  margin: 0 0 4px;
+}
+
+.detail-content a {
+  color: var(--ui-graphite);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.detail-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--ui-cream);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+}
+
+.detail-content pre {
+  overflow: auto;
+  background: var(--ui-cream);
+  border-radius: var(--radius-full);
+  padding: 14px 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.detail-content pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-weight: 500;
+}
+
+.detail-content blockquote {
+  margin-left: 0;
+  padding-left: 14px;
+  border-left: 3px solid var(--ui-amber);
+}
+
+.detail-content img {
+  max-width: 100%;
+  height: auto;
+}
+
+.detail-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.detail-content th,
+.detail-content td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(65, 65, 65, .12);
+}
+
+.detail-content th {
+  font-weight: 700;
+}
+
+.detail-empty {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  opacity: .58;
+}
+
+@media (max-width: 760px) {
+  body.detail-open {
+    padding-right: 0;
+    padding-bottom: 0;
+  }
+
+  .detail-panel.open {
+    width: 100%;
+  }
+}

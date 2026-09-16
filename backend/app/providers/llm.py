@@ -112,9 +112,17 @@ def _gemini_contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _with_system(messages: Sequence[dict[str, Any]] | None, prompt: str) -> list[dict[str, Any]]:
     source = list(messages) if messages else [{"role": "user", "content": prompt}]
-    if not source or source[0].get("role") != "system":
-        return [{"role": "system", "content": AGENT_SYSTEM}, *source]
-    return source
+    extras: list[str] = []
+    rest: list[dict[str, Any]] = []
+    for message in source:
+        if message.get("role") == "system":
+            content = str(message.get("content") or "").strip()
+            if content and content != AGENT_SYSTEM:
+                extras.append(content)
+            continue
+        rest.append(message)
+    system = AGENT_SYSTEM if not extras else AGENT_SYSTEM + "\n\n" + "\n\n".join(extras)
+    return [{"role": "system", "content": system}, *rest]
 
 
 async def _stream_openai_chat(
@@ -221,8 +229,9 @@ async def _post_stream(
         else:
             url = f"{config.base_url}/models/{config.model}:streamGenerateContent"
             params = {"alt": "sse"}
+            system_text = str(source_messages[0].get("content") or AGENT_SYSTEM)
             body = {
-                "systemInstruction": {"parts": [{"text": AGENT_SYSTEM}]},
+                "systemInstruction": {"parts": [{"text": system_text}]},
                 "contents": _gemini_contents(source_messages),
             }
             if tools:
