@@ -211,7 +211,7 @@ async def _post_stream(
     http_client = client or httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
     try:
         if not config.api_key:
-            raise ProviderError(f"Missing API key for {config.provider.value}")
+            raise ProviderError(f"Missing API key for {config.provider.value}", retryable=False)
         source_messages = _with_system(messages, prompt)
         if openai_compatible:
             url = f"{config.base_url}/chat/completions"

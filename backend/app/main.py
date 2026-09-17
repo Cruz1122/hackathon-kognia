@@ -163,6 +163,11 @@ async def lifespan(_app: FastAPI):
     except Exception:
         tts_status = "error"
         logger.exception("Piper TTS failed to load during backend startup")
+    try:
+        await asyncio.to_thread(rag_embeddings.preload)
+        logger.info("E5 embeddings are ready")
+    except Exception:
+        logger.exception("E5 embeddings failed to load during backend startup")
     await seed_demo_knowledge()
     try:
         yield

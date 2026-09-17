@@ -3,6 +3,17 @@ from __future__ import annotations
 import re
 
 
+def chunk_heading(content: str) -> str | None:
+    """Return the first markdown heading inside a chunk, if any."""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("# ").strip()
+            if heading:
+                return heading
+    return None
+
+
 def chunk_text(text: str, *, target_size: int = 900, overlap: int = 140, hard_max: int = 1800) -> list[tuple[str, int, int]]:
     blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
     chunks: list[tuple[str, int, int]] = []

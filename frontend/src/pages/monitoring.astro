@@ -22,6 +22,9 @@ import '../styles/detail-panel.css';
       --ui-control: #e8e8e8;
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
+      --radius-min: 14px;
+      --radius-max: 32px;
+      --radius-ui: min(var(--radius-max), 50%);
     }
 
     * { box-sizing: border-box; }
@@ -81,14 +84,16 @@ import '../styles/detail-panel.css';
     }
 
     .chip {
+      --chip-height: 40px;
       position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      min-height: 34px;
-      padding: 0 14px;
-      border-radius: var(--radius-full);
+      min-height: var(--chip-height);
+      min-width: 96px;
+      padding: 0 16px;
+      border-radius: calc(var(--chip-height) / 2);
       background: rgba(65,65,65,.07);
       font-size: 13px;
       font-weight: 600;
@@ -193,7 +198,7 @@ import '../styles/detail-panel.css';
       right: 0;
       bottom: 5px;
       height: 10px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: rgba(65,65,65,.10);
       overflow: visible;
       transition: height .16s ease, bottom .16s ease;
@@ -368,7 +373,7 @@ import '../styles/detail-panel.css';
     .message {
       width: fit-content;
       max-width: 100%;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       padding: 15px 21px;
       font-size: 15.5px;
       line-height: 1.44;
@@ -461,7 +466,7 @@ import '../styles/detail-panel.css';
       position: relative;
       width: min(520px, 84%);
       min-height: 82px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-graphite);
       color: var(--ui-paper);
       padding: 15px 18px;
@@ -667,14 +672,14 @@ import '../styles/detail-panel.css';
       display: flex;
       gap: 5px;
       padding: 5px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-control);
       box-shadow: 0 6px 24px rgba(65,65,65,.10);
     }
 
     .demo-switcher button {
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: transparent;
       padding: 8px 11px;
       cursor: pointer;
@@ -913,8 +918,8 @@ import '../styles/detail-panel.css';
     function drawWaveShape(samples, from, to, fillStyle) {
       if (!samples.length || to <= from) return;
       const baseline = waveHeight - 1;
-      const minHeight = 2;
-      const maxHeight = Math.max(8, waveHeight - 5);
+      const minHeight = Math.max(10, Math.round(waveHeight * 0.24));
+      const maxHeight = Math.max(minHeight + 8, waveHeight - 5);
       const last = samples.length - 1;
       const startIndex = Math.max(0, Math.floor(from * last));
       const endIndex = Math.min(last, Math.ceil(to * last));

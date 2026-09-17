@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .chunking import chunk_text
+from .chunking import chunk_heading, chunk_text
 from .contracts import RetrievalHit, VectorStore
 from .embeddings import EmbeddingProvider
 from .extraction import extract_document
@@ -38,13 +38,16 @@ class RagIngestionService:
         now = datetime.now(timezone.utc).isoformat()
         ids = [f"{document_id}:{index:05d}" for index in range(chunk_count)]
         contents = [piece[0] for piece in pieces]
-        vectors = self.embeddings.embed_passages(contents)
+        vectors = await asyncio.to_thread(self.embeddings.embed_passages, contents)
         metadatas = []
         hits = []
         for index, (content, start, end) in enumerate(pieces):
             line_start = text[:start].count("\n") + 1
             line_end = text[:end].count("\n") + 1
-            section = next((line.lstrip("# ").strip() for line in reversed(text[:start].splitlines()) if line.startswith("#")), "General")
+            section = chunk_heading(content) or next(
+                (line.lstrip("# ").strip() for line in reversed(text[:start].splitlines()) if line.startswith("#")),
+                "General",
+            )
             metadata = {
                 "document_id": document_id, "document_hash": digest, "document_version": document_version,
                 "source_filename": filename, "source_type": source_type, "mime_type": {"pdf": "application/pdf", "md": "text/markdown", "txt": "text/plain"}[source_type],

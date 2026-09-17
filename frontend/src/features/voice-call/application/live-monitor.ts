@@ -364,8 +364,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (type === 'call.connected') {
       if (connected) return;
       connected = true;
-      const stt = String(data.stt_model ?? '').trim();
-      note(stt ? `Llamada conectada · ${stt}` : 'Llamada conectada', 'phone');
+      note('Llamada conectada', 'phone');
       if (live && !paused && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
     } else if (type === 'wave.level') {
       waveApi?.setPlaying?.(true);

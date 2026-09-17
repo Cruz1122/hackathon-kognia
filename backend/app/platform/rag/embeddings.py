@@ -21,6 +21,10 @@ class E5EmbeddingProvider:
         self.model_name = model_name
         self._model = None
 
+    def preload(self) -> None:
+        """Load torch + E5 weights before the first user turn hits RAG."""
+        self.embed_queries(["ok"])
+
     def _encode(self, texts: list[str], prefix: str) -> list[list[float]]:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
@@ -55,6 +59,9 @@ class HashEmbeddingProvider:
 
     def __init__(self, model_name: str = "test-hash-embedding") -> None:
         self.model_name = model_name
+
+    def preload(self) -> None:
+        return None
 
     def _encode(self, texts: list[str]) -> list[list[float]]:
         result = []

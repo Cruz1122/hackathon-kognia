@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import array
 import os
+import re
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -236,13 +238,32 @@ def reset_stream(stream: Any) -> None:
     _get_recognizer().reset(stream)
 
 
+_LEADING_NOISE = re.compile(r"^[\s.,;:…]+")
+_LETTER = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]")
+
+
+def polish_spanish_punctuation(text: str) -> str:
+    """Keep inverted ¿/¡ from streaming STT and close them when the utterance is a question or exclamation."""
+    text = _LEADING_NOISE.sub("", unicodedata.normalize("NFC", text)).strip()
+    if not text or not _LETTER.search(text):
+        return text
+    missing_questions = text.count("¿") - text.count("?")
+    missing_exclamations = text.count("¡") - text.count("!")
+    extra = ("?" * max(0, missing_questions)) + ("!" * max(0, missing_exclamations))
+    if not extra:
+        return text
+    if text[-1] in ".,;:…":
+        text = text[:-1].rstrip()
+    return text + extra
+
+
 def _result_text(result: Any) -> str:
     if result is None:
         return ""
     if isinstance(result, str):
-        return result.strip()
+        return polish_spanish_punctuation(result)
     text = getattr(result, "text", None)
-    return str(text).strip() if text else ""
+    return polish_spanish_punctuation(str(text)) if text else ""
 
 
 def _pcm_to_float(pcm: bytes) -> np.ndarray:

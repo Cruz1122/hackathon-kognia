@@ -23,6 +23,9 @@ import '../styles/detail-panel.css';
       --rail: 420px;
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
+      --radius-min: 14px;
+      --radius-max: 32px;
+      --radius-ui: min(var(--radius-max), 50%);
     }
 
     @property --left-rail {
@@ -237,19 +240,84 @@ import '../styles/detail-panel.css';
       inset: 0;
       z-index: 1;
       overflow: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
       width: 100%;
       padding: 0 clamp(16px, 3vw, 40px) 84px;
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
-      transition: opacity .65s .28s cubic-bezier(.32, .04, .18, 1), visibility 0s 1s;
+      transform: translateY(22px);
+      transform-origin: 50% 8%;
+      transition:
+        opacity .9s cubic-bezier(.32, .04, .18, 1),
+        transform 1.35s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s 1.4s;
+    }
+
+    .app-content.is-scrolling {
+      scrollbar-color: rgba(65, 65, 65, .28) transparent;
+    }
+
+    .app-content::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .app-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .app-content::-webkit-scrollbar-thumb {
+      background-color: transparent;
+      border-radius: var(--radius-ui);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      transition: background-color .45s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .app-content.is-scrolling::-webkit-scrollbar-thumb {
+      background-color: rgba(65, 65, 65, .28);
     }
 
     .auth-panel.is-app .app-content {
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
-      transition: opacity .65s .28s cubic-bezier(.32, .04, .18, 1), visibility 0s 0s;
+      transform: none;
+      transition:
+        opacity .95s .18s cubic-bezier(.32, .04, .18, 1),
+        transform 1.4s .12s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s 0s;
+    }
+
+    .app-content .player {
+      opacity: 0;
+      transform: translateY(14px) scaleX(.92);
+      transform-origin: 50% 100%;
+      transition:
+        opacity .7s cubic-bezier(.32, .04, .18, 1),
+        transform 1.2s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .app-content .player {
+      opacity: 1;
+      transform: none;
+      transition-delay: .28s, .2s;
+    }
+
+    .app-content .conversation {
+      opacity: 0;
+      transform: translateY(32px);
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.25s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .app-content .conversation {
+      opacity: 1;
+      transform: none;
+      transition-delay: .48s, .38s;
     }
 
     .login-right > .state-view {
@@ -261,9 +329,15 @@ import '../styles/detail-panel.css';
     .auth-panel.no-wipe,
     .auth-panel.no-wipe .login-form-content,
     .auth-panel.no-wipe .app-content,
+    .auth-panel.no-wipe .app-content .player,
+    .auth-panel.no-wipe .app-content .conversation,
     .auth-panel.no-wipe .login-face-wrap,
     .auth-panel.no-wipe .login-name,
-    .auth-panel.no-wipe .login-material {
+    .auth-panel.no-wipe .login-material,
+    .auth-panel.no-wipe .detail-panel,
+    .auth-panel.no-wipe .detail-kicker,
+    .auth-panel.no-wipe .detail-title,
+    .auth-panel.no-wipe .detail-field {
       transition: none !important;
     }
 
@@ -281,7 +355,7 @@ import '../styles/detail-panel.css';
       width: 100%;
       height: 54px;
       border: 4px solid var(--ui-graphite);
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       padding: 0 18px;
       background: transparent;
       color: var(--ui-graphite);
@@ -312,7 +386,7 @@ import '../styles/detail-panel.css';
       display: grid;
       place-items: center;
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: transparent;
       color: var(--ui-graphite);
       cursor: pointer;
@@ -325,7 +399,7 @@ import '../styles/detail-panel.css';
       content: "";
       position: absolute;
       inset: 6px -8px -10px 8px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-amber);
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
@@ -339,7 +413,7 @@ import '../styles/detail-panel.css';
       justify-content: center;
       gap: 10px;
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-graphite);
       color: var(--ui-paper);
       font-size: 20px;
@@ -433,14 +507,16 @@ import '../styles/detail-panel.css';
     }
 
     .chip {
+      --chip-height: 40px;
       position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      min-height: 34px;
-      padding: 0 14px;
-      border-radius: var(--radius-full);
+      min-height: var(--chip-height);
+      min-width: 96px;
+      padding: 0 16px;
+      border-radius: calc(var(--chip-height) / 2);
       background: rgba(65,65,65,.07);
       font-size: 13px;
       font-weight: 600;
@@ -546,7 +622,7 @@ import '../styles/detail-panel.css';
       right: 0;
       bottom: 5px;
       height: 10px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: rgba(65,65,65,.10);
       overflow: visible;
       transition: height .16s ease, bottom .16s ease;
@@ -721,7 +797,7 @@ import '../styles/detail-panel.css';
     .message {
       width: fit-content;
       max-width: 100%;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       padding: 15px 21px;
       font-size: 15.5px;
       line-height: 1.44;
@@ -814,7 +890,7 @@ import '../styles/detail-panel.css';
       position: relative;
       width: min(520px, 84%);
       min-height: 82px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-graphite);
       color: var(--ui-paper);
       padding: 15px 18px;
@@ -1020,14 +1096,14 @@ import '../styles/detail-panel.css';
       display: flex;
       gap: 5px;
       padding: 5px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-control);
       box-shadow: 0 6px 24px rgba(65,65,65,.10);
     }
 
     .demo-switcher button {
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: transparent;
       padding: 8px 11px;
       cursor: pointer;
@@ -1675,6 +1751,16 @@ import '../styles/detail-panel.css';
     const waveCtx = waveCanvas.getContext('2d', { alpha: true });
     const reconnect = document.getElementById('reconnect');
     const reconnectText = document.getElementById('reconnectText');
+    if (appContent) {
+      let scrollRestTimer = 0;
+      appContent.addEventListener('scroll', () => {
+        appContent.classList.add('is-scrolling');
+        window.clearTimeout(scrollRestTimer);
+        scrollRestTimer = window.setTimeout(() => {
+          appContent.classList.remove('is-scrolling');
+        }, 780);
+      }, { passive: true });
+    }
     const timelineItems = [...document.querySelectorAll('.timeline-item')];
     const messages = [...document.querySelectorAll('.message[data-text]')];
     const tokenTimers = new Map();
@@ -1716,8 +1802,8 @@ import '../styles/detail-panel.css';
     function drawWaveShape(samples, from, to, fillStyle) {
       if (!samples.length || to <= from) return;
       const baseline = waveHeight - 1;
-      const minHeight = 2;
-      const maxHeight = Math.max(8, waveHeight - 5);
+      const minHeight = Math.max(10, Math.round(waveHeight * 0.24));
+      const maxHeight = Math.max(minHeight + 8, waveHeight - 5);
       const last = samples.length - 1;
       const startIndex = Math.max(0, Math.floor(from * last));
       const endIndex = Math.min(last, Math.ceil(to * last));

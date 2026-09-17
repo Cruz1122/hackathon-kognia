@@ -1,7 +1,7 @@
 import math
 import struct
 
-from app.features.transcription.service import pcm_wave_level
+from app.features.transcription.service import pcm_wave_level, polish_spanish_punctuation
 
 
 def _tone(hz: float, samples: int = 1600, rate: int = 16000) -> bytes:
@@ -31,3 +31,11 @@ def test_pcm_speech_features_rejects_silence() -> None:
     _level, voiced, rms = pcm_speech_features(b"\x00\x00" * 1600)
     assert voiced is False
     assert rms == 0.0
+
+
+def test_polish_spanish_punctuation_closes_open_questions() -> None:
+    assert polish_spanish_punctuation("Hola, ¿qué puedes hacer") == "Hola, ¿qué puedes hacer?"
+    assert polish_spanish_punctuation("¿qué puedes hacer.") == "¿qué puedes hacer?"
+    assert polish_spanish_punctuation("¿qué puedes hacer?") == "¿qué puedes hacer?"
+    assert polish_spanish_punctuation("Hola, bien") == "Hola, bien"
+    assert polish_spanish_punctuation("¡qué bien") == "¡qué bien!"

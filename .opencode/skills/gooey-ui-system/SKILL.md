@@ -1,6 +1,6 @@
 ---
 name: gooey-ui-system
-description: Mandatory project-wide UI skill. Use whenever creating, editing, reviewing, or refactoring ANY UI component, screen, interaction, or visual state. Enforces the gooey/slime material language, fixed palette, Urbanist typography, full-circle radius, and viscosity 7.
+description: Mandatory project-wide UI skill. Use whenever creating, editing, reviewing, or refactoring ANY UI component, screen, interaction, or visual state. Enforces the gooey/slime material language, fixed palette, Urbanist typography, adaptive corner radius (pills when compact, squarer when tall), and viscosity 7.
 compatibility: cursor, opencode
 metadata:
   category: ui-design
@@ -20,7 +20,7 @@ Core identity:
 - gooey/slime material behavior;
 - palette limited to `#414141`, `#f7c974`, `#faeccf`, `#f8f8f8`;
 - Urbanist for all intentional UI typography;
-- full-circle / pill geometry on every bounded component;
+- adaptive corner radius: pills when compact, squarer as the box gets taller;
 - SVG goo filter with viscosity fixed at `7`;
 - restrained, soft motion;
 - crisp content separated from filtered visual mass.
@@ -103,31 +103,36 @@ Do not mix in Inter, Geist, Roboto, system-ui, serif, or another display font as
 
 Monospace is allowed only for actual code when semantic readability requires it.
 
-# 3. Geometry — full circle everywhere
+# 3. Geometry — adaptive radius
 
-Canonical token:
+`9999px` / `rounded-full` is correct for pills and small circles. On a tall box it becomes a stadium: the taller the surface, the more the silhouette distorts. Radius must stay a corner, and get relatively squarer as height grows.
+
+Canonical tokens:
 
 ```css
 :root {
   --radius-full: 9999px;
+  --radius-min: 14px;
+  --radius-max: 32px;
+  --radius-ui: min(var(--radius-max), 50%);
 }
 ```
 
-Every bounded component surface uses:
+Default for every bounded surface that can grow:
 
 ```css
-border-radius: var(--radius-full);
+border-radius: var(--radius-ui);
 ```
 
-Tailwind equivalent:
+CSS already clamps a radius to half of each side, so:
 
-```text
-rounded-full
-```
+- short controls (chips, inputs, buttons, toasts) still read as pills;
+- a one-line bubble stays pill-like;
+- a tall bubble, tool card, code block or panel keeps soft corners but looks more rectangular.
 
-This applies to buttons, inputs, cards, dialogs, modals, menus, dropdowns, nav items, sidebar items, tabs, tooltips, toasts, media containers, panels, chips, badges and controls.
+Use `--radius-full` or `border-radius: 50%` only when the silhouette must remain a circle or a capsule even if the box is large: avatars, loaders, circular icon buttons, dots.
 
-Do not reinterpret full-circle as merely “very rounded”. Do not use `8px`, `12px`, `16px`, `24px`, `32px`, `rounded-lg`, `rounded-xl`, etc. for bounded UI components.
+Do not use `8px`, `12px`, `16px`, `rounded-lg`, `rounded-xl`, or other generic radii. Do not scale `--radius-max` up with height; the cap is what makes tall surfaces squarer.
 
 Page canvases, full-bleed sections and invisible layout wrappers are not bounded UI components and therefore do not require a radius.
 
@@ -224,7 +229,7 @@ At minimum it inherits:
 
 1. the four-color palette;
 2. Urbanist;
-3. full-circle radius;
+3. adaptive radius (`--radius-ui`, or `--radius-full` only for true circles/capsules);
 4. soft-mass / surface-tension material language;
 5. the same restrained motion philosophy.
 
@@ -234,7 +239,7 @@ When integrating third-party UI:
 
 1. remove its default typography;
 2. replace its colors with system tokens;
-3. force full-circle geometry;
+3. force adaptive radius (`--radius-ui`, `--radius-full` only for circles/capsules);
 4. remove incompatible borders/shadows;
 5. rebuild relevant interaction states in the gooey material language.
 
@@ -336,7 +341,7 @@ If a border is required:
 
 - derive it from the approved palette;
 - keep it subtle;
-- preserve full-circle geometry.
+- preserve adaptive radius (`--radius-ui`).
 
 Avoid heavy shadows.
 
@@ -394,17 +399,20 @@ Every implementation should begin from equivalent tokens:
 
   --font-ui: "Urbanist", sans-serif;
   --radius-full: 9999px;
+  --radius-min: 14px;
+  --radius-max: 32px;
+  --radius-ui: min(var(--radius-max), 50%);
   --goo-viscosity: 7;
 }
 ```
 
-For Tailwind, map these exact values and use `rounded-full` universally on bounded component surfaces.
+For Tailwind, map `--radius-ui` as the default bounded radius. Use `rounded-full` only for true circles and compact capsules that must stay pills at any size.
 
 # 13. Quality gate
 
 Before ANY UI task is complete, verify:
 
-- [ ] Every bounded component is `rounded-full` / full-circle.
+- [ ] Bounded components use `--radius-ui`; `--radius-full` / `50%` only on true circles or compact capsules.
 - [ ] No authored brand color exists outside the four approved colors except alpha variants.
 - [ ] All intentional UI typography is Urbanist.
 - [ ] Typography hierarchy uses Urbanist weights instead of mixed families.
@@ -427,7 +435,8 @@ Do not introduce these unless explicitly requested:
 ```text
 non-Urbanist display fonts
 generic system typography
-square or mildly rounded component corners
+square or mildly rounded (8px / 12px / 16px) component corners
+9999px radius on tall cards, messages, panels, or dialogs
 new brand colors
 glassmorphism
 Apple-style Liquid Glass
@@ -450,7 +459,7 @@ The palette supplies the identity.
 
 Urbanist supplies the hierarchy.
 
-Full-circle geometry supplies the silhouette.
+Adaptive radius supplies the silhouette: pills when small, squarer when tall.
 
 The viscosity-7 goo filter supplies the material behavior.
 
