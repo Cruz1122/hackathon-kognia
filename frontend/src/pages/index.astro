@@ -20,7 +20,8 @@ import '../styles/detail-panel.css';
       --ui-cream: #faeccf;
       --ui-paper: #f8f8f8;
       --ui-control: var(--ui-cream);
-      --rail: 420px;
+      --rail-share: min(17.5%, 21rem);
+      --rail: var(--rail-share);
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
       --radius-min: 14px;
@@ -67,7 +68,7 @@ import '../styles/detail-panel.css';
       display: grid;
       --left-rail: 56%;
       --right-rail: 0%;
-      grid-template-columns: var(--left-rail) minmax(0, 1fr) var(--right-rail);
+      grid-template-columns: minmax(0, var(--left-rail)) minmax(0, 1fr) minmax(0, var(--right-rail));
       width: 100%;
       min-height: 100dvh;
       margin: 0;
@@ -80,18 +81,52 @@ import '../styles/detail-panel.css';
     }
 
     .auth-panel.is-app {
-      --left-rail: var(--rail, 420px);
-      --right-rail: var(--rail, 420px);
+      --left-rail: var(--rail-share);
+      --right-rail: var(--rail-share);
+    }
+
+    .auth-panel.is-app.is-empty-view {
+      --right-rail: 0%;
     }
 
     .login-left {
       position: relative;
       z-index: 1;
+      min-width: 0;
       min-height: 100dvh;
-      display: grid;
-      place-items: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       overflow: visible;
       background: var(--ui-graphite);
+      padding: 48px 28px;
+      transition: padding 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-left {
+      align-items: stretch;
+      justify-content: flex-start;
+      padding: 28px 22px 32px;
+      overflow: visible;
+    }
+
+    .login-sidebar {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: min(100%, 360px);
+      min-width: 0;
+      max-width: 100%;
+      transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-sidebar {
+      width: 100%;
+      flex: 1;
+      align-items: stretch;
     }
 
     /* Dos teselas idénticas: al desplazar una tesela completa, el último
@@ -161,12 +196,23 @@ import '../styles/detail-panel.css';
       z-index: 2;
       display: flex;
       width: 100%;
-      justify-self: center;
       align-items: center;
       justify-content: center;
       flex-direction: column;
       color: var(--ui-amber);
       text-align: center;
+      gap: 0;
+      transition:
+        gap 1.55s cubic-bezier(.32, .04, .18, 1),
+        color 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-brand {
+      flex-direction: row;
+      justify-content: flex-start;
+      text-align: left;
+      gap: 12px;
+      color: var(--ui-paper);
     }
 
     .login-face-wrap {
@@ -205,7 +251,8 @@ import '../styles/detail-panel.css';
     }
 
     .auth-panel.is-app .login-face-wrap {
-      width: min(55%, 280px);
+      width: 48px;
+      flex-shrink: 0;
     }
 
     .auth-panel.is-app .login-material {
@@ -236,12 +283,152 @@ import '../styles/detail-panel.css';
       font-weight: 800;
       line-height: 1;
       letter-spacing: -.04em;
-      transition: font-size 1.55s cubic-bezier(.32, .04, .18, 1), margin-top 1.55s cubic-bezier(.32, .04, .18, 1);
+      transition:
+        font-size 1.55s cubic-bezier(.32, .04, .18, 1),
+        margin-top 1.55s cubic-bezier(.32, .04, .18, 1),
+        width 1.55s cubic-bezier(.32, .04, .18, 1);
     }
 
     .auth-panel.is-app .login-name {
-      margin-top: 12px;
-      font-size: clamp(1.35rem, 1.8vw, 2rem);
+      width: auto;
+      margin-top: 0;
+      font-size: 1.65rem;
+      font-weight: 800;
+    }
+
+    .app-nav {
+      width: 100%;
+      min-width: 0;
+      height: 0;
+      margin-top: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(16px);
+      transition:
+        opacity .7s cubic-bezier(.32, .04, .18, 1),
+        transform .85s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .75s;
+    }
+
+    .auth-panel.is-app.is-nav-ready .app-nav {
+      height: auto;
+      overflow-x: hidden;
+      overflow-y: auto;
+      margin-top: 40px;
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+      transition:
+        opacity .7s cubic-bezier(.32, .04, .18, 1),
+        transform .85s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s;
+    }
+
+    .app-nav__item,
+    .app-nav__label {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      min-width: 0;
+      margin: 0;
+      border: 0;
+      border-radius: var(--radius-full);
+      background: transparent;
+      color: var(--ui-paper);
+      font: inherit;
+      font-size: clamp(1.05rem, 1.35vw, 1.35rem);
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: left;
+      padding: 16px 18px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .app-nav__item span,
+    .app-nav__label span {
+      min-width: 0;
+    }
+
+    .app-nav__label {
+      opacity: .78;
+    }
+
+    .app-nav__label.is-active {
+      opacity: 1;
+      color: var(--ui-amber);
+    }
+
+    .app-nav__item svg,
+    .app-nav__label svg {
+      width: clamp(22px, 2vw, 28px);
+      height: clamp(22px, 2vw, 28px);
+      flex-shrink: 0;
+      stroke-width: 2.3;
+    }
+
+    .app-nav__item:hover,
+    .app-nav__label:hover {
+      background: rgba(248, 248, 248, .08);
+    }
+
+    .app-nav__item:focus-visible,
+    .app-nav__label:focus-visible {
+      outline: 3px solid var(--ui-amber);
+      outline-offset: 2px;
+    }
+
+    .app-nav__item.is-active {
+      color: var(--ui-amber);
+    }
+
+    .app-nav__group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .app-nav__children {
+      display: grid;
+      grid-template-rows: 0fr;
+      padding-left: clamp(16px, 12%, 44px);
+      min-width: 0;
+      transition: grid-template-rows .45s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .app-nav__group.is-open .app-nav__children {
+      grid-template-rows: 1fr;
+    }
+
+    .app-nav__children-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .app-nav__children .app-nav__item {
+      font-size: 1.2rem;
+      font-weight: 600;
+      padding: 12px 16px;
+    }
+
+    .app-nav__call {
+      font-style: italic;
+      font-weight: 500;
+      opacity: .88;
+    }
+
+    .app-nav__call.is-active {
+      opacity: 1;
     }
 
     .login-right {
@@ -250,6 +437,7 @@ import '../styles/detail-panel.css';
       min-width: 0;
       min-height: 100dvh;
       padding: 0;
+      overflow: hidden;
       background: var(--ui-paper);
     }
 
@@ -273,8 +461,7 @@ import '../styles/detail-panel.css';
       position: absolute;
       inset: 0;
       z-index: 1;
-      overflow: auto;
-      overflow-x: hidden;
+      overflow: hidden;
       scrollbar-width: thin;
       scrollbar-color: transparent transparent;
       width: 100%;
@@ -325,6 +512,51 @@ import '../styles/detail-panel.css';
         visibility 0s 0s;
     }
 
+    .auth-panel.is-app.is-nav-ready .app-content {
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .auth-panel.is-app.is-empty-view .app-content {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      overflow: hidden;
+      transform: translateY(18px);
+      transition:
+        opacity .55s cubic-bezier(.32, .04, .18, 1),
+        transform .7s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .6s;
+    }
+
+    .login-right > .section-view {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(18px);
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.1s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .8s;
+    }
+
+    .login-right > .section-view.is-active {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.1s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s;
+    }
+
     .app-content .player {
       opacity: 0;
       transform: translateY(14px) scaleX(.92);
@@ -365,9 +597,15 @@ import '../styles/detail-panel.css';
     .auth-panel.no-wipe .app-content,
     .auth-panel.no-wipe .app-content .player,
     .auth-panel.no-wipe .app-content .conversation,
+    .auth-panel.no-wipe .login-left,
+    .auth-panel.no-wipe .login-sidebar,
+    .auth-panel.no-wipe .login-brand,
     .auth-panel.no-wipe .login-face-wrap,
     .auth-panel.no-wipe .login-name,
     .auth-panel.no-wipe .login-material,
+    .auth-panel.no-wipe .app-nav,
+    .auth-panel.no-wipe .app-nav__children,
+    .auth-panel.no-wipe .section-view,
     .auth-panel.no-wipe .detail-panel,
     .auth-panel.no-wipe .detail-kicker,
     .auth-panel.no-wipe .detail-title,
@@ -507,19 +745,9 @@ import '../styles/detail-panel.css';
       align-items: flex-end;
       justify-content: flex-end;
       gap: 24px;
-      width: min(880px, 100%);
+      width: 100%;
       margin-inline: auto;
       padding: 0 10px 18px;
-    }
-
-    .eyebrow {
-      margin: 0 0 5px;
-      font-size: 12px;
-      line-height: 1;
-      font-weight: 700;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      opacity: .58;
     }
 
     h1 {
@@ -605,7 +833,7 @@ import '../styles/detail-panel.css';
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: end;
       gap: 24px;
-      width: min(880px, 100%);
+      width: 100%;
       margin-inline: auto;
       padding: 6px 10px 2px;
       color: var(--ui-graphite);
@@ -646,6 +874,8 @@ import '../styles/detail-panel.css';
       width: 100%;
       height: 100%;
       display: block;
+      max-width: 100%;
+      object-fit: fill;
     }
 
     .progress-shell {
@@ -748,7 +978,7 @@ import '../styles/detail-panel.css';
 
     .conversation {
       position: relative;
-      width: min(880px, 100%);
+      width: 100%;
       margin: 26px auto 0;
       padding: 8px 10px 32px;
       min-height: 620px;
@@ -1182,14 +1412,6 @@ import '../styles/detail-panel.css';
       .auth-panel:not(.is-app) { --left-rail: 36%; }
       .auth-panel:not(.is-app) .login-face-wrap { width: min(62%, 210px); }
       .auth-panel:not(.is-app) .login-name { font-size: clamp(1.7rem, 3.2vw, 2.8rem); }
-    }
-
-    @media (max-width: 900px) {
-      .auth-panel:not(.is-app) { --left-rail: 30%; }
-      .login-material { width: 32%; right: -8%; }
-    }
-
-    @media (max-width: 760px) {
       .page { width: 100%; padding: 0; }
       .topline { justify-content: flex-start; }
       .call-meta { justify-content: flex-start; }
@@ -1209,7 +1431,7 @@ import '../styles/detail-panel.css';
       .login-left {
         min-height: 38dvh;
         overflow: visible;
-        transition: min-height 1.55s cubic-bezier(.32, .04, .18, 1);
+        transition: min-height 1.55s cubic-bezier(.32, .04, .18, 1), padding 1.55s cubic-bezier(.32, .04, .18, 1);
       }
       .login-left-svg--y { display: none; }
       .login-left-svg--x { display: block; }
@@ -1228,22 +1450,45 @@ import '../styles/detail-panel.css';
         left: 0;
         bottom: 0;
       }
-      .login-brand { width: 100%; justify-self: center; }
+      .login-brand { width: 100%; }
       .login-face-wrap { width: 150px; }
       .login-name { width: auto; font-size: 2.5rem; }
       .login-right { min-height: 62dvh; padding: 0; }
       .auth-copy { margin-bottom: 34px; }
       .auth-panel.is-app .login-left {
-        min-height: 22dvh;
+        min-height: 0;
         width: auto;
         min-width: 0;
         max-width: none;
+        padding: 16px 16px 14px;
+        overflow: visible;
       }
+      .auth-panel.is-app .login-name { cursor: pointer; }
       .auth-panel.is-app .app-content { padding: 0 16px 72px; }
       .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
-      .auth-panel.is-app .login-face-wrap { width: 72px; }
-      .auth-panel.is-app .login-name { font-size: 1.4rem; margin-top: 8px; }
-      .auth-panel.is-app .login-right { min-height: 78dvh; }
+      .auth-panel.is-app .login-face-wrap { width: 40px; }
+      .auth-panel.is-app .login-name { font-size: 1.35rem; margin-top: 0; }
+      .auth-panel.is-app .login-right { min-height: 58dvh; }
+      .auth-panel.is-app.is-nav-ready .app-nav { margin-top: 14px; }
+      .auth-panel.is-app.is-rail-collapsed .login-left {
+        padding-bottom: 12px;
+      }
+      .auth-panel.is-app.is-rail-collapsed .app-nav {
+        height: 0;
+        margin-top: 0;
+        opacity: 0;
+        overflow: hidden;
+        pointer-events: none;
+        visibility: hidden;
+        transform: translateY(-8px);
+      }
+      .auth-panel.is-app.is-rail-collapsed .login-right {
+        min-height: 86dvh;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .auth-panel:not(.is-app) { --left-rail: 30%; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1332,6 +1577,7 @@ import '../styles/detail-panel.css';
             visualViewport?.addEventListener('resize', hideWhileResizing);
           })();
         </script>
+        <div class="login-sidebar">
         <div class="login-brand">
           <div class="login-face-wrap" id="demoFaceWrap" role="button" tabindex="0">
             <span class="sr-only">Carita de Demo</span>
@@ -1365,14 +1611,46 @@ import '../styles/detail-panel.css';
           </div>
           <div class="login-name">Demo</div>
         </div>
+        <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden="true" inert>
+          <button class="app-nav__item" type="button" data-view="dashboard">
+            <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+            <span>Dashboard</span>
+          </button>
+          <div class="app-nav__group" id="callsGroup">
+            <button class="app-nav__label" type="button" id="callsToggle" aria-expanded="false" aria-controls="callsChildren">
+              <i data-lucide="phone" aria-hidden="true"></i>
+              <span>Llamadas</span>
+            </button>
+            <div class="app-nav__children" id="callsChildren" inert aria-hidden="true">
+              <div class="app-nav__children-inner">
+                <button class="app-nav__item app-nav__call is-active" type="button" data-view="call-demo" aria-current="page">
+                  <span>Llamada Demo</span>
+                </button>
+                <button class="app-nav__item app-nav__call" type="button" data-view="call-1">
+                  <span>Llamada 1</span>
+                </button>
+                <button class="app-nav__item app-nav__call" type="button" data-view="call-2">
+                  <span>Llamada 2</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <button class="app-nav__item" type="button" data-view="sales">
+            <i data-lucide="shopping-bag" aria-hidden="true"></i>
+            <span>Ventas</span>
+          </button>
+          <button class="app-nav__item" type="button" data-view="settings">
+            <i data-lucide="settings" aria-hidden="true"></i>
+            <span>Ajustes</span>
+          </button>
+        </nav>
+        </div>
       </section>
 
       <section class="login-right">
         <div class="login-form-content">
           <div class="auth-copy">
-            <p class="eyebrow">Acceso de demo</p>
             <h2 id="authTitle">Iniciar sesión</h2>
-            <p>Usa un ADMIN creado por el bootstrap de la API.</p>
           </div>
           <form class="auth-form" id="authForm">
             <label class="auth-field">
@@ -1393,7 +1671,7 @@ import '../styles/detail-panel.css';
                 <span class="auth-submit-loader-dot"></span>
               </span>
               <button class="auth-submit" type="submit" id="authSubmit">
-                <span class="auth-submit-label">Iniciar sesión</span>
+                <span class="auth-submit-label">Acceder</span>
               </button>
             </div>
           </form>
@@ -1836,6 +2114,22 @@ import '../styles/detail-panel.css';
     <section class="state-view" id="errorState" hidden aria-label="Error de monitoreo">
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
+
+    <section class="section-view" data-section="dashboard" aria-label="Dashboard" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="layout-dashboard" aria-hidden="true"></i><p>Aún no hay métricas para mostrar.</p></div>
+    </section>
+    <section class="section-view" data-section="call-1" aria-label="Llamada 1" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
+    </section>
+    <section class="section-view" data-section="call-2" aria-label="Llamada 2" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
+    </section>
+    <section class="section-view" data-section="sales" aria-label="Ventas" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="shopping-bag" aria-hidden="true"></i><p>Aún no hay ventas para mostrar.</p></div>
+    </section>
+    <section class="section-view" data-section="settings" aria-label="Ajustes" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="settings" aria-hidden="true"></i><p>Los ajustes estarán disponibles pronto.</p></div>
+    </section>
       </section>
     <aside class="detail-panel" id="detailPanel" aria-label="Cliente">
       <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
@@ -1864,7 +2158,8 @@ import '../styles/detail-panel.css';
         const token = sessionStorage.getItem('kognia.auth.access-token')?.trim();
         const conversation = sessionStorage.getItem('kognia.auth.conversation-id')?.trim();
         if (!panel || !token || !conversation) return;
-        panel.classList.add('is-app', 'no-wipe');
+        panel.classList.add('is-app', 'no-wipe', 'is-nav-ready');
+        panel.dataset.view = 'call-demo';
         panel.setAttribute('aria-labelledby', 'screenTitle');
         form?.setAttribute('inert', '');
         form?.setAttribute('aria-hidden', 'true');
@@ -1953,40 +2248,49 @@ import '../styles/detail-panel.css';
     }
 
     function resizeWaveCanvas() {
-      const rect = waveCanvas.getBoundingClientRect();
+      const host = waveCanvas.parentElement || waveCanvas;
+      const w = host.clientWidth;
+      const h = host.clientHeight;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.max(1, Math.round(rect.width));
-      const h = Math.max(1, Math.round(rect.height));
-      if (w === waveWidth && h === waveHeight && dpr === waveDpr) return;
+      if (w < 2 || h < 2) return false;
+      const bitmapW = Math.max(1, Math.round(w * dpr));
+      const bitmapH = Math.max(1, Math.round(h * dpr));
+      const sizeChanged = w !== waveWidth || h !== waveHeight || dpr !== waveDpr;
+      const bitmapChanged = waveCanvas.width !== bitmapW || waveCanvas.height !== bitmapH;
+      if (!sizeChanged && !bitmapChanged) return false;
       waveWidth = w;
       waveHeight = h;
       waveDpr = dpr;
-      waveCanvas.width = Math.round(w * dpr);
-      waveCanvas.height = Math.round(h * dpr);
+      if (bitmapChanged) {
+        waveCanvas.width = bitmapW;
+        waveCanvas.height = bitmapH;
+      }
       waveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return true;
     }
 
     function drawWaveShape(samples, from, to, fillStyle) {
       if (!samples.length || to <= from) return;
       const baseline = waveHeight - 1;
-      const minHeight = Math.max(10, Math.round(waveHeight * 0.24));
-      const maxHeight = Math.max(minHeight + 8, waveHeight - 5);
+      const minHeight = Math.max(6, Math.round(waveHeight * 0.12));
+      const travel = Math.max(8, Math.round(waveHeight * 0.48));
       const last = samples.length - 1;
       const startIndex = Math.max(0, Math.floor(from * last));
       const endIndex = Math.min(last, Math.ceil(to * last));
       const denom = Math.max(1, last);
+      const amp = (sample) => minHeight + Math.pow(clamp01(sample), 1.55) * travel;
 
       waveCtx.beginPath();
       const firstX = startIndex / denom * waveWidth;
       waveCtx.moveTo(firstX, baseline);
 
       let prevX = firstX;
-      let prevY = baseline - (minHeight + clamp01(samples[startIndex]) * (maxHeight - minHeight));
+      let prevY = baseline - amp(samples[startIndex]);
       waveCtx.lineTo(prevX, prevY);
 
       for (let i = startIndex + 1; i <= endIndex; i++) {
         const x = i / denom * waveWidth;
-        const y = baseline - (minHeight + clamp01(samples[i]) * (maxHeight - minHeight));
+        const y = baseline - amp(samples[i]);
         const mx = (prevX + x) * .5;
         const my = (prevY + y) * .5;
         waveCtx.quadraticCurveTo(prevX, prevY, mx, my);
@@ -2045,7 +2349,7 @@ import '../styles/detail-panel.css';
       const hz = sampleRate / bestLag;
       const voiced = clarity > .25 && hz >= 70 && hz <= 500;
       const pitch = voiced ? clamp01((hz - 70) / 430) : .35;
-      return clamp01(rms * 7.4 * (.42 + .58 * (voiced ? .3 + .7 * pitch : .2)));
+      return clamp01(rms * 4.2 * (.42 + .58 * (voiced ? .3 + .7 * pitch : .2)));
     }
 
     // Convierte un frame de frecuencias real en una amplitud visual de voz.
@@ -2066,7 +2370,7 @@ import '../styles/detail-panel.css';
       }
 
       if (!weightSum) return .05;
-      return clamp01(Math.sqrt(energy / weightSum) * 1.7);
+      return clamp01(Math.sqrt(energy / weightSum) * 1.05);
     }
 
     function pushAmplitude(value) {
@@ -2562,11 +2866,25 @@ import '../styles/detail-panel.css';
       requestAnimationFrame(tick);
     }
 
-    new ResizeObserver(() => renderWave()).observe(waveCanvas);
+    if (waveShell) new ResizeObserver(() => renderWave()).observe(waveShell);
+    const loginRight = document.querySelector('.login-right');
+    if (loginRight) new ResizeObserver(() => renderWave()).observe(loginRight);
+    window.addEventListener('resize', () => renderWave());
+    visualViewport?.addEventListener('resize', () => renderWave());
     seedRecordedWaveform();
     lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
     setMode('live');
     if (window.__liveDebugControls) setPlaying(false);
+    const trackWaveLayout = () => {
+      let frames = 48;
+      const step = () => {
+        renderWave();
+        frames -= 1;
+        if (frames > 0) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+    window.addEventListener('app-layout-change', trackWaveLayout);
     requestAnimationFrame(tick);
   </script>
 
@@ -2661,20 +2979,161 @@ import '../styles/detail-panel.css';
          loginMaterial()?.classList.remove('is-gone');
        }
 
+       const appNav = document.getElementById('appNav');
+       const callsGroup = document.getElementById('callsGroup');
+       const callsToggle = document.getElementById('callsToggle');
+       const sectionViews = Array.from(document.querySelectorAll<HTMLElement>('.section-view'));
+       const detailPanel = document.getElementById('detailPanel');
+       const railMs = 1550;
+       let navReadyTimer = 0;
+       let navReadyHandler: ((event: TransitionEvent) => void) | null = null;
+
+       function lucideRefresh(): void {
+         const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+         lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+       }
+
+       function clearNavReadyWait(): void {
+         window.clearTimeout(navReadyTimer);
+         if (navReadyHandler && authPanel) {
+           authPanel.removeEventListener('transitionend', navReadyHandler);
+         }
+         navReadyHandler = null;
+       }
+
+       function markNavReady(): void {
+         if (!authPanel) return;
+         clearNavReadyWait();
+         authPanel.classList.add('is-nav-ready');
+         appNav?.removeAttribute('aria-hidden');
+         appNav?.removeAttribute('inert');
+       }
+
+       function scheduleNavReady(immediate: boolean): void {
+         if (!authPanel) return;
+         if (immediate || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+           markNavReady();
+           return;
+         }
+         clearNavReadyWait();
+         navReadyHandler = (event: TransitionEvent) => {
+           if (event.target !== authPanel) return;
+           if (event.propertyName !== '--left-rail') return;
+           markNavReady();
+         };
+         authPanel.addEventListener('transitionend', navReadyHandler);
+         navReadyTimer = window.setTimeout(markNavReady, railMs);
+       }
+
+       function notifyLayoutChange(): void {
+         window.dispatchEvent(new Event('app-layout-change'));
+       }
+
+       function setCallsOpen(open: boolean): void {
+         callsGroup?.classList.toggle('is-open', open);
+         callsToggle?.setAttribute('aria-expanded', String(open));
+         const children = document.getElementById('callsChildren');
+         if (open) {
+           children?.removeAttribute('inert');
+           children?.removeAttribute('aria-hidden');
+           return;
+         }
+         children?.setAttribute('inert', '');
+         children?.setAttribute('aria-hidden', 'true');
+       }
+
+       function setAppView(view: string): void {
+         if (!authPanel) return;
+         const empty = view !== 'call-demo';
+         const isCall = view === 'call-demo' || view === 'call-1' || view === 'call-2';
+         authPanel.dataset.view = view;
+         authPanel.classList.toggle('is-empty-view', empty);
+         if (!isCall) setCallsOpen(false);
+         callsToggle?.classList.toggle('is-active', isCall);
+         appNav?.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+           const active = button.dataset.view === view;
+           button.classList.toggle('is-active', active);
+           if (active) button.setAttribute('aria-current', 'page');
+           else button.removeAttribute('aria-current');
+         });
+         sectionViews.forEach((section) => {
+           const active = empty && section.dataset.section === view;
+           section.classList.toggle('is-active', active);
+           section.setAttribute('aria-hidden', active ? 'false' : 'true');
+         });
+         notifyLayoutChange();
+         if (empty) {
+           appContent?.setAttribute('aria-hidden', 'true');
+           appContent?.setAttribute('inert', '');
+           detailPanel?.setAttribute('inert', '');
+           return;
+         }
+         appContent?.removeAttribute('aria-hidden');
+         appContent?.removeAttribute('inert');
+         detailPanel?.removeAttribute('inert');
+       }
+
+       function resetAppShell(): void {
+         clearNavReadyWait();
+         authPanel?.classList.remove('is-app', 'no-wipe', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
+         authPanel?.removeAttribute('data-view');
+         appNav?.setAttribute('aria-hidden', 'true');
+         appNav?.setAttribute('inert', '');
+         setCallsOpen(false);
+         callsToggle?.classList.remove('is-active');
+         sectionViews.forEach((section) => {
+           section.classList.remove('is-active');
+           section.setAttribute('aria-hidden', 'true');
+         });
+         appContent?.removeAttribute('inert');
+         detailPanel?.removeAttribute('inert');
+       }
+
        function revealApp(animate: boolean): void {
          if (!authPanel) return;
          if (!animate) authPanel.classList.add('no-wipe');
          authPanel.classList.add('is-app');
          authPanel.setAttribute('aria-labelledby', 'screenTitle');
          setFormInert(true);
-         appContent?.removeAttribute('aria-hidden');
+         setAppView('call-demo');
          collapseStrip(!animate);
+         scheduleNavReady(!animate);
+         lucideRefresh();
+         notifyLayoutChange();
          if (!animate) {
            requestAnimationFrame(() => {
              requestAnimationFrame(() => authPanel.classList.remove('no-wipe'));
            });
          }
        }
+
+       appNav?.addEventListener('click', (event) => {
+         const target = event.target;
+         if (!(target instanceof Element)) return;
+         const toggle = target.closest('#callsToggle');
+         if (toggle) {
+           setCallsOpen(!callsGroup?.classList.contains('is-open'));
+           return;
+         }
+         const button = target.closest<HTMLButtonElement>('[data-view]');
+         if (!button) return;
+         const view = button.dataset.view?.trim();
+         if (!view) return;
+         setAppView(view);
+       });
+
+       const loginName = document.querySelector('.login-name');
+       function isCompactShell(): boolean {
+         return matchMedia('(max-width: 1100px)').matches;
+       }
+       loginName?.addEventListener('click', () => {
+         if (!authPanel?.classList.contains('is-app') || !isCompactShell()) return;
+         const collapsed = !authPanel.classList.contains('is-rail-collapsed');
+         authPanel.classList.toggle('is-rail-collapsed', collapsed);
+         if (collapsed) appNav?.setAttribute('inert', '');
+         else if (authPanel.classList.contains('is-nav-ready')) appNav?.removeAttribute('inert');
+         notifyLayoutChange();
+       });
 
        function showApp(token: string, conversationId: string, animate = true): void {
          setFaceEmotion('happy');
@@ -2712,7 +3171,7 @@ import '../styles/detail-panel.css';
         const sessionError = await backendErrorFromResponse(failedResponse, 'La sesión ya no está disponible.');
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
-        authPanel?.classList.remove('is-app', 'no-wipe');
+        resetAppShell();
         authPanel?.setAttribute('aria-labelledby', 'authTitle');
         setFormInert(false);
         appContent?.setAttribute('aria-hidden', 'true');
@@ -2767,7 +3226,7 @@ import '../styles/detail-panel.css';
       void restoreSession().catch(() => {
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
-        authPanel?.classList.remove('is-app', 'no-wipe');
+        resetAppShell();
         authPanel?.setAttribute('aria-labelledby', 'authTitle');
         setFormInert(false);
         appContent?.setAttribute('aria-hidden', 'true');
