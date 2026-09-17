@@ -57,6 +57,10 @@ function loaderMarkup(): string {
   return `<div class="loader" aria-label="Consultando RAG"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div>`;
 }
 
+export function toolCallBusyMarkup(): string {
+  return loaderMarkup();
+}
+
 export function createRetrievalCardMarkup(id: string, payload: unknown): string {
   if (!shouldRenderRetrieval(payload)) return '';
   const { message } = normalizeRetrievalPayload(payload);

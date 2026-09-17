@@ -1,7 +1,7 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
-import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
+import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 type CallMonitorAudio = {
@@ -262,7 +262,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     const status = String(payload.status ?? 'Ejecutando');
     appendRow(
       'tool-row',
-      `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">${escapeHtml(status)}</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`,
+      `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">${escapeHtml(status)}</div></div>${toolCallBusyMarkup()}</button>`,
     );
   }
 
@@ -270,6 +270,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     const tool = document.getElementById(id);
     if (!tool) return;
     tool.classList.add('done');
+    tool.setAttribute('aria-busy', 'false');
     const previous = readDetail(tool);
     const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
     writeDetail(tool, detail);

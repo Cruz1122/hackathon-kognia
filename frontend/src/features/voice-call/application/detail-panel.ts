@@ -178,9 +178,22 @@ function renderSession(): void {
   panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado de la llamada</h2><div class="detail-sheet"><section class="detail-group">${fieldsMarkup(sessionFields())}</section></div>`;
 }
 
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function playContentEnter(node: HTMLElement): void {
+  node.classList.remove('is-entering');
+  if (prefersReducedMotion()) return;
+  void node.offsetWidth;
+  node.classList.add('is-entering');
+  node.addEventListener('animationend', () => node.classList.remove('is-entering'), { once: true });
+}
+
 function showSessionView(): void {
   const root = document.getElementById('detailPanel');
   if (!root) return;
+  const leavingTool = root.classList.contains('is-tool');
   root.classList.remove('open', 'is-tool');
   document.body.classList.remove('detail-open');
   delete root.dataset.cardId;
@@ -189,7 +202,10 @@ function showSessionView(): void {
   const sessionNode = root.querySelector('#sessionPanel');
   if (close instanceof HTMLElement) close.hidden = true;
   if (body instanceof HTMLElement) body.hidden = true;
-  if (sessionNode instanceof HTMLElement) sessionNode.hidden = false;
+  if (sessionNode instanceof HTMLElement) {
+    sessionNode.hidden = false;
+    if (leavingTool) playContentEnter(sessionNode);
+  }
   renderSession();
 }
 
@@ -251,15 +267,17 @@ export function openDetail(detail: DetailPayload, cardId?: string): void {
   const body = root?.querySelector('.detail-panel__body');
   const sessionNode = root?.querySelector('#sessionPanel');
   const close = root?.querySelector('.detail-panel__close');
-  if (!root || !body) return;
+  if (!root || !(body instanceof HTMLElement)) return;
+  const sameCard = Boolean(cardId && root.dataset.cardId === cardId && root.classList.contains('open'));
   body.innerHTML = renderBody(detail);
-  if (body instanceof HTMLElement) body.hidden = false;
+  body.hidden = false;
   if (sessionNode instanceof HTMLElement) sessionNode.hidden = true;
   if (close instanceof HTMLElement) close.hidden = false;
   const heading = body.querySelector('.detail-title');
   if (heading) heading.id = 'detailPanelTitle';
   if (cardId) root.dataset.cardId = cardId;
   root.classList.add('open', 'is-tool');
+  if (!sameCard) playContentEnter(body);
   lucideRefresh();
 }
 

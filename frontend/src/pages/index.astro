@@ -103,24 +103,57 @@ import '../styles/detail-panel.css';
       width: 24%;
       height: 200%;
       transform-origin: 100% 50%;
+      --material-enter-from: scaleX(.16);
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
-      animation: liquid-flow 12s linear infinite;
-      will-change: width, transform;
-      transition: width .85s cubic-bezier(.32, .04, .18, 1) 1.55s, right .85s cubic-bezier(.32, .04, .18, 1) 1.55s;
+      will-change: width, height, opacity, transform;
+      transition:
+        width .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        height .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        right .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        left .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        bottom .85s cubic-bezier(.32, .04, .18, 1) 1.55s;
     }
 
     .login-material.is-gone {
       display: none !important;
     }
 
+    .login-material.is-resizing {
+      opacity: 0;
+      visibility: hidden;
+      transform: var(--material-enter-from);
+    }
+
+    .login-material.is-entering {
+      animation: material-enter .7s cubic-bezier(.32, .04, .18, 1) both;
+    }
+
     .login-left-svg { display: block; width: 100%; height: 100%; }
+    .login-left-svg--y { animation: liquid-flow 12s linear infinite; }
+    .login-left-svg--x { display: none; animation: liquid-flow-x 12s linear infinite; }
     .amber-shape { fill: var(--ui-amber); }
     .graphite-shape { fill: var(--ui-graphite); }
 
     @keyframes liquid-flow {
       from { transform: translateY(0); }
       to { transform: translateY(50%); }
+    }
+
+    @keyframes liquid-flow-x {
+      from { transform: translateX(0); }
+      to { transform: translateX(-50%); }
+    }
+
+    @keyframes material-enter {
+      from {
+        opacity: 0;
+        transform: var(--material-enter-from);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
     }
 
     .login-brand {
@@ -394,7 +427,7 @@ import '../styles/detail-panel.css';
     .auth-password-toggle:hover { background: var(--ui-cream); }
     .auth-password-toggle:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
     .auth-password-toggle svg { width: 20px; height: 20px; stroke-width: 2.5; }
-    .auth-submit-wrap { position: relative; height: 58px; margin-top: 3px; }
+    .auth-submit-wrap { position: relative; height: 58px; margin-top: 3px; overflow: visible; }
     .auth-submit-wrap::before {
       content: "";
       position: absolute;
@@ -406,12 +439,12 @@ import '../styles/detail-panel.css';
     }
     .auth-submit {
       position: relative;
+      z-index: 1;
       width: 100%;
       height: 58px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
       border: 0;
       border-radius: var(--radius-ui);
       background: var(--ui-graphite);
@@ -420,43 +453,41 @@ import '../styles/detail-panel.css';
       font-weight: 700;
       cursor: pointer;
     }
-    .auth-submit:disabled { cursor: wait; opacity: .62; }
+    .auth-submit:disabled { cursor: wait; }
     .auth-submit:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 3px; }
-    .auth-submit-loader {
-      position: relative;
-      display: none;
-      width: 25px;
-      height: 25px;
-      filter: url(#ui-goo);
-      -webkit-filter: url(#ui-goo);
-      animation: auth-loader-drift 1.5s linear infinite;
+    .auth-submit-label {
+      transition: opacity .28s cubic-bezier(.32, .04, .18, 1);
     }
-    .auth-submit-loader-dot,
-    .auth-submit-loader-runner {
+    .auth-submit.is-loading .auth-submit-label {
+      opacity: 0;
+    }
+    .auth-submit-loader {
       position: absolute;
       left: 50%;
       top: 50%;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .28s cubic-bezier(.32, .04, .18, 1);
+    }
+    .auth-submit-wrap.is-loading .auth-submit-loader { opacity: 1; }
+    .auth-submit-loader-dot {
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       background: var(--ui-amber);
-      transform-origin: 0 0;
+      animation: auth-dot 1s ease-in-out infinite;
     }
-    .auth-submit-loader-dot {
-      width: 3px;
-      height: 3px;
-      margin: -1.5px;
-      transform: rotate(var(--angle)) translateY(-8px);
-      opacity: .78;
+    .auth-submit-loader-dot:nth-child(2) { animation-delay: .15s; }
+    .auth-submit-loader-dot:nth-child(3) { animation-delay: .3s; }
+    @keyframes auth-dot {
+      0%, 80%, 100% { transform: scale(.7); opacity: .4; }
+      40% { transform: scale(1); opacity: 1; }
     }
-    .auth-submit-loader-runner {
-      width: 5px;
-      height: 5px;
-      margin: -2.5px;
-      animation: auth-loader-orbit 780ms cubic-bezier(.55, .02, .45, .98) infinite;
-    }
-    .auth-submit.is-loading .auth-submit-loader { display: block; }
-    .auth-submit.is-loading .auth-submit-label { opacity: .84; }
-    @keyframes auth-loader-drift { to { transform: rotate(360deg); } }
-    @keyframes auth-loader-orbit { to { transform: rotate(360deg) translateY(-8px); } }
 
     .sr-only {
       position: absolute;
@@ -893,11 +924,11 @@ import '../styles/detail-panel.css';
       border-radius: var(--radius-ui);
       background: var(--ui-graphite);
       color: var(--ui-paper);
-      padding: 15px 18px;
+      padding: 15px 76px 15px 18px;
       display: flex;
       align-items: center;
       gap: 14px;
-      overflow: hidden;
+      overflow: visible;
       transform-origin: 0 50%;
     }
 
@@ -924,6 +955,8 @@ import '../styles/detail-panel.css';
       place-items: center;
       background: var(--ui-paper);
       color: var(--ui-graphite);
+      position: relative;
+      z-index: 2;
     }
 
     .tool-row.enter .tool-icon { animation: tool-icon-pop .82s .08s cubic-bezier(.18,.9,.25,1) both; }
@@ -935,7 +968,8 @@ import '../styles/detail-panel.css';
     }
 
     .tool-icon i, .tool-icon svg { width: 20px; height: 20px; stroke-width: 2.5; }
-    .tool-copy { min-width: 0; flex: 1; position: relative; z-index: 2; }
+    .tool-copy, .loader, .done-mark { position: relative; z-index: 2; }
+    .tool-copy { min-width: 0; flex: 1; }
 
     .tool-label {
       display: flex;
@@ -951,64 +985,88 @@ import '../styles/detail-panel.css';
     .tool-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
     .tool-status { margin-top: 4px; font-size: 12px; font-weight: 600; opacity: .58; }
 
-    .tool-status.loading::after {
-      content: "";
-      display: inline-block;
-      width: 14px;
-      text-align: left;
-      animation: ellipsis 1.25s steps(4,end) infinite;
+    .tool-status.loading {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 7px;
+      padding: 5px 12px;
+      min-height: 26px;
+      border-radius: var(--radius-full);
+      background: var(--ui-amber);
+      color: var(--ui-graphite);
+      opacity: 1;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .02em;
     }
 
-    @keyframes ellipsis {
-      0% { content: ""; }
-      25% { content: "."; }
-      50% { content: ".."; }
-      75%,100% { content: "..."; }
+    .tool-call:not(.done) .tool-icon {
+      box-shadow: 0 0 0 4px rgba(247, 201, 116, .22);
     }
 
     .loader {
-      position: relative;
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      margin-top: -29px;
       flex: 0 0 auto;
-      width: 54px;
-      height: 54px;
+      width: 58px;
+      height: 58px;
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
       animation: ring-drift 15s linear infinite;
     }
 
-    .loader-dot, .loader-runner {
+    .loader-dot, .loader-runner, .loader-core {
       position: absolute;
       left: 50%;
       top: 50%;
       border-radius: 50%;
       background: var(--ui-amber);
-      transform-origin: 0 0;
     }
 
     .loader-dot {
-      width: 7px;
-      height: 7px;
-      margin: -3.5px;
-      transform: rotate(var(--angle)) translateY(-19px);
-      opacity: .76;
-    }
-
-    .loader-runner {
       width: 10px;
       height: 10px;
       margin: -5px;
+      transform-origin: center;
+      opacity: .84;
+    }
+
+    .loader-core {
+      width: 16px;
+      height: 16px;
+      margin: -8px;
+      animation: loader-core-breathe 2.6s cubic-bezier(.55, .02, .45, .98) infinite;
+    }
+
+    .loader-runner {
+      width: 14px;
+      height: 14px;
+      margin: -7px;
+      transform-origin: center;
       animation: runner-orbit 7.8s cubic-bezier(.55,.02,.45,.98) infinite;
     }
 
     @keyframes ring-drift { to { transform: rotate(360deg); } }
-    @keyframes runner-orbit { to { transform: rotate(360deg) translateY(-19px); } }
+    @keyframes runner-orbit {
+      from { transform: rotate(0deg) translateY(-20px); }
+      to { transform: rotate(360deg) translateY(-20px); }
+    }
+    @keyframes loader-core-breathe {
+      0%, 100% { transform: scale(.78); }
+      50% { transform: scale(1.12); }
+    }
 
     .tool-call.done .loader { animation: loader-out .34s ease forwards; }
     @keyframes loader-out { to { opacity: 0; transform: scale(.35); } }
 
     .done-mark {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      margin-top: -19px;
       display: grid;
-      flex: 0 0 auto;
       width: 38px;
       height: 38px;
       border-radius: 50%;
@@ -1017,6 +1075,7 @@ import '../styles/detail-panel.css';
       place-items: center;
       opacity: 0;
       transform: scale(.3);
+      pointer-events: none;
     }
 
     .done-mark i, .done-mark svg { width: 19px; height: 19px; stroke-width: 2.5; }
@@ -1114,6 +1173,21 @@ import '../styles/detail-panel.css';
     .demo-switcher button.active { background: var(--ui-graphite); color: var(--ui-control); }
     .demo-switcher button:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
 
+    @media (max-width: 1320px) {
+      .auth-panel:not(.is-app) { --left-rail: 44%; }
+    }
+
+    @media (max-width: 1100px) {
+      .auth-panel:not(.is-app) { --left-rail: 36%; }
+      .auth-panel:not(.is-app) .login-face-wrap { width: min(62%, 210px); }
+      .auth-panel:not(.is-app) .login-name { font-size: clamp(1.7rem, 3.2vw, 2.8rem); }
+    }
+
+    @media (max-width: 900px) {
+      .auth-panel:not(.is-app) { --left-rail: 30%; }
+      .login-material { width: 32%; right: -8%; }
+    }
+
     @media (max-width: 760px) {
       .page { width: 100%; padding: 0; }
       .topline { justify-content: flex-start; }
@@ -1133,10 +1207,26 @@ import '../styles/detail-panel.css';
       }
       .login-left {
         min-height: 38dvh;
-        overflow: hidden;
+        overflow: visible;
         transition: min-height 1.55s cubic-bezier(.32, .04, .18, 1);
       }
-      .login-material { right: 0; width: 20%; }
+      .login-left-svg--y { display: none; }
+      .login-left-svg--x { display: block; }
+      .login-material {
+        inset: auto auto -16% 0;
+        right: auto;
+        width: 200%;
+        height: 38%;
+        transform-origin: 50% 100%;
+        --material-enter-from: scaleY(.16);
+      }
+      .auth-panel.is-app .login-material {
+        width: 200%;
+        height: 0;
+        right: auto;
+        left: 0;
+        bottom: 0;
+      }
       .login-brand { width: 100%; justify-self: center; }
       .login-face-wrap { width: 150px; }
       .login-name { width: auto; font-size: 2.5rem; }
@@ -1191,7 +1281,7 @@ import '../styles/detail-panel.css';
     <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
       <section class="login-left" aria-label="Demo">
         <div class="login-material" aria-hidden="true">
-          <svg class="login-left-svg" viewBox="0 0 600 2400" preserveAspectRatio="none">
+          <svg class="login-left-svg login-left-svg--y" viewBox="0 0 600 2400" preserveAspectRatio="none">
             <g>
               <path class="amber-shape" d="M0 0 H600 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 H0 Z" />
               <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
@@ -1201,7 +1291,46 @@ import '../styles/detail-panel.css';
               <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
             </g>
           </svg>
+          <svg class="login-left-svg login-left-svg--x" viewBox="0 0 2400 600" preserveAspectRatio="none">
+            <g>
+              <path class="amber-shape" d="M0 0 H1200 V600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 Z" />
+              <path class="graphite-shape" d="M0 0 H1200 V540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 Z" />
+            </g>
+            <g transform="translate(1200 0)">
+              <path class="amber-shape" d="M0 0 H1200 V600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 Z" />
+              <path class="graphite-shape" d="M0 0 H1200 V540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 Z" />
+            </g>
+          </svg>
         </div>
+        <script is:inline>
+          (() => {
+            const material = document.querySelector('.login-material');
+            if (!(material instanceof HTMLElement)) return;
+            let hideTimer = 0;
+            const hideWhileResizing = () => {
+              if (material.classList.contains('is-gone')) return;
+              material.classList.add('is-resizing');
+              material.classList.remove('is-entering');
+              window.clearTimeout(hideTimer);
+              hideTimer = window.setTimeout(() => {
+                if (material.classList.contains('is-gone')) {
+                  material.classList.remove('is-resizing', 'is-entering');
+                  return;
+                }
+                material.classList.remove('is-resizing');
+                void material.offsetWidth;
+                material.classList.add('is-entering');
+              }, 1600);
+            };
+            material.addEventListener('animationend', (event) => {
+              if (event.animationName !== 'material-enter') return;
+              material.classList.remove('is-entering');
+            });
+            window.addEventListener('resize', hideWhileResizing);
+            window.addEventListener('orientationchange', hideWhileResizing);
+            visualViewport?.addEventListener('resize', hideWhileResizing);
+          })();
+        </script>
         <div class="login-brand">
           <div class="login-face-wrap" id="demoFaceWrap" role="button" tabindex="0">
             <span class="sr-only">Carita de Demo</span>
@@ -1257,19 +1386,13 @@ import '../styles/detail-panel.css';
               </button>
             </label>
             <div class="auth-submit-wrap">
+              <span class="auth-submit-loader" aria-hidden="true">
+                <span class="auth-submit-loader-dot"></span>
+                <span class="auth-submit-loader-dot"></span>
+                <span class="auth-submit-loader-dot"></span>
+              </span>
               <button class="auth-submit" type="submit" id="authSubmit">
                 <span class="auth-submit-label">Iniciar sesión</span>
-                <span class="auth-submit-loader" aria-hidden="true">
-                  <span class="auth-submit-loader-dot" style="--angle:0deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:45deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:90deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:135deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:180deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:225deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:270deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:315deg"></span>
-                  <span class="auth-submit-loader-runner"></span>
-                </span>
               </button>
             </div>
           </form>
@@ -2429,6 +2552,7 @@ import '../styles/detail-panel.css';
          authSubmit.disabled = loading;
          authSubmit.classList.toggle('is-loading', loading);
           authSubmit.setAttribute('aria-busy', String(loading));
+          authSubmit.closest('.auth-submit-wrap')?.classList.toggle('is-loading', loading);
         }
 
         function setPasswordVisibility(visible: boolean): void {
@@ -2477,7 +2601,7 @@ import '../styles/detail-panel.css';
          const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
          let fallback = 0;
          const onEnd = (event: TransitionEvent) => {
-           if (event.propertyName !== 'width') return;
+           if (event.propertyName !== 'width' && event.propertyName !== 'height') return;
            window.clearTimeout(fallback);
            material.removeEventListener('transitionend', onEnd);
            material.classList.add('is-gone');
