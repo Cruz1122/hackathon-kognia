@@ -171,11 +171,13 @@ import '../styles/detail-panel.css';
 
     .login-face-wrap {
       position: relative;
+      isolation: isolate;
       width: min(55%, 280px);
       aspect-ratio: 1;
       border-radius: var(--radius-full);
       cursor: pointer;
       user-select: none;
+      transform: translateZ(0);
       transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
     }
 
@@ -184,8 +186,9 @@ import '../styles/detail-panel.css';
       width: 100%;
       height: auto;
       overflow: visible;
-      filter: drop-shadow(0 16px 32px rgba(65,65,65,.18));
       pointer-events: none;
+      transform: translateZ(0);
+      backface-visibility: hidden;
     }
 
     .login-face-hit {
@@ -213,8 +216,6 @@ import '../styles/detail-panel.css';
     .login-face-wrap:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; }
 
     .face-eye-assembly {
-      transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px));
-      transition: transform .22s cubic-bezier(.2,.8,.2,1);
       will-change: transform;
     }
 
@@ -1437,6 +1438,10 @@ import '../styles/detail-panel.css';
         let currentEmotion = 'happy';
         let pointerX = 0;
         let pointerY = 0;
+        let gazeX = 0;
+        let gazeY = 0;
+        let gazeFrame = 0;
+        let faceRect = null;
         let idleTimer = 0;
         let emotionTimer = 0;
         let pokeTimer = 0;
@@ -1509,15 +1514,48 @@ import '../styles/detail-panel.css';
         lids.lt.style.transformOrigin = lids.lb.style.transformOrigin = '161px 209px';
         lids.rt.style.transformOrigin = lids.rb.style.transformOrigin = '351px 209px';
 
-        function setGaze(x = pointerX, y = pointerY) {
+        function measureFace() {
+          faceRect = face.getBoundingClientRect();
+        }
+
+        function applyGaze(x, y) {
+          const transform = `translate(${x}px, ${y}px)`;
+          if (leftEyeAssembly) leftEyeAssembly.style.transform = transform;
+          if (rightEyeAssembly) rightEyeAssembly.style.transform = transform;
+        }
+
+        function gazeTarget() {
           const emotion = emotions[currentEmotion] || emotions.happy;
           const followsPointer = currentEmotion !== 'privacy';
-          const gazeX = emotion.gazeX + (followsPointer ? x : 0);
-          const gazeY = emotion.gazeY + (followsPointer ? y : 0);
-          [leftEyeAssembly, rightEyeAssembly].forEach((eye) => {
-            eye?.style.setProperty('--gaze-x', `${gazeX}px`);
-            eye?.style.setProperty('--gaze-y', `${gazeY}px`);
-          });
+          return {
+            x: emotion.gazeX + (followsPointer ? pointerX : 0),
+            y: emotion.gazeY + (followsPointer ? pointerY : 0),
+          };
+        }
+
+        function tickGaze() {
+          const target = gazeTarget();
+          gazeX += (target.x - gazeX) * 0.28;
+          gazeY += (target.y - gazeY) * 0.28;
+          if (Math.hypot(target.x - gazeX, target.y - gazeY) < 0.05) {
+            gazeX = target.x;
+            gazeY = target.y;
+            gazeFrame = 0;
+          } else {
+            gazeFrame = requestAnimationFrame(tickGaze);
+          }
+          applyGaze(gazeX, gazeY);
+        }
+
+        function setGaze() {
+          if (reducedMotion) {
+            const target = gazeTarget();
+            gazeX = target.x;
+            gazeY = target.y;
+            applyGaze(gazeX, gazeY);
+            return;
+          }
+          if (!gazeFrame) gazeFrame = requestAnimationFrame(tickGaze);
         }
 
         function setLids(expression) {
@@ -1649,9 +1687,9 @@ import '../styles/detail-panel.css';
 
         function trackPointer(event) {
           if (reducedMotion || authPanel?.hidden) return;
-          const rect = face.getBoundingClientRect();
-          const nx = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width * .75)));
-          const ny = Math.max(-1, Math.min(1, (event.clientY - (rect.top + rect.height / 2)) / (rect.height * .75)));
+          if (!faceRect) measureFace();
+          const nx = Math.max(-1, Math.min(1, (event.clientX - (faceRect.left + faceRect.width / 2)) / (faceRect.width * .75)));
+          const ny = Math.max(-1, Math.min(1, (event.clientY - (faceRect.top + faceRect.height / 2)) / (faceRect.height * .75)));
           pointerX = nx * 13;
           pointerY = ny * 10;
           setGaze();
@@ -1687,6 +1725,12 @@ import '../styles/detail-panel.css';
         }
 
         window.addEventListener('pointermove', trackPointer, { passive: true });
+        window.addEventListener('resize', () => { faceRect = null; }, { passive: true });
+        window.addEventListener('scroll', () => { faceRect = null; }, { passive: true });
+        visualViewport?.addEventListener('resize', () => { faceRect = null; }, { passive: true });
+        if (typeof ResizeObserver !== 'undefined') {
+          new ResizeObserver(() => { faceRect = null; }).observe(faceWrap);
+        }
         window.addEventListener('pointerout', (event) => {
           if (event.relatedTarget) return;
           pointerX = 0;
