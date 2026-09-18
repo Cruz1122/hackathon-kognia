@@ -95,11 +95,7 @@ jobs:
             exit 0
           fi
 
-          database_host="$(az containerapp show \
-            --name "$DATABASE_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query properties.configuration.ingress.fqdn \
-            --output tsv)"
+          database_host="$DATABASE_APP_NAME"
           test -n "$database_host"
 
           database_url="$(DATABASE_HOST="$database_host" python - <<'PY'
