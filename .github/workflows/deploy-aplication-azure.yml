@@ -16,6 +16,7 @@ jobs:
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
+      pipeline: ${{ steps.filter.outputs.pipeline }}
 
     steps:
       - uses: actions/checkout@v7
@@ -31,12 +32,15 @@ jobs:
             backend:
               - 'backend/**'
               - 'backend/Dockerfile'
+            pipeline:
+              - '.github/workflows/**'
 
   build-frontend:
     needs: [changes, deploy-backend]
     if: >-
       always() &&
-      needs.changes.outputs.frontend == 'true' &&
+        (needs.changes.outputs.frontend == 'true' ||
+         needs.changes.outputs.pipeline == 'true') &&
       needs.deploy-backend.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -62,7 +66,9 @@ jobs:
 
   build-backend:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: >-
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.pipeline == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -87,10 +93,12 @@ jobs:
     needs: [changes, build-backend]
     if: >-
       always() &&
-      (needs.changes.outputs.backend == 'true' ||
-       needs.changes.outputs.frontend == 'true') &&
-      (needs.changes.outputs.backend != 'true' ||
-       needs.build-backend.result == 'success')
+       (needs.changes.outputs.backend == 'true' ||
+        needs.changes.outputs.frontend == 'true' ||
+        needs.changes.outputs.pipeline == 'true') &&
+       ((needs.changes.outputs.backend != 'true' &&
+         needs.changes.outputs.pipeline != 'true') ||
+        needs.build-backend.result == 'success')
     runs-on: ubuntu-latest
     outputs:
       backend-url: ${{ steps.backend-url.outputs.url }}
