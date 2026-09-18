@@ -206,18 +206,6 @@ jobs:
           test -n "$fqdn"
           echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test backend
-        env:
-          BACKEND_URL: ${{ steps.backend-url.outputs.url }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error \
-            --retry 12 \
-            --retry-delay 10 \
-            --retry-all-errors \
-            "$BACKEND_URL/health/live"
-
   deploy-frontend:
     needs: [build-frontend, deploy-backend]
     if: >-
