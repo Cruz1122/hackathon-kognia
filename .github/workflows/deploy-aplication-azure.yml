@@ -141,11 +141,7 @@ jobs:
           test -n "$POSTGRES_USER"
           test -n "$JWT_SECRET_KEY"
 
-          database_host="$(az containerapp show \
-            --name "${{ vars.AZURE_DATABASE_APP_NAME }}" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query properties.configuration.ingress.fqdn \
-            --output tsv)"
+          database_host="${{ vars.AZURE_DATABASE_APP_NAME }}"
           test -n "$database_host"
 
           database_url="$(DATABASE_HOST="$database_host" python - <<'PY'
