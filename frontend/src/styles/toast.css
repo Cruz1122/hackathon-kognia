@@ -1,8 +1,8 @@
 :root {
-  --outer-size: 72px;
-  --inner-size: 56px;
-  --expanded-width: 424px;
-  --travel: 352px;
+  --outer-size: 56px;
+  --inner-size: 44px;
+  --expanded-width: 420px;
+  --travel: 364px;
   --cycle: 4650ms;
 }
 
@@ -22,19 +22,21 @@
     .toast-stage {
       --toast-color: var(--ui-amber);
       --icon-color: var(--ui-graphite);
-      --outer-bg: var(--ui-paper);
+      --outer-bg: var(--ui-cream);
+      --message-color: var(--ui-graphite);
 
       position: relative;
       width: var(--expanded-width);
       height: var(--outer-size);
+      filter: drop-shadow(0 12px 22px rgba(65, 65, 65, .16));
     }
 
     .toast-shell {
       position: absolute;
       inset: 0;
       box-sizing: border-box;
-      border: 2px solid var(--toast-color);
-      border-radius: var(--radius-full);
+      border: 0;
+      border-radius: var(--radius-ui);
       overflow: hidden;
       opacity: 0;
       will-change: opacity;
@@ -123,8 +125,8 @@
 
     .toast-icon {
       position: absolute;
-      width: 26px;
-      height: 26px;
+      width: 20px;
+      height: 20px;
       color: var(--icon-color);
       stroke-width: 2.5;
       stroke-linecap: round;
@@ -149,14 +151,15 @@
       position: absolute;
       z-index: 2;
       top: 50%;
-      left: 88px;
-      right: 54px;
+      left: 72px;
+      right: 42px;
       min-width: 0;
 
       color: var(--message-color);
-      font-size: 16px;
+      font-family: var(--font-ui);
+      font-size: 15px;
       line-height: 1.15;
-      font-weight: 650;
+      font-weight: 700;
       letter-spacing: -0.015em;
 
       white-space: nowrap;
@@ -185,37 +188,37 @@
     }
 
     .toast--success {
-      --toast-color: #22c55e;
-      --icon-color: #ffffff;
-      --outer-bg: var(--ui-paper);
+      --toast-color: var(--ui-amber);
+      --icon-color: var(--ui-graphite);
+      --outer-bg: var(--ui-cream);
       --message-color: var(--ui-graphite);
     }
 
     .toast--info {
-      --toast-color: #ffffff;
+      --toast-color: var(--ui-amber);
       --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-graphite);
       --message-color: var(--ui-paper);
     }
 
     .toast--warning {
-      --toast-color: #facc15;
-      --icon-color: #ffffff;
-      --outer-bg: var(--ui-paper);
+      --toast-color: var(--ui-graphite);
+      --icon-color: var(--ui-paper);
+      --outer-bg: var(--ui-amber);
       --message-color: var(--ui-graphite);
     }
 
     .toast--error {
-      --toast-color: #ef4444;
-      --icon-color: #ffffff;
-      --outer-bg: var(--ui-paper);
-      --message-color: var(--ui-graphite);
+      --toast-color: var(--ui-cream);
+      --icon-color: var(--ui-graphite);
+      --outer-bg: var(--ui-graphite);
+      --message-color: var(--ui-paper);
     }
 
     .toast--neutral {
       --toast-color: var(--ui-graphite);
       --icon-color: var(--ui-paper);
-      --outer-bg: var(--ui-paper);
+      --outer-bg: var(--ui-cream);
       --message-color: var(--ui-graphite);
     }
 

@@ -1,6 +1,7 @@
 ---
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 import '../styles/toast.css';
+import '../styles/detail-panel.css';
 ---
 <html lang="es">
   <head>
@@ -19,8 +20,25 @@ import '../styles/toast.css';
       --ui-cream: #faeccf;
       --ui-paper: #f8f8f8;
       --ui-control: var(--ui-cream);
+      --rail-share: min(17.5%, 21rem);
+      --rail: var(--rail-share);
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
+      --radius-min: 14px;
+      --radius-max: 32px;
+      --radius-ui: min(var(--radius-max), 50%);
+    }
+
+    @property --left-rail {
+      syntax: '<length-percentage>';
+      inherits: false;
+      initial-value: 56%;
+    }
+
+    @property --right-rail {
+      syntax: '<length-percentage>';
+      inherits: false;
+      initial-value: 0%;
     }
 
     * { box-sizing: border-box; }
@@ -38,12 +56,6 @@ import '../styles/toast.css';
     button { font: inherit; color: inherit; }
 
     .page {
-      width: min(1080px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 32px 0 84px;
-    }
-
-    .page:has(#authPanel:not([hidden])) {
       width: 100%;
       margin: 0;
       padding: 0;
@@ -54,23 +66,67 @@ import '../styles/toast.css';
     .auth-panel {
       position: relative;
       display: grid;
-      grid-template-columns: 56% 44%;
+      --left-rail: 56%;
+      --right-rail: 0%;
+      grid-template-columns: minmax(0, var(--left-rail)) minmax(0, 1fr) minmax(0, var(--right-rail));
       width: 100%;
       min-height: 100dvh;
       margin: 0;
       padding: 0;
       background: var(--ui-paper);
       overflow: hidden;
+      transition:
+        --left-rail 1.55s cubic-bezier(.32, .04, .18, 1),
+        --right-rail 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app {
+      --left-rail: var(--rail-share);
+      --right-rail: var(--rail-share);
+    }
+
+    .auth-panel.is-app.is-empty-view {
+      --right-rail: 0%;
     }
 
     .login-left {
       position: relative;
       z-index: 1;
+      min-width: 0;
       min-height: 100dvh;
-      display: grid;
-      place-items: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       overflow: visible;
       background: var(--ui-graphite);
+      padding: 48px 28px;
+      transition: padding 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-left {
+      align-items: stretch;
+      justify-content: flex-start;
+      padding: 28px 22px 32px;
+      overflow: visible;
+    }
+
+    .login-sidebar {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: min(100%, 360px);
+      min-width: 0;
+      max-width: 100%;
+      transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-sidebar {
+      width: 100%;
+      flex: 1;
+      align-items: stretch;
     }
 
     /* Dos teselas idénticas: al desplazar una tesela completa, el último
@@ -81,13 +137,36 @@ import '../styles/toast.css';
       right: -6%;
       width: 24%;
       height: 200%;
+      transform-origin: 100% 50%;
+      --material-enter-from: scaleX(.16);
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
-      animation: liquid-flow 12s linear infinite;
-      will-change: transform;
+      will-change: width, height, opacity, transform;
+      transition:
+        width .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        height .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        right .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        left .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        bottom .85s cubic-bezier(.32, .04, .18, 1) 1.55s;
+    }
+
+    .login-material.is-gone {
+      display: none !important;
+    }
+
+    .login-material.is-resizing {
+      opacity: 0;
+      visibility: hidden;
+      transform: var(--material-enter-from);
+    }
+
+    .login-material.is-entering {
+      animation: material-enter .7s cubic-bezier(.32, .04, .18, 1) both;
     }
 
     .login-left-svg { display: block; width: 100%; height: 100%; }
+    .login-left-svg--y { animation: liquid-flow 12s linear infinite; }
+    .login-left-svg--x { display: none; animation: liquid-flow-x 12s linear infinite; }
     .amber-shape { fill: var(--ui-amber); }
     .graphite-shape { fill: var(--ui-graphite); }
 
@@ -96,32 +175,94 @@ import '../styles/toast.css';
       to { transform: translateY(50%); }
     }
 
+    @keyframes liquid-flow-x {
+      from { transform: translateX(0); }
+      to { transform: translateX(-50%); }
+    }
+
+    @keyframes material-enter {
+      from {
+        opacity: 0;
+        transform: var(--material-enter-from);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
     .login-brand {
       position: relative;
       z-index: 2;
       display: flex;
       width: 100%;
-      justify-self: center;
       align-items: center;
       justify-content: center;
       flex-direction: column;
       color: var(--ui-amber);
       text-align: center;
+      gap: 0;
+      transition:
+        gap 1.55s cubic-bezier(.32, .04, .18, 1),
+        color 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-brand {
+      flex-direction: row;
+      justify-content: flex-start;
+      text-align: left;
+      gap: 12px;
+      color: var(--ui-paper);
+    }
+
+    .login-face-wrap {
+      position: relative;
+      isolation: isolate;
+      width: min(55%, 280px);
+      aspect-ratio: 1;
+      border-radius: var(--radius-full);
+      cursor: pointer;
+      user-select: none;
+      transform: translateZ(0);
+      transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
     }
 
     .login-face {
-      width: min(55%, 280px);
-      aspect-ratio: 1;
+      display: block;
+      width: 100%;
+      height: auto;
       overflow: visible;
-      filter: drop-shadow(0 16px 32px rgba(65,65,65,.18));
-      cursor: pointer;
+      pointer-events: none;
+      transform: translateZ(0);
+      backface-visibility: hidden;
     }
 
-    .login-face:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; border-radius: var(--radius-full); }
+    .login-face-hit {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      border: 0;
+      border-radius: var(--radius-full);
+      background: transparent;
+      cursor: pointer;
+      user-select: none;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .auth-panel.is-app .login-face-wrap {
+      width: 48px;
+      flex-shrink: 0;
+    }
+
+    .auth-panel.is-app .login-material {
+      width: 0;
+      right: 0;
+    }
+
+    .login-face-wrap:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; }
 
     .face-eye-assembly {
-      transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px));
-      transition: transform .22s cubic-bezier(.2,.8,.2,1);
       will-change: transform;
     }
 
@@ -142,22 +283,342 @@ import '../styles/toast.css';
       font-weight: 800;
       line-height: 1;
       letter-spacing: -.04em;
+      transition:
+        font-size 1.55s cubic-bezier(.32, .04, .18, 1),
+        margin-top 1.55s cubic-bezier(.32, .04, .18, 1),
+        width 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-name {
+      width: auto;
+      margin-top: 0;
+      font-size: 1.65rem;
+      font-weight: 800;
+    }
+
+    .app-nav {
+      width: 100%;
+      min-width: 0;
+      height: 0;
+      margin-top: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(16px);
+      transition:
+        opacity .7s cubic-bezier(.32, .04, .18, 1),
+        transform .85s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .75s;
+    }
+
+    .auth-panel.is-app.is-nav-ready .app-nav {
+      height: auto;
+      overflow-x: hidden;
+      overflow-y: auto;
+      margin-top: 40px;
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+      transition:
+        opacity .7s cubic-bezier(.32, .04, .18, 1),
+        transform .85s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s;
+    }
+
+    .app-nav__item,
+    .app-nav__label {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      min-width: 0;
+      margin: 0;
+      border: 0;
+      border-radius: var(--radius-full);
+      background: transparent;
+      color: var(--ui-paper);
+      font: inherit;
+      font-size: clamp(1.05rem, 1.35vw, 1.35rem);
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: left;
+      padding: 16px 18px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .app-nav__item span,
+    .app-nav__label span {
+      min-width: 0;
+    }
+
+    .app-nav__label {
+      opacity: .78;
+    }
+
+    .app-nav__label.is-active {
+      opacity: 1;
+      color: var(--ui-amber);
+    }
+
+    .app-nav__item svg,
+    .app-nav__label svg {
+      width: clamp(22px, 2vw, 28px);
+      height: clamp(22px, 2vw, 28px);
+      flex-shrink: 0;
+      stroke-width: 2.3;
+    }
+
+    .app-nav__item:hover,
+    .app-nav__label:hover {
+      background: rgba(248, 248, 248, .08);
+    }
+
+    .app-nav__item:focus-visible,
+    .app-nav__label:focus-visible {
+      outline: 3px solid var(--ui-amber);
+      outline-offset: 2px;
+    }
+
+    .app-nav__item.is-active {
+      color: var(--ui-amber);
+    }
+
+    .app-nav__group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .app-nav__children {
+      display: grid;
+      grid-template-rows: 0fr;
+      padding-left: clamp(16px, 12%, 44px);
+      min-width: 0;
+      transition: grid-template-rows .45s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .app-nav__group.is-open .app-nav__children {
+      grid-template-rows: 1fr;
+    }
+
+    .app-nav__children-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .app-nav__children .app-nav__item {
+      font-size: 1.2rem;
+      font-weight: 600;
+      padding: 12px 16px;
+    }
+
+    .app-nav__call {
+      font-style: italic;
+      font-weight: 500;
+      opacity: .88;
+    }
+
+    .app-nav__call.is-active {
+      opacity: 1;
     }
 
     .login-right {
       position: relative;
       z-index: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      min-width: 0;
       min-height: 100dvh;
-      padding: clamp(32px, 6vw, 90px);
+      padding: 0;
+      overflow: hidden;
       background: var(--ui-paper);
+    }
+
+    .login-form-content {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 1;
+      width: min(calc(100% - 50px), 430px);
+      transform: translate(-50%, -50%);
+      transition: opacity .55s cubic-bezier(.32, .04, .18, 1), transform .55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-form-content {
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -50%) translateX(-12px);
+    }
+
+    .app-content {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      overflow: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+      width: 100%;
+      padding: 0 clamp(16px, 3vw, 40px) 84px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(22px);
+      transform-origin: 50% 8%;
+      transition:
+        opacity .9s cubic-bezier(.32, .04, .18, 1),
+        transform 1.35s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s 1.4s;
+    }
+
+    .app-content.is-scrolling {
+      scrollbar-color: rgba(65, 65, 65, .28) transparent;
+    }
+
+    .app-content::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .app-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .app-content::-webkit-scrollbar-thumb {
+      background-color: transparent;
+      border-radius: var(--radius-ui);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      transition: background-color .45s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .app-content.is-scrolling::-webkit-scrollbar-thumb {
+      background-color: rgba(65, 65, 65, .28);
+    }
+
+    .auth-panel.is-app .app-content {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+      transition:
+        opacity .95s .18s cubic-bezier(.32, .04, .18, 1),
+        transform 1.4s .12s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s 0s;
+    }
+
+    .auth-panel.is-app.is-nav-ready .app-content {
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .auth-panel.is-app.is-empty-view .app-content {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      overflow: hidden;
+      transform: translateY(18px);
+      transition:
+        opacity .55s cubic-bezier(.32, .04, .18, 1),
+        transform .7s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .6s;
+    }
+
+    .login-right > .section-view {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(18px);
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.1s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .8s;
+    }
+
+    .login-right > .section-view.is-active {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.1s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s;
+    }
+
+    .app-content .player {
+      opacity: 0;
+      transform: translateY(14px) scaleX(.92);
+      transform-origin: 50% 100%;
+      transition:
+        opacity .7s cubic-bezier(.32, .04, .18, 1),
+        transform 1.2s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .app-content .player {
+      opacity: 1;
+      transform: none;
+      transition-delay: .28s, .2s;
+    }
+
+    .app-content .conversation {
+      opacity: 0;
+      transform: translateY(32px);
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.25s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .app-content .conversation {
+      opacity: 1;
+      transform: none;
+      transition-delay: .48s, .38s;
+    }
+
+    .login-right > .state-view {
+      position: absolute;
+      inset: 0;
+      min-height: 0;
+    }
+
+    .auth-panel.no-wipe,
+    .auth-panel.no-wipe .login-form-content,
+    .auth-panel.no-wipe .app-content,
+    .auth-panel.no-wipe .app-content .player,
+    .auth-panel.no-wipe .app-content .conversation,
+    .auth-panel.no-wipe .login-left,
+    .auth-panel.no-wipe .login-sidebar,
+    .auth-panel.no-wipe .login-brand,
+    .auth-panel.no-wipe .login-face-wrap,
+    .auth-panel.no-wipe .login-name,
+    .auth-panel.no-wipe .login-material,
+    .auth-panel.no-wipe .app-nav,
+    .auth-panel.no-wipe .app-nav__children,
+    .auth-panel.no-wipe .section-view,
+    .auth-panel.no-wipe .detail-panel,
+    .auth-panel.no-wipe .detail-kicker,
+    .auth-panel.no-wipe .detail-title,
+    .auth-panel.no-wipe .detail-field {
+      transition: none !important;
     }
 
     .auth-copy { display: grid; gap: 5px; margin-bottom: 42px; }
     .auth-copy h2 { margin: 0; font-size: clamp(2.5rem, 4vw, 4rem); line-height: .95; letter-spacing: -.04em; font-weight: 800; }
     .auth-copy p:last-child { margin: 0; color: rgba(65,65,65,.68); font-size: 14px; line-height: 1.35; }
+
+    .login-left,
+    .login-right { min-width: 0; }
 
     .auth-form { display: grid; gap: 0; width: min(100%, 430px); }
     .auth-field { display: grid; gap: 8px; min-width: 0; margin-bottom: 22px; }
@@ -166,7 +627,7 @@ import '../styles/toast.css';
       width: 100%;
       height: 54px;
       border: 4px solid var(--ui-graphite);
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       padding: 0 18px;
       background: transparent;
       color: var(--ui-graphite);
@@ -178,13 +639,12 @@ import '../styles/toast.css';
     .auth-password-field {
       grid-template-columns: minmax(0, 1fr);
     }
-    .auth-password-field input[type="password"] {
-      font-size: 22px;
-      letter-spacing: .12em;
-    }
     .auth-password-field input {
       grid-area: 2 / 1;
+      min-width: 0;
       padding-right: 62px;
+      font-size: 18px;
+      letter-spacing: 0;
     }
     .auth-password-toggle {
       position: relative;
@@ -198,7 +658,7 @@ import '../styles/toast.css';
       display: grid;
       place-items: center;
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: transparent;
       color: var(--ui-graphite);
       cursor: pointer;
@@ -206,86 +666,88 @@ import '../styles/toast.css';
     .auth-password-toggle:hover { background: var(--ui-cream); }
     .auth-password-toggle:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
     .auth-password-toggle svg { width: 20px; height: 20px; stroke-width: 2.5; }
-    .auth-submit-wrap { position: relative; height: 58px; margin-top: 3px; }
+    .auth-submit-wrap { position: relative; height: 58px; margin-top: 3px; overflow: visible; }
     .auth-submit-wrap::before {
       content: "";
       position: absolute;
       inset: 6px -8px -10px 8px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-amber);
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
     }
     .auth-submit {
       position: relative;
+      z-index: 1;
       width: 100%;
       height: 58px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-graphite);
       color: var(--ui-paper);
       font-size: 20px;
       font-weight: 700;
       cursor: pointer;
     }
-    .auth-submit:disabled { cursor: wait; opacity: .62; }
+    .auth-submit:disabled { cursor: wait; }
     .auth-submit:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 3px; }
-    .auth-submit-loader {
-      position: relative;
-      display: none;
-      width: 25px;
-      height: 25px;
-      filter: url(#ui-goo);
-      -webkit-filter: url(#ui-goo);
-      animation: auth-loader-drift 1.5s linear infinite;
+    .auth-submit-label {
+      transition: opacity .28s cubic-bezier(.32, .04, .18, 1);
     }
-    .auth-submit-loader-dot,
-    .auth-submit-loader-runner {
+    .auth-submit.is-loading .auth-submit-label {
+      opacity: 0;
+    }
+    .auth-submit-loader {
       position: absolute;
       left: 50%;
       top: 50%;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .28s cubic-bezier(.32, .04, .18, 1);
+    }
+    .auth-submit-wrap.is-loading .auth-submit-loader { opacity: 1; }
+    .auth-submit-loader-dot {
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       background: var(--ui-amber);
-      transform-origin: 0 0;
+      animation: auth-dot 1s ease-in-out infinite;
     }
-    .auth-submit-loader-dot {
-      width: 3px;
-      height: 3px;
-      margin: -1.5px;
-      transform: rotate(var(--angle)) translateY(-8px);
-      opacity: .78;
+    .auth-submit-loader-dot:nth-child(2) { animation-delay: .15s; }
+    .auth-submit-loader-dot:nth-child(3) { animation-delay: .3s; }
+    @keyframes auth-dot {
+      0%, 80%, 100% { transform: scale(.7); opacity: .4; }
+      40% { transform: scale(1); opacity: 1; }
     }
-    .auth-submit-loader-runner {
-      width: 5px;
-      height: 5px;
-      margin: -2.5px;
-      animation: auth-loader-orbit 780ms cubic-bezier(.55, .02, .45, .98) infinite;
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
-    .auth-submit.is-loading .auth-submit-loader { display: block; }
-    .auth-submit.is-loading .auth-submit-label { opacity: .84; }
-    @keyframes auth-loader-drift { to { transform: rotate(360deg); } }
-    @keyframes auth-loader-orbit { to { transform: rotate(360deg) translateY(-8px); } }
 
     .topline {
       display: flex;
       align-items: flex-end;
-      justify-content: space-between;
+      justify-content: flex-end;
       gap: 24px;
-      padding: 0 12px 18px;
-    }
-
-    .eyebrow {
-      margin: 0 0 5px;
-      font-size: 12px;
-      line-height: 1;
-      font-weight: 700;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      opacity: .58;
+      width: 100%;
+      margin-inline: auto;
+      padding: 0 10px 18px;
     }
 
     h1 {
@@ -305,14 +767,16 @@ import '../styles/toast.css';
     }
 
     .chip {
+      --chip-height: 40px;
       position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      min-height: 34px;
-      padding: 0 14px;
-      border-radius: var(--radius-full);
+      min-height: var(--chip-height);
+      min-width: 96px;
+      padding: 0 16px;
+      border-radius: calc(var(--chip-height) / 2);
       background: rgba(65,65,65,.07);
       font-size: 13px;
       font-weight: 600;
@@ -359,10 +823,9 @@ import '../styles/toast.css';
       position: sticky;
       top: 0;
       z-index: 20;
-      padding: 12px 0 14px;
-      background: rgba(248,248,248,.96);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      margin: 0 calc(-1 * clamp(16px, 3vw, 40px));
+      padding: 18px clamp(16px, 3vw, 40px) 16px;
+      background: var(--ui-paper);
     }
 
     .player {
@@ -370,7 +833,9 @@ import '../styles/toast.css';
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: end;
       gap: 24px;
-      padding: 6px 12px 2px;
+      width: 100%;
+      margin-inline: auto;
+      padding: 6px 10px 2px;
       color: var(--ui-graphite);
     }
 
@@ -409,6 +874,8 @@ import '../styles/toast.css';
       width: 100%;
       height: 100%;
       display: block;
+      max-width: 100%;
+      object-fit: fill;
     }
 
     .progress-shell {
@@ -417,7 +884,7 @@ import '../styles/toast.css';
       right: 0;
       bottom: 5px;
       height: 10px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: rgba(65,65,65,.10);
       overflow: visible;
       transition: height .16s ease, bottom .16s ease;
@@ -511,7 +978,7 @@ import '../styles/toast.css';
 
     .conversation {
       position: relative;
-      width: min(880px, 100%);
+      width: 100%;
       margin: 26px auto 0;
       padding: 8px 10px 32px;
       min-height: 620px;
@@ -592,7 +1059,7 @@ import '../styles/toast.css';
     .message {
       width: fit-content;
       max-width: 100%;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       padding: 15px 21px;
       font-size: 15.5px;
       line-height: 1.44;
@@ -677,18 +1144,28 @@ import '../styles/toast.css';
     .tool-row { display: flex; justify-content: flex-start; margin: 21px 0; }
 
     .tool-call {
+      appearance: none;
+      border: 0;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
       position: relative;
       width: min(520px, 84%);
       min-height: 82px;
-      border-radius: var(--radius-full);
-      background: var(--ui-control);
-      color: var(--ui-graphite);
-      padding: 15px 18px;
+      border-radius: var(--radius-ui);
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
+      padding: 15px 76px 15px 18px;
       display: flex;
       align-items: center;
       gap: 14px;
-      overflow: hidden;
+      overflow: visible;
       transform-origin: 0 50%;
+    }
+
+    .tool-call:focus-visible {
+      outline: 3px solid var(--ui-amber);
+      outline-offset: 3px;
     }
 
     .tool-row.enter .tool-call { animation: tool-arrive .72s cubic-bezier(.16,.9,.28,1) both; }
@@ -707,8 +1184,10 @@ import '../styles/toast.css';
       border-radius: 50%;
       display: grid;
       place-items: center;
-      background: var(--ui-graphite);
-      color: var(--ui-control);
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
+      position: relative;
+      z-index: 2;
     }
 
     .tool-row.enter .tool-icon { animation: tool-icon-pop .82s .08s cubic-bezier(.18,.9,.25,1) both; }
@@ -720,7 +1199,8 @@ import '../styles/toast.css';
     }
 
     .tool-icon i, .tool-icon svg { width: 20px; height: 20px; stroke-width: 2.5; }
-    .tool-copy { min-width: 0; flex: 1; position: relative; z-index: 2; }
+    .tool-copy, .loader, .done-mark { position: relative; z-index: 2; }
+    .tool-copy { min-width: 0; flex: 1; }
 
     .tool-label {
       display: flex;
@@ -736,72 +1216,97 @@ import '../styles/toast.css';
     .tool-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
     .tool-status { margin-top: 4px; font-size: 12px; font-weight: 600; opacity: .58; }
 
-    .tool-status.loading::after {
-      content: "";
-      display: inline-block;
-      width: 14px;
-      text-align: left;
-      animation: ellipsis 1.25s steps(4,end) infinite;
+    .tool-status.loading {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 7px;
+      padding: 5px 12px;
+      min-height: 26px;
+      border-radius: var(--radius-full);
+      background: var(--ui-amber);
+      color: var(--ui-graphite);
+      opacity: 1;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .02em;
     }
 
-    @keyframes ellipsis {
-      0% { content: ""; }
-      25% { content: "."; }
-      50% { content: ".."; }
-      75%,100% { content: "..."; }
+    .tool-call:not(.done) .tool-icon {
+      box-shadow: 0 0 0 4px rgba(247, 201, 116, .22);
     }
 
     .loader {
-      position: relative;
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      margin-top: -29px;
       flex: 0 0 auto;
-      width: 54px;
-      height: 54px;
+      width: 58px;
+      height: 58px;
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
       animation: ring-drift 15s linear infinite;
     }
 
-    .loader-dot, .loader-runner {
+    .loader-dot, .loader-runner, .loader-core {
       position: absolute;
       left: 50%;
       top: 50%;
       border-radius: 50%;
-      background: var(--ui-graphite);
-      transform-origin: 0 0;
+      background: var(--ui-amber);
     }
 
     .loader-dot {
-      width: 7px;
-      height: 7px;
-      margin: -3.5px;
-      transform: rotate(var(--angle)) translateY(-19px);
-      opacity: .76;
-    }
-
-    .loader-runner {
       width: 10px;
       height: 10px;
       margin: -5px;
+      transform-origin: center;
+      opacity: .84;
+    }
+
+    .loader-core {
+      width: 16px;
+      height: 16px;
+      margin: -8px;
+      animation: loader-core-breathe 2.6s cubic-bezier(.55, .02, .45, .98) infinite;
+    }
+
+    .loader-runner {
+      width: 14px;
+      height: 14px;
+      margin: -7px;
+      transform-origin: center;
       animation: runner-orbit 7.8s cubic-bezier(.55,.02,.45,.98) infinite;
     }
 
     @keyframes ring-drift { to { transform: rotate(360deg); } }
-    @keyframes runner-orbit { to { transform: rotate(360deg) translateY(-19px); } }
+    @keyframes runner-orbit {
+      from { transform: rotate(0deg) translateY(-20px); }
+      to { transform: rotate(360deg) translateY(-20px); }
+    }
+    @keyframes loader-core-breathe {
+      0%, 100% { transform: scale(.78); }
+      50% { transform: scale(1.12); }
+    }
 
     .tool-call.done .loader { animation: loader-out .34s ease forwards; }
     @keyframes loader-out { to { opacity: 0; transform: scale(.35); } }
 
     .done-mark {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      margin-top: -19px;
       display: grid;
-      flex: 0 0 auto;
       width: 38px;
       height: 38px;
       border-radius: 50%;
-      background: var(--ui-graphite);
-      color: var(--ui-control);
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
       place-items: center;
       opacity: 0;
       transform: scale(.3);
+      pointer-events: none;
     }
 
     .done-mark i, .done-mark svg { width: 19px; height: 19px; stroke-width: 2.5; }
@@ -873,13 +1378,6 @@ import '../styles/toast.css';
       color: rgba(65,65,65,.70);
     }
 
-    .knowledge-panel { margin: 28px auto 0; padding: 20px; border-radius: var(--radius-full); background: var(--ui-cream); display: grid; gap: 12px; }
-    .knowledge-panel h2, .knowledge-panel p { margin: 0; }
-    .knowledge-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .knowledge-form input[type=file] { flex: 1 1 220px; }
-    .knowledge-form button { border: 0; border-radius: var(--radius-full); background: var(--ui-graphite); color: var(--ui-paper); padding: 11px 18px; font-weight: 700; cursor: pointer; }
-    .knowledge-form button:disabled { opacity: .6; cursor: wait; }
-
     .demo-switcher {
       position: fixed;
       right: 18px;
@@ -888,14 +1386,14 @@ import '../styles/toast.css';
       display: flex;
       gap: 5px;
       padding: 5px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-control);
       box-shadow: 0 6px 24px rgba(65,65,65,.10);
     }
 
     .demo-switcher button {
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: transparent;
       padding: 8px 11px;
       cursor: pointer;
@@ -906,9 +1404,16 @@ import '../styles/toast.css';
     .demo-switcher button.active { background: var(--ui-graphite); color: var(--ui-control); }
     .demo-switcher button:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
 
-    @media (max-width: 760px) {
-      .page { width: min(100% - 20px, 1080px); padding-top: 20px; }
-      .topline { align-items: flex-start; flex-direction: column; gap: 14px; }
+    @media (max-width: 1320px) {
+      .auth-panel:not(.is-app) { --left-rail: 44%; }
+    }
+
+    @media (max-width: 1100px) {
+      .auth-panel:not(.is-app) { --left-rail: 36%; }
+      .auth-panel:not(.is-app) .login-face-wrap { width: min(62%, 210px); }
+      .auth-panel:not(.is-app) .login-name { font-size: clamp(1.7rem, 3.2vw, 2.8rem); }
+      .page { width: 100%; padding: 0; }
+      .topline { justify-content: flex-start; }
       .call-meta { justify-content: flex-start; }
       .player { grid-template-columns: 1fr; gap: 9px; }
       .monitor { height: 65px; }
@@ -918,17 +1423,72 @@ import '../styles/toast.css';
       .tool-call { width: 92%; }
       .conversation { margin-top: 18px; padding-inline: 2px; }
       .demo-switcher { right: 10px; bottom: 10px; }
-      .auth-panel {
+      .auth-panel,
+      .auth-panel.is-app {
         grid-template-columns: 1fr;
         min-height: 100dvh;
       }
-      .login-left { min-height: 38dvh; overflow: hidden; }
-      .login-material { right: 0; width: 20%; }
-      .login-brand { width: 100%; justify-self: center; }
-      .login-face { width: 150px; }
+      .login-left {
+        min-height: 38dvh;
+        overflow: visible;
+        transition: min-height 1.55s cubic-bezier(.32, .04, .18, 1), padding 1.55s cubic-bezier(.32, .04, .18, 1);
+      }
+      .login-left-svg--y { display: none; }
+      .login-left-svg--x { display: block; }
+      .login-material {
+        inset: auto auto -16% 0;
+        right: auto;
+        width: 200%;
+        height: 38%;
+        transform-origin: 50% 100%;
+        --material-enter-from: scaleY(.16);
+      }
+      .auth-panel.is-app .login-material {
+        width: 200%;
+        height: 0;
+        right: auto;
+        left: 0;
+        bottom: 0;
+      }
+      .login-brand { width: 100%; }
+      .login-face-wrap { width: 150px; }
       .login-name { width: auto; font-size: 2.5rem; }
-      .login-right { min-height: 62dvh; padding: 42px 25px 48px; }
+      .login-right { min-height: 62dvh; padding: 0; }
       .auth-copy { margin-bottom: 34px; }
+      .auth-panel.is-app .login-left {
+        min-height: 0;
+        width: auto;
+        min-width: 0;
+        max-width: none;
+        padding: 16px 16px 14px;
+        overflow: visible;
+      }
+      .auth-panel.is-app .login-name { cursor: pointer; }
+      .auth-panel.is-app .app-content { padding: 0 16px 72px; }
+      .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
+      .auth-panel.is-app .login-face-wrap { width: 40px; }
+      .auth-panel.is-app .login-name { font-size: 1.35rem; margin-top: 0; }
+      .auth-panel.is-app .login-right { min-height: 58dvh; }
+      .auth-panel.is-app.is-nav-ready .app-nav { margin-top: 14px; }
+      .auth-panel.is-app.is-rail-collapsed .login-left {
+        padding-bottom: 12px;
+      }
+      .auth-panel.is-app.is-rail-collapsed .app-nav {
+        height: 0;
+        margin-top: 0;
+        opacity: 0;
+        overflow: hidden;
+        pointer-events: none;
+        visibility: hidden;
+        transform: translateY(-8px);
+      }
+      .auth-panel.is-app.is-rail-collapsed .login-right {
+        min-height: 86dvh;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .auth-panel:not(.is-app) { --left-rail: 30%; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -967,7 +1527,7 @@ import '../styles/toast.css';
     <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
       <section class="login-left" aria-label="Demo">
         <div class="login-material" aria-hidden="true">
-          <svg class="login-left-svg" viewBox="0 0 600 2400" preserveAspectRatio="none">
+          <svg class="login-left-svg login-left-svg--y" viewBox="0 0 600 2400" preserveAspectRatio="none">
             <g>
               <path class="amber-shape" d="M0 0 H600 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 H0 Z" />
               <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
@@ -977,46 +1537,120 @@ import '../styles/toast.css';
               <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
             </g>
           </svg>
-        </div>
-        <div class="login-brand">
-          <svg class="login-face" id="demoFace" viewBox="0 0 512 512" role="button" tabindex="0" aria-labelledby="demoFaceTitle demoFaceDescription">
-            <title id="demoFaceTitle">Carita de Demo</title>
-            <desc id="demoFaceDescription">Carita amarilla que sigue el cursor y reacciona al formulario.</desc>
-            <circle cx="256" cy="256" r="216" fill="#f7c974" />
-
-            <g class="face-eye-assembly" id="leftEyeAssembly">
-              <path id="leftFaceEye" d="M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
-              <g fill="#f7c974" pointer-events="none">
-                <rect class="face-lid" id="leftTopLid" x="122" y="160" width="78" height="25" rx="18" />
-                <rect class="face-lid" id="leftBottomLid" x="122" y="233" width="78" height="25" rx="18" />
-              </g>
+          <svg class="login-left-svg login-left-svg--x" viewBox="0 0 2400 600" preserveAspectRatio="none">
+            <g>
+              <path class="amber-shape" d="M0 0 H1200 V600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 Z" />
+              <path class="graphite-shape" d="M0 0 H1200 V540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 Z" />
             </g>
-
-            <g class="face-eye-assembly" id="rightEyeAssembly">
-              <path id="rightFaceEye" d="M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
-              <g fill="#f7c974" pointer-events="none">
-                <rect class="face-lid" id="rightTopLid" x="312" y="160" width="78" height="25" rx="18" />
-                <rect class="face-lid" id="rightBottomLid" x="312" y="233" width="78" height="25" rx="18" />
-              </g>
+            <g transform="translate(1200 0)">
+              <path class="amber-shape" d="M0 0 H1200 V600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 Z" />
+              <path class="graphite-shape" d="M0 0 H1200 V540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 Z" />
             </g>
-
-            <g class="face-folds" id="faceFolds" fill="none" stroke="#414141" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path id="leftFaceFold" d="M 142 166 C 166 156 188 154 209 160" />
-              <path id="rightFaceFold" d="M 303 160 C 324 154 346 156 370 166" />
-            </g>
-
-            <path class="face-mouth" id="faceMouth" d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
+        </div>
+        <script is:inline>
+          (() => {
+            const material = document.querySelector('.login-material');
+            if (!(material instanceof HTMLElement)) return;
+            let hideTimer = 0;
+            const hideWhileResizing = () => {
+              if (material.classList.contains('is-gone')) return;
+              material.classList.add('is-resizing');
+              material.classList.remove('is-entering');
+              window.clearTimeout(hideTimer);
+              hideTimer = window.setTimeout(() => {
+                if (material.classList.contains('is-gone')) {
+                  material.classList.remove('is-resizing', 'is-entering');
+                  return;
+                }
+                material.classList.remove('is-resizing');
+                void material.offsetWidth;
+                material.classList.add('is-entering');
+              }, 1600);
+            };
+            material.addEventListener('animationend', (event) => {
+              if (event.animationName !== 'material-enter') return;
+              material.classList.remove('is-entering');
+            });
+            window.addEventListener('resize', hideWhileResizing);
+            window.addEventListener('orientationchange', hideWhileResizing);
+            visualViewport?.addEventListener('resize', hideWhileResizing);
+          })();
+        </script>
+        <div class="login-sidebar">
+        <div class="login-brand">
+          <div class="login-face-wrap" id="demoFaceWrap" role="button" tabindex="0">
+            <span class="sr-only">Carita de Demo</span>
+            <svg class="login-face" id="demoFace" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+              <circle cx="256" cy="256" r="216" fill="#f7c974" />
+
+              <g class="face-eye-assembly" id="leftEyeAssembly">
+                <path id="leftFaceEye" d="M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+                <g fill="#f7c974" pointer-events="none">
+                  <rect class="face-lid" id="leftTopLid" x="122" y="160" width="78" height="25" rx="18" />
+                  <rect class="face-lid" id="leftBottomLid" x="122" y="233" width="78" height="25" rx="18" />
+                </g>
+              </g>
+
+              <g class="face-eye-assembly" id="rightEyeAssembly">
+                <path id="rightFaceEye" d="M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+                <g fill="#f7c974" pointer-events="none">
+                  <rect class="face-lid" id="rightTopLid" x="312" y="160" width="78" height="25" rx="18" />
+                  <rect class="face-lid" id="rightBottomLid" x="312" y="233" width="78" height="25" rx="18" />
+                </g>
+              </g>
+
+              <g class="face-folds" id="faceFolds" fill="none" stroke="#414141" stroke-width="0" stroke-linecap="round" stroke-linejoin="round">
+                <path id="leftFaceFold" d="M 142 166 C 166 156 188 154 209 160" />
+                <path id="rightFaceFold" d="M 303 160 C 324 154 346 156 370 166" />
+              </g>
+
+              <path class="face-mouth" id="faceMouth" d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <div class="login-face-hit" id="demoFaceHit" aria-hidden="true"></div>
+          </div>
           <div class="login-name">Demo</div>
+        </div>
+        <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden="true" inert>
+          <button class="app-nav__item" type="button" data-view="dashboard">
+            <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+            <span>Dashboard</span>
+          </button>
+          <div class="app-nav__group" id="callsGroup">
+            <button class="app-nav__label" type="button" id="callsToggle" aria-expanded="false" aria-controls="callsChildren">
+              <i data-lucide="phone" aria-hidden="true"></i>
+              <span>Llamadas</span>
+            </button>
+            <div class="app-nav__children" id="callsChildren" inert aria-hidden="true">
+              <div class="app-nav__children-inner">
+                <button class="app-nav__item app-nav__call is-active" type="button" data-view="call-demo" aria-current="page">
+                  <span>Llamada Demo</span>
+                </button>
+                <button class="app-nav__item app-nav__call" type="button" data-view="call-1">
+                  <span>Llamada 1</span>
+                </button>
+                <button class="app-nav__item app-nav__call" type="button" data-view="call-2">
+                  <span>Llamada 2</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <button class="app-nav__item" type="button" data-view="sales">
+            <i data-lucide="shopping-bag" aria-hidden="true"></i>
+            <span>Ventas</span>
+          </button>
+          <button class="app-nav__item" type="button" data-view="settings">
+            <i data-lucide="settings" aria-hidden="true"></i>
+            <span>Ajustes</span>
+          </button>
+        </nav>
         </div>
       </section>
 
       <section class="login-right">
         <div class="login-form-content">
           <div class="auth-copy">
-            <p class="eyebrow">Acceso de demo</p>
             <h2 id="authTitle">Iniciar sesión</h2>
-            <p>Usa un ADMIN creado por el bootstrap de la API.</p>
           </div>
           <form class="auth-form" id="authForm">
             <label class="auth-field">
@@ -1031,29 +1665,23 @@ import '../styles/toast.css';
               </button>
             </label>
             <div class="auth-submit-wrap">
+              <span class="auth-submit-loader" aria-hidden="true">
+                <span class="auth-submit-loader-dot"></span>
+                <span class="auth-submit-loader-dot"></span>
+                <span class="auth-submit-loader-dot"></span>
+              </span>
               <button class="auth-submit" type="submit" id="authSubmit">
-                <span class="auth-submit-label">Iniciar sesión</span>
-                <span class="auth-submit-loader" aria-hidden="true">
-                  <span class="auth-submit-loader-dot" style="--angle:0deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:45deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:90deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:135deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:180deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:225deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:270deg"></span>
-                  <span class="auth-submit-loader-dot" style="--angle:315deg"></span>
-                  <span class="auth-submit-loader-runner"></span>
-                </span>
+                <span class="auth-submit-label">Acceder</span>
               </button>
             </div>
           </form>
         </div>
-      </section>
-    </section>
 
     <script is:inline>
       (() => {
         const face = document.getElementById('demoFace');
+        const faceHit = document.getElementById('demoFaceHit');
+        const faceWrap = document.getElementById('demoFaceWrap');
         const authPanel = document.getElementById('authPanel');
         const form = document.getElementById('authForm');
         const email = document.getElementById('authEmail');
@@ -1072,7 +1700,7 @@ import '../styles/toast.css';
           lb: document.getElementById('leftBottomLid'),
           rb: document.getElementById('rightBottomLid'),
         };
-        if (!face || !form || !email || !password || !leftEye || !rightEye || !mouth || !folds || !leftFold || !rightFold) return;
+        if (!face || !faceHit || !faceWrap || !form || !email || !password || !leftEye || !rightEye || !mouth || !folds || !leftFold || !rightFold) return;
 
         const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
         const emotions = {
@@ -1085,16 +1713,17 @@ import '../styles/toast.css';
           attentive: { mouth: 'M 176 340 C 214 354 298 354 336 340', stroke: 27, gazeX: 6, gazeY: 0, top: 4, bottom: 2, leftAngle: -6, rightAngle: 6 },
           privacy: { mouth: 'M 190 351 C 224 351 288 351 322 351', stroke: 25, gazeX: 0, gazeY: 0, top: 0, bottom: 0, leftAngle: 0, rightAngle: 0, hideLids: true, eyes: ['M 130 210 C 147 224 175 224 192 210', 'M 320 210 C 337 224 365 224 382 210'], eyeStroke: 16 },
         };
-        const emotionLabels = {
-          happy: 'feliz', neutral: 'neutral', sad: 'triste', worried: 'preocupada',
-          angry: 'enojada', surprised: 'sorprendida',
-          attentive: 'atenta', privacy: 'discreta',
-        };
-
         let currentEmotion = 'happy';
         let pointerX = 0;
         let pointerY = 0;
+        let gazeX = 0;
+        let gazeY = 0;
+        let gazeFrame = 0;
+        let faceRect = null;
         let idleTimer = 0;
+        let emotionTimer = 0;
+        let pokeTimer = 0;
+        let pokeHeld = false;
         let blinkTimer = 0;
         let blinkFrame = 0;
         let expressionFrame = 0;
@@ -1163,15 +1792,48 @@ import '../styles/toast.css';
         lids.lt.style.transformOrigin = lids.lb.style.transformOrigin = '161px 209px';
         lids.rt.style.transformOrigin = lids.rb.style.transformOrigin = '351px 209px';
 
-        function setGaze(x = pointerX, y = pointerY) {
+        function measureFace() {
+          faceRect = face.getBoundingClientRect();
+        }
+
+        function applyGaze(x, y) {
+          const transform = `translate(${x}px, ${y}px)`;
+          if (leftEyeAssembly) leftEyeAssembly.style.transform = transform;
+          if (rightEyeAssembly) rightEyeAssembly.style.transform = transform;
+        }
+
+        function gazeTarget() {
           const emotion = emotions[currentEmotion] || emotions.happy;
           const followsPointer = currentEmotion !== 'privacy';
-          const gazeX = emotion.gazeX + (followsPointer ? x : 0);
-          const gazeY = emotion.gazeY + (followsPointer ? y : 0);
-          [leftEyeAssembly, rightEyeAssembly].forEach((eye) => {
-            eye?.style.setProperty('--gaze-x', `${gazeX}px`);
-            eye?.style.setProperty('--gaze-y', `${gazeY}px`);
-          });
+          return {
+            x: emotion.gazeX + (followsPointer ? pointerX : 0),
+            y: emotion.gazeY + (followsPointer ? pointerY : 0),
+          };
+        }
+
+        function tickGaze() {
+          const target = gazeTarget();
+          gazeX += (target.x - gazeX) * 0.28;
+          gazeY += (target.y - gazeY) * 0.28;
+          if (Math.hypot(target.x - gazeX, target.y - gazeY) < 0.05) {
+            gazeX = target.x;
+            gazeY = target.y;
+            gazeFrame = 0;
+          } else {
+            gazeFrame = requestAnimationFrame(tickGaze);
+          }
+          applyGaze(gazeX, gazeY);
+        }
+
+        function setGaze() {
+          if (reducedMotion) {
+            const target = gazeTarget();
+            gazeX = target.x;
+            gazeY = target.y;
+            applyGaze(gazeX, gazeY);
+            return;
+          }
+          if (!gazeFrame) gazeFrame = requestAnimationFrame(tickGaze);
         }
 
         function setLids(expression) {
@@ -1201,6 +1863,8 @@ import '../styles/toast.css';
         function setEmotion(name) {
           const emotion = emotions[name];
           if (!emotion) return;
+          if (pokeHeld && name !== 'angry') return;
+          if (name !== 'angry') window.clearTimeout(pokeTimer);
           if (name === currentEmotion && face.dataset.emotion === name) return;
           currentEmotion = name;
           Object.values(lids).forEach((lid) => {
@@ -1208,7 +1872,6 @@ import '../styles/toast.css';
           });
           setGaze();
           face.dataset.emotion = name;
-          face.setAttribute('aria-label', `Carita de Demo ${emotionLabels[name]}. Sigue el cursor y reacciona al formulario.`);
           window.cancelAnimationFrame(blinkFrame);
           window.cancelAnimationFrame(expressionFrame);
           blinkFrame = 0;
@@ -1257,22 +1920,54 @@ import '../styles/toast.css';
         }
 
         function restoreContext() {
-          if (document.activeElement === password) setEmotion('privacy');
-          else if (document.activeElement === email) setEmotion('attentive');
-          else setEmotion(formEmotion());
+          if (pokeHeld) return;
+          const next = document.activeElement === password
+            ? 'privacy'
+            : document.activeElement === email
+              ? 'attentive'
+              : formEmotion();
+          window.clearTimeout(emotionTimer);
+          emotionTimer = window.setTimeout(() => setEmotion(next), 180);
         }
 
         function armIdle() {
           window.clearTimeout(idleTimer);
-          if (authPanel?.hidden) return;
+          if (authPanel?.hidden || pokeHeld) return;
           idleTimer = window.setTimeout(() => setEmotion(document.activeElement === password ? 'privacy' : 'neutral'), 10000);
+        }
+
+        function startPoke(event) {
+          pokeHeld = true;
+          window.clearTimeout(pokeTimer);
+          window.clearTimeout(emotionTimer);
+          window.clearTimeout(idleTimer);
+          setEmotion('angry');
+          const target = event?.currentTarget;
+          if (event && 'pointerId' in event && target?.setPointerCapture) {
+            try { target.setPointerCapture(event.pointerId); } catch {}
+          }
+        }
+
+        function endPoke() {
+          if (!pokeHeld) return;
+          pokeHeld = false;
+          window.clearTimeout(pokeTimer);
+          pokeTimer = window.setTimeout(() => {
+            const next = document.activeElement === password
+              ? 'privacy'
+              : document.activeElement === email
+                ? 'attentive'
+                : (email.value || password.value ? formEmotion() : 'happy');
+            setEmotion(next);
+            armIdle();
+          }, 1000);
         }
 
         function trackPointer(event) {
           if (reducedMotion || authPanel?.hidden) return;
-          const rect = face.getBoundingClientRect();
-          const nx = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width * .75)));
-          const ny = Math.max(-1, Math.min(1, (event.clientY - (rect.top + rect.height / 2)) / (rect.height * .75)));
+          if (!faceRect) measureFace();
+          const nx = Math.max(-1, Math.min(1, (event.clientX - (faceRect.left + faceRect.width / 2)) / (faceRect.width * .75)));
+          const ny = Math.max(-1, Math.min(1, (event.clientY - (faceRect.top + faceRect.height / 2)) / (faceRect.height * .75)));
           pointerX = nx * 13;
           pointerY = ny * 10;
           setGaze();
@@ -1308,6 +2003,12 @@ import '../styles/toast.css';
         }
 
         window.addEventListener('pointermove', trackPointer, { passive: true });
+        window.addEventListener('resize', () => { faceRect = null; }, { passive: true });
+        window.addEventListener('scroll', () => { faceRect = null; }, { passive: true });
+        visualViewport?.addEventListener('resize', () => { faceRect = null; }, { passive: true });
+        if (typeof ResizeObserver !== 'undefined') {
+          new ResizeObserver(() => { faceRect = null; }).observe(faceWrap);
+        }
         window.addEventListener('pointerout', (event) => {
           if (event.relatedTarget) return;
           pointerX = 0;
@@ -1316,17 +2017,45 @@ import '../styles/toast.css';
         });
         window.addEventListener('keydown', armIdle, { passive: true });
         window.addEventListener('demo-face-emotion', (event) => setEmotion(event.detail));
-        face.addEventListener('pointerdown', () => { setEmotion('angry'); armIdle(); });
-        face.addEventListener('keydown', (event) => {
+        faceHit.addEventListener('pointerdown', (event) => {
+          if (event.button) return;
+          event.preventDefault();
+          startPoke(event);
+        });
+        faceHit.addEventListener('pointerup', endPoke);
+        faceHit.addEventListener('pointercancel', endPoke);
+        window.addEventListener('pointerup', endPoke);
+        window.addEventListener('pointercancel', endPoke);
+        faceWrap.addEventListener('keydown', (event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
-          setEmotion('angry');
-          armIdle();
+          if (event.repeat) return;
+          startPoke(event);
+        });
+        faceWrap.addEventListener('keyup', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          endPoke();
+        });
+        faceWrap.addEventListener('blur', () => {
+          if (pokeHeld) endPoke();
         });
         [email, password].forEach((input) => {
-          input.addEventListener('focus', () => { setEmotion(input === password ? 'privacy' : 'attentive'); armIdle(); });
-          input.addEventListener('input', () => { setEmotion(input === password ? 'privacy' : 'attentive'); armIdle(); });
-          input.addEventListener('blur', () => { window.setTimeout(restoreContext, 0); armIdle(); });
+          input.addEventListener('focus', () => {
+            window.clearTimeout(emotionTimer);
+            setEmotion(input === password ? 'privacy' : 'attentive');
+            armIdle();
+          });
+          input.addEventListener('input', () => {
+            window.clearTimeout(emotionTimer);
+            setEmotion(input === password ? 'privacy' : 'attentive');
+            armIdle();
+          });
+          input.addEventListener('blur', (event) => {
+            const next = event.relatedTarget;
+            if (next instanceof Node && (next === email || next === password || next.id === 'authPasswordToggle')) return;
+            restoreContext();
+            armIdle();
+          });
           input.addEventListener('invalid', () => { setEmotion('worried'); armIdle(); });
         });
         form.addEventListener('submit', () => setEmotion('surprised'));
@@ -1337,19 +2066,8 @@ import '../styles/toast.css';
       })();
     </script>
 
-    <div class="app-content" id="appContent" hidden>
-      <header class="topline">
-        <div>
-          <p class="eyebrow">Monitoreo</p>
-          <h1 id="screenTitle">Llamada en tiempo real</h1>
-        </div>
-        <div class="call-meta" aria-label="Estado de la llamada">
-          <span class="chip name-chip" id="nameChip"><span class="name-value" id="nameValue">Sin nombre</span></span>
-          <span class="chip">+57 310 ••• ••42</span>
-          <span class="chip mode-live" id="modeChip"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span class="mode-end-icon" id="endIconWrap" hidden aria-hidden="true"><i data-lucide="phone-off"></i></span><span id="modeChipText">EN VIVO</span></span>
-        </div>
-      </header>
-
+    <div class="app-content" id="appContent" aria-hidden="true">
+      <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
       <div class="player-wrap">
         <section class="player" aria-label="Reproductor de llamada">
           <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
@@ -1386,12 +2104,7 @@ import '../styles/toast.css';
         <div class="conversation-empty" id="conversationEmpty" role="status">
           <div class="conversation-empty__copy"><i data-lucide="message-circle" aria-hidden="true"></i><p>Aún no hay mensajes.</p></div>
         </div>
-
-        </section>
-        <section class="knowledge-panel" aria-labelledby="knowledgeTitle">
-          <div><p class="eyebrow">Conocimiento</p><h2 id="knowledgeTitle">Documento de conocimiento</h2><p id="knowledgeStatus">Sin documento activo</p></div>
-          <form class="knowledge-form" id="knowledgeForm"><input id="knowledgeFile" type="file" accept=".txt,.md,.pdf" required /><button type="submit">Reemplazar documento</button></form>
-        </section>
+      </section>
     </div>
 
     <section class="state-view" id="emptyState" hidden aria-label="Sin llamadas">
@@ -1401,6 +2114,58 @@ import '../styles/toast.css';
     <section class="state-view" id="errorState" hidden aria-label="Error de monitoreo">
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
+
+    <section class="section-view" data-section="dashboard" aria-label="Dashboard" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="layout-dashboard" aria-hidden="true"></i><p>Aún no hay métricas para mostrar.</p></div>
+    </section>
+    <section class="section-view" data-section="call-1" aria-label="Llamada 1" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
+    </section>
+    <section class="section-view" data-section="call-2" aria-label="Llamada 2" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
+    </section>
+    <section class="section-view" data-section="sales" aria-label="Ventas" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="shopping-bag" aria-hidden="true"></i><p>Aún no hay ventas para mostrar.</p></div>
+    </section>
+    <section class="section-view" data-section="settings" aria-label="Ajustes" aria-hidden="true">
+      <div class="state-copy"><i data-lucide="settings" aria-hidden="true"></i><p>Los ajustes estarán disponibles pronto.</p></div>
+    </section>
+      </section>
+    <aside class="detail-panel" id="detailPanel" aria-label="Cliente">
+      <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+      <div class="detail-panel__session" id="sessionPanel">
+        <p class="detail-kicker">Cliente</p>
+        <h2 class="detail-title">Estado de la llamada</h2>
+        <div class="detail-sheet">
+          <section class="detail-group">
+            <dl class="detail-fields">
+              <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
+              <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
+              <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
+            </dl>
+          </section>
+        </div>
+      </div>
+      <div class="detail-panel__body" hidden></div>
+    </aside>
+    </section>
+    <script is:inline>
+      (() => {
+        const panel = document.getElementById('authPanel');
+        const form = document.querySelector('.login-form-content');
+        const token = sessionStorage.getItem('kognia.auth.access-token')?.trim();
+        const conversation = sessionStorage.getItem('kognia.auth.conversation-id')?.trim();
+        if (!panel || !token || !conversation) return;
+        panel.classList.add('is-app', 'no-wipe', 'is-nav-ready');
+        panel.dataset.view = 'call-demo';
+        panel.setAttribute('aria-labelledby', 'screenTitle');
+        form?.setAttribute('inert', '');
+        form?.setAttribute('aria-hidden', 'true');
+        document.querySelector('.login-material')?.classList.add('is-gone');
+      })();
+    </script>
   </main>
 
   
@@ -1437,10 +2202,6 @@ import '../styles/toast.css';
     const emptyState = document.getElementById('emptyState');
     const errorState = document.getElementById('errorState');
     const screenTitle = document.getElementById('screenTitle');
-    const modeChip = document.getElementById('modeChip');
-    const modeChipText = document.getElementById('modeChipText');
-    const liveDot = document.getElementById('liveDot');
-    const endIconWrap = document.getElementById('endIconWrap');
     const waveShell = document.getElementById('waveShell');
     const currentTimeEl = document.getElementById('currentTime');
     const durationEl = document.getElementById('duration');
@@ -1450,10 +2211,18 @@ import '../styles/toast.css';
     const conversationEmpty = document.getElementById('conversationEmpty');
     const waveCanvas = document.getElementById('waveCanvas');
     const waveCtx = waveCanvas.getContext('2d', { alpha: true });
-    const nameChip = document.getElementById('nameChip');
-    const nameValue = document.getElementById('nameValue');
     const reconnect = document.getElementById('reconnect');
     const reconnectText = document.getElementById('reconnectText');
+    if (appContent) {
+      let scrollRestTimer = 0;
+      appContent.addEventListener('scroll', () => {
+        appContent.classList.add('is-scrolling');
+        window.clearTimeout(scrollRestTimer);
+        scrollRestTimer = window.setTimeout(() => {
+          appContent.classList.remove('is-scrolling');
+        }, 780);
+      }, { passive: true });
+    }
     const timelineItems = [...document.querySelectorAll('.timeline-item')];
     const messages = [...document.querySelectorAll('.message[data-text]')];
     const tokenTimers = new Map();
@@ -1479,40 +2248,49 @@ import '../styles/toast.css';
     }
 
     function resizeWaveCanvas() {
-      const rect = waveCanvas.getBoundingClientRect();
+      const host = waveCanvas.parentElement || waveCanvas;
+      const w = host.clientWidth;
+      const h = host.clientHeight;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.max(1, Math.round(rect.width));
-      const h = Math.max(1, Math.round(rect.height));
-      if (w === waveWidth && h === waveHeight && dpr === waveDpr) return;
+      if (w < 2 || h < 2) return false;
+      const bitmapW = Math.max(1, Math.round(w * dpr));
+      const bitmapH = Math.max(1, Math.round(h * dpr));
+      const sizeChanged = w !== waveWidth || h !== waveHeight || dpr !== waveDpr;
+      const bitmapChanged = waveCanvas.width !== bitmapW || waveCanvas.height !== bitmapH;
+      if (!sizeChanged && !bitmapChanged) return false;
       waveWidth = w;
       waveHeight = h;
       waveDpr = dpr;
-      waveCanvas.width = Math.round(w * dpr);
-      waveCanvas.height = Math.round(h * dpr);
+      if (bitmapChanged) {
+        waveCanvas.width = bitmapW;
+        waveCanvas.height = bitmapH;
+      }
       waveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return true;
     }
 
     function drawWaveShape(samples, from, to, fillStyle) {
       if (!samples.length || to <= from) return;
       const baseline = waveHeight - 1;
-      const minHeight = 2;
-      const maxHeight = Math.max(8, waveHeight - 5);
+      const minHeight = Math.max(6, Math.round(waveHeight * 0.12));
+      const travel = Math.max(8, Math.round(waveHeight * 0.48));
       const last = samples.length - 1;
       const startIndex = Math.max(0, Math.floor(from * last));
       const endIndex = Math.min(last, Math.ceil(to * last));
       const denom = Math.max(1, last);
+      const amp = (sample) => minHeight + Math.pow(clamp01(sample), 1.55) * travel;
 
       waveCtx.beginPath();
       const firstX = startIndex / denom * waveWidth;
       waveCtx.moveTo(firstX, baseline);
 
       let prevX = firstX;
-      let prevY = baseline - (minHeight + clamp01(samples[startIndex]) * (maxHeight - minHeight));
+      let prevY = baseline - amp(samples[startIndex]);
       waveCtx.lineTo(prevX, prevY);
 
       for (let i = startIndex + 1; i <= endIndex; i++) {
         const x = i / denom * waveWidth;
-        const y = baseline - (minHeight + clamp01(samples[i]) * (maxHeight - minHeight));
+        const y = baseline - amp(samples[i]);
         const mx = (prevX + x) * .5;
         const my = (prevY + y) * .5;
         waveCtx.quadraticCurveTo(prevX, prevY, mx, my);
@@ -1571,7 +2349,7 @@ import '../styles/toast.css';
       const hz = sampleRate / bestLag;
       const voiced = clarity > .25 && hz >= 70 && hz <= 500;
       const pitch = voiced ? clamp01((hz - 70) / 430) : .35;
-      return clamp01(rms * 7.4 * (.42 + .58 * (voiced ? .3 + .7 * pitch : .2)));
+      return clamp01(rms * 4.2 * (.42 + .58 * (voiced ? .3 + .7 * pitch : .2)));
     }
 
     // Convierte un frame de frecuencias real en una amplitud visual de voz.
@@ -1592,7 +2370,7 @@ import '../styles/toast.css';
       }
 
       if (!weightSum) return .05;
-      return clamp01(Math.sqrt(energy / weightSum) * 1.7);
+      return clamp01(Math.sqrt(energy / weightSum) * 1.05);
     }
 
     function pushAmplitude(value) {
@@ -1816,15 +2594,12 @@ import '../styles/toast.css';
       if (message) resetMessage(message);
     }
 
+    function patchSession(partial) {
+      window.dispatchEvent(new CustomEvent('call-session-patch', { detail: partial }));
+    }
+
     function setNameResolved(resolved, animate) {
-      const target = resolved ? 'Sofía Martínez' : 'Sin nombre';
-      if (nameValue.textContent === target) return;
-      if (!animate) { nameValue.textContent = target; nameChip.classList.remove('updating'); return; }
-      nameChip.classList.remove('updating');
-      void nameChip.offsetWidth;
-      nameChip.classList.add('updating');
-      setTimeout(() => { nameValue.textContent = target; }, 300);
-      setTimeout(() => nameChip.classList.remove('updating'), 720);
+      patchSession({ name: resolved ? 'Sofía Martínez' : '' });
     }
 
     function setToolState(id, done, instant = false) {
@@ -1948,8 +2723,6 @@ import '../styles/toast.css';
       messages.forEach(resetMessage);
       setToolState('tool1', false, true);
       setToolState('tool2', false, true);
-      nameValue.textContent = 'Sin nombre';
-      nameChip.classList.remove('updating');
       reconnect?.classList.remove('reconnected');
       if (reconnectText) reconnectText.textContent = 'Reconectando';
       conversationEmpty.hidden = false;
@@ -1959,7 +2732,7 @@ import '../styles/toast.css';
     function setMode(next) {
       mode = next;
       document.querySelectorAll('.demo-switcher button').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
-      if (!authPanel || authPanel.hidden) {
+      if (authPanel?.classList.contains('is-app')) {
         appContent.hidden = mode === 'empty' || mode === 'error';
       }
       emptyState.hidden = mode !== 'empty';
@@ -1974,25 +2747,19 @@ import '../styles/toast.css';
       resetConversation();
       current = 0;
       callEnded = false;
-      endIconWrap.hidden = true;
       setPlaying(true);
 
       if (mode === 'live') {
         liveEdge = 0;
         liveSamples.length = 0;
         sampleAccumulator = 0;
-        screenTitle.textContent = 'Llamada en tiempo real';
-        modeChip.className = 'chip mode-live';
-        modeChipText.textContent = 'EN VIVO';
-        liveDot.hidden = false;
+        if (screenTitle) screenTitle.textContent = 'Llamada en tiempo real';
+        patchSession({ status: 'En vivo' });
         liveSamples.push(.025);
       } else {
         liveEdge = DEMO_DURATION;
-        screenTitle.textContent = 'Grabación de llamada';
-        modeChip.className = 'chip mode-recorded';
-        modeChipText.textContent = 'GRABADA';
-        liveDot.hidden = true;
-        endIconWrap.hidden = true;
+        if (screenTitle) screenTitle.textContent = 'Grabación de llamada';
+        patchSession({ status: 'Grabada' });
         renderWave();
       }
 
@@ -2006,11 +2773,8 @@ import '../styles/toast.css';
       liveEdge = DEMO_DURATION;
       current = DEMO_DURATION;
       setPlaying(false);
-      screenTitle.textContent = 'Llamada finalizada';
-      modeChip.className = 'chip mode-recorded';
-      modeChipText.textContent = 'FINALIZADA';
-      liveDot.hidden = true;
-      endIconWrap.hidden = false;
+      if (screenTitle) screenTitle.textContent = 'Llamada finalizada';
+      patchSession({ status: 'Finalizada' });
       previousTimelineTime = Math.min(previousTimelineTime, DEMO_DURATION - .001);
       syncTimeline(DEMO_DURATION, true);
       renderPlayer();
@@ -2102,18 +2866,32 @@ import '../styles/toast.css';
       requestAnimationFrame(tick);
     }
 
-    new ResizeObserver(() => renderWave()).observe(waveCanvas);
+    if (waveShell) new ResizeObserver(() => renderWave()).observe(waveShell);
+    const loginRight = document.querySelector('.login-right');
+    if (loginRight) new ResizeObserver(() => renderWave()).observe(loginRight);
+    window.addEventListener('resize', () => renderWave());
+    visualViewport?.addEventListener('resize', () => renderWave());
     seedRecordedWaveform();
     lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
     setMode('live');
     if (window.__liveDebugControls) setPlaying(false);
+    const trackWaveLayout = () => {
+      let frames = 48;
+      const step = () => {
+        renderWave();
+        frames -= 1;
+        if (frames > 0) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+    window.addEventListener('app-layout-change', trackWaveLayout);
     requestAnimationFrame(tick);
   </script>
 
       <script>
        import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
+       import { mountSessionPanel } from '../features/voice-call/application/detail-panel';
        import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
-       import { showToast } from '../features/voice-call/infrastructure/toast';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
@@ -2123,6 +2901,7 @@ import '../styles/toast.css';
         const authPasswordToggle = document.getElementById('authPasswordToggle');
         const authSubmit = document.getElementById('authSubmit');
        const appContent = document.getElementById('appContent');
+       const loginFormContent = document.querySelector('.login-form-content');
        const tokenKey = 'kognia.auth.access-token';
        const conversationKey = 'kognia.auth.conversation-id';
 
@@ -2135,6 +2914,7 @@ import '../styles/toast.css';
          authSubmit.disabled = loading;
          authSubmit.classList.toggle('is-loading', loading);
           authSubmit.setAttribute('aria-busy', String(loading));
+          authSubmit.closest('.auth-submit-wrap')?.classList.toggle('is-loading', loading);
         }
 
         function setPasswordVisibility(visible: boolean): void {
@@ -2147,43 +2927,220 @@ import '../styles/toast.css';
           lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
         }
 
+        authPasswordToggle?.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+        });
         authPasswordToggle?.addEventListener('click', () => {
           if (!(authPassword instanceof HTMLInputElement)) return;
           const visible = authPassword.type === 'password';
           setPasswordVisibility(visible);
-          authPassword.focus({ preventScroll: true });
         });
         setPasswordVisibility(false);
 
-       function showApp(token: string, conversationId: string): void {
-         setFaceEmotion('happy');
-         if (authPanel) authPanel.hidden = true;
-         if (appContent) appContent.hidden = false;
-         bootLiveMonitor(apiUrl, token, conversationId, true);
-         void refreshKnowledge().catch((error: unknown) => showToast(errorMessage(error, 'No se pudo consultar el documento de conocimiento.'), 'error'));
+       function setFormInert(inert: boolean): void {
+         if (!(loginFormContent instanceof HTMLElement)) return;
+         if (inert) {
+           loginFormContent.setAttribute('inert', '');
+           loginFormContent.setAttribute('aria-hidden', 'true');
+           return;
+         }
+         loginFormContent.removeAttribute('inert');
+         loginFormContent.removeAttribute('aria-hidden');
        }
 
-       const knowledgeForm = document.getElementById('knowledgeForm');
-       const knowledgeFile = document.getElementById('knowledgeFile');
-       const knowledgeStatus = document.getElementById('knowledgeStatus');
-        async function refreshKnowledge(): Promise<void> {
-          const response = await fetch(`${apiUrl}/api/rag/status`);
-          const status = await responseData(response, 'No se pudo consultar el documento de conocimiento.');
-         const document = status.document as Record<string, unknown> | null;
-         if (knowledgeStatus) knowledgeStatus.textContent = document ? `${String(document.filename)} · ${String(document.chunks)} fragmentos` : 'Sin documento activo';
+       function loginMaterial(): HTMLElement | null {
+         const material = document.querySelector('.login-material');
+         return material instanceof HTMLElement ? material : null;
        }
-       knowledgeForm?.addEventListener('submit', (event) => {
-         event.preventDefault();
-         const file = knowledgeFile instanceof HTMLInputElement ? knowledgeFile.files?.[0] : undefined;
-         const token = sessionStorage.getItem(tokenKey) ?? '';
-         if (!file || !token) return;
-         const button = knowledgeForm.querySelector('button');
-         if (button instanceof HTMLButtonElement) button.disabled = true;
-          void fetch(`${apiUrl}/api/rag/document`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'X-Filename': file.name }, body: file })
-            .then(async (response) => { await responseData(response, 'No se pudo indexar el documento.'); await refreshKnowledge(); showToast('Documento listo', 'success'); })
-            .catch((error: unknown) => showToast(errorMessage(error, 'No se pudo indexar el documento.'), 'error'))
-           .finally(() => { if (button instanceof HTMLButtonElement) button.disabled = false; });
+
+       function collapseStrip(immediate: boolean): void {
+         const material = loginMaterial();
+         if (!material) return;
+         if (immediate) {
+           material.classList.add('is-gone');
+           return;
+         }
+         const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+         let fallback = 0;
+         const onEnd = (event: TransitionEvent) => {
+           if (event.propertyName !== 'width' && event.propertyName !== 'height') return;
+           window.clearTimeout(fallback);
+           material.removeEventListener('transitionend', onEnd);
+           material.classList.add('is-gone');
+         };
+         fallback = window.setTimeout(() => {
+           material.removeEventListener('transitionend', onEnd);
+           material.classList.add('is-gone');
+         }, reduced ? 40 : 2800);
+         material.addEventListener('transitionend', onEnd);
+       }
+
+       function restoreStrip(): void {
+         loginMaterial()?.classList.remove('is-gone');
+       }
+
+       const appNav = document.getElementById('appNav');
+       const callsGroup = document.getElementById('callsGroup');
+       const callsToggle = document.getElementById('callsToggle');
+       const sectionViews = Array.from(document.querySelectorAll<HTMLElement>('.section-view'));
+       const detailPanel = document.getElementById('detailPanel');
+       const railMs = 1550;
+       let navReadyTimer = 0;
+       let navReadyHandler: ((event: TransitionEvent) => void) | null = null;
+
+       function lucideRefresh(): void {
+         const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+         lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+       }
+
+       function clearNavReadyWait(): void {
+         window.clearTimeout(navReadyTimer);
+         if (navReadyHandler && authPanel) {
+           authPanel.removeEventListener('transitionend', navReadyHandler);
+         }
+         navReadyHandler = null;
+       }
+
+       function markNavReady(): void {
+         if (!authPanel) return;
+         clearNavReadyWait();
+         authPanel.classList.add('is-nav-ready');
+         appNav?.removeAttribute('aria-hidden');
+         appNav?.removeAttribute('inert');
+       }
+
+       function scheduleNavReady(immediate: boolean): void {
+         if (!authPanel) return;
+         if (immediate || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+           markNavReady();
+           return;
+         }
+         clearNavReadyWait();
+         navReadyHandler = (event: TransitionEvent) => {
+           if (event.target !== authPanel) return;
+           if (event.propertyName !== '--left-rail') return;
+           markNavReady();
+         };
+         authPanel.addEventListener('transitionend', navReadyHandler);
+         navReadyTimer = window.setTimeout(markNavReady, railMs);
+       }
+
+       function notifyLayoutChange(): void {
+         window.dispatchEvent(new Event('app-layout-change'));
+       }
+
+       function setCallsOpen(open: boolean): void {
+         callsGroup?.classList.toggle('is-open', open);
+         callsToggle?.setAttribute('aria-expanded', String(open));
+         const children = document.getElementById('callsChildren');
+         if (open) {
+           children?.removeAttribute('inert');
+           children?.removeAttribute('aria-hidden');
+           return;
+         }
+         children?.setAttribute('inert', '');
+         children?.setAttribute('aria-hidden', 'true');
+       }
+
+       function setAppView(view: string): void {
+         if (!authPanel) return;
+         const empty = view !== 'call-demo';
+         const isCall = view === 'call-demo' || view === 'call-1' || view === 'call-2';
+         authPanel.dataset.view = view;
+         authPanel.classList.toggle('is-empty-view', empty);
+         if (!isCall) setCallsOpen(false);
+         callsToggle?.classList.toggle('is-active', isCall);
+         appNav?.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+           const active = button.dataset.view === view;
+           button.classList.toggle('is-active', active);
+           if (active) button.setAttribute('aria-current', 'page');
+           else button.removeAttribute('aria-current');
+         });
+         sectionViews.forEach((section) => {
+           const active = empty && section.dataset.section === view;
+           section.classList.toggle('is-active', active);
+           section.setAttribute('aria-hidden', active ? 'false' : 'true');
+         });
+         notifyLayoutChange();
+         if (empty) {
+           appContent?.setAttribute('aria-hidden', 'true');
+           appContent?.setAttribute('inert', '');
+           detailPanel?.setAttribute('inert', '');
+           return;
+         }
+         appContent?.removeAttribute('aria-hidden');
+         appContent?.removeAttribute('inert');
+         detailPanel?.removeAttribute('inert');
+       }
+
+       function resetAppShell(): void {
+         clearNavReadyWait();
+         authPanel?.classList.remove('is-app', 'no-wipe', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
+         authPanel?.removeAttribute('data-view');
+         appNav?.setAttribute('aria-hidden', 'true');
+         appNav?.setAttribute('inert', '');
+         setCallsOpen(false);
+         callsToggle?.classList.remove('is-active');
+         sectionViews.forEach((section) => {
+           section.classList.remove('is-active');
+           section.setAttribute('aria-hidden', 'true');
+         });
+         appContent?.removeAttribute('inert');
+         detailPanel?.removeAttribute('inert');
+       }
+
+       function revealApp(animate: boolean): void {
+         if (!authPanel) return;
+         if (!animate) authPanel.classList.add('no-wipe');
+         authPanel.classList.add('is-app');
+         authPanel.setAttribute('aria-labelledby', 'screenTitle');
+         setFormInert(true);
+         setAppView('call-demo');
+         collapseStrip(!animate);
+         scheduleNavReady(!animate);
+         lucideRefresh();
+         notifyLayoutChange();
+         if (!animate) {
+           requestAnimationFrame(() => {
+             requestAnimationFrame(() => authPanel.classList.remove('no-wipe'));
+           });
+         }
+       }
+
+       appNav?.addEventListener('click', (event) => {
+         const target = event.target;
+         if (!(target instanceof Element)) return;
+         const toggle = target.closest('#callsToggle');
+         if (toggle) {
+           setCallsOpen(!callsGroup?.classList.contains('is-open'));
+           return;
+         }
+         const button = target.closest<HTMLButtonElement>('[data-view]');
+         if (!button) return;
+         const view = button.dataset.view?.trim();
+         if (!view) return;
+         setAppView(view);
        });
+
+       const loginName = document.querySelector('.login-name');
+       function isCompactShell(): boolean {
+         return matchMedia('(max-width: 1100px)').matches;
+       }
+       loginName?.addEventListener('click', () => {
+         if (!authPanel?.classList.contains('is-app') || !isCompactShell()) return;
+         const collapsed = !authPanel.classList.contains('is-rail-collapsed');
+         authPanel.classList.toggle('is-rail-collapsed', collapsed);
+         if (collapsed) appNav?.setAttribute('inert', '');
+         else if (authPanel.classList.contains('is-nav-ready')) appNav?.removeAttribute('inert');
+         notifyLayoutChange();
+       });
+
+       function showApp(token: string, conversationId: string, animate = true): void {
+         setFaceEmotion('happy');
+         revealApp(animate);
+         mountSessionPanel();
+         bootLiveMonitor(apiUrl, token, conversationId, true);
+       }
 
        async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {
          if (!response.ok) throw await backendErrorFromResponse(response, fallback);
@@ -2207,15 +3164,19 @@ import '../styles/toast.css';
           fetch(`${apiUrl}/conversations/${encodeURIComponent(conversationId)}`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         if (me.ok && conversation.ok) {
-          showApp(token, conversationId);
+          showApp(token, conversationId, false);
           return;
         }
         const failedResponse = me.ok ? conversation : me;
         const sessionError = await backendErrorFromResponse(failedResponse, 'La sesión ya no está disponible.');
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
+        resetAppShell();
+        authPanel?.setAttribute('aria-labelledby', 'authTitle');
+        setFormInert(false);
+        appContent?.setAttribute('aria-hidden', 'true');
+        restoreStrip();
         setFaceEmotion('neutral');
-        showToast(sessionError.message, 'warning');
       }
 
       async function createSession(email: string, password: string): Promise<void> {
@@ -2255,9 +3216,7 @@ import '../styles/toast.css';
          void createSession(email, password)
            .catch((error: unknown) => {
               const message = errorMessage(error, 'No se pudo iniciar sesión.');
-              // Login errors are delivered through the shared toast only.
               setFaceEmotion(message.includes('inválidos') ? 'angry' : 'sad');
-              showToast(message, 'error');
            })
            .finally(() => {
              setLoginLoading(false);
@@ -2267,6 +3226,11 @@ import '../styles/toast.css';
       void restoreSession().catch(() => {
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
+        resetAppShell();
+        authPanel?.setAttribute('aria-labelledby', 'authTitle');
+        setFormInert(false);
+        appContent?.setAttribute('aria-hidden', 'true');
+        restoreStrip();
       });
     </script>
   </body>

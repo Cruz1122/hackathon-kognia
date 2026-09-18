@@ -467,3 +467,9 @@ def test_loads_environment_from_repository_root(tmp_path: Path, monkeypatch: pyt
     main.load_repository_environment(env_file)
 
     assert main.os.getenv("KOGNIA_ENV_LOAD_TEST") == "loaded"
+
+
+def test_demo_knowledge_corpus_is_packaged() -> None:
+    path = main.demo_knowledge_path()
+    assert path is not None
+    assert "POL-R48329" in path.read_text(encoding="utf-8")

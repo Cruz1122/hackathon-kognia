@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -17,9 +18,11 @@ LOREM = (
 )
 MAX_LOREM_CHARS = 5000
 AGENT_SYSTEM = (
-    "Eres un agente de voz breve. Usa generate_lorem_ipsum cuando pidan texto "
-    "lorem ipsum con una cantidad de caracteres, y sum_numbers cuando pidan sumar "
-    "números. No inventes el resultado de esas tools: ejecútalas. Habla en español."
+    "Eres un agente de voz breve. Habla en español. "
+    "Si recibes knowledge_status=available, responde con ese documento; no inventes políticas. "
+    "Si knowledge_status=insufficient, no afirmes que el documento respalda la respuesta. "
+    "Usa generate_lorem_ipsum cuando pidan texto lorem ipsum con una cantidad de caracteres, "
+    "y sum_numbers cuando pidan sumar números. No inventes el resultado de esas tools: ejecútalas."
 )
 
 def _canonical_domain_tools() -> tuple[CanonicalTool, ...]:
@@ -100,22 +103,121 @@ def parse_arguments(raw: str | dict[str, Any] | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def describe_tool_start(name: str, arguments: dict[str, Any]) -> tuple[str, str]:
+DisplayField = dict[str, str]
+_TOOL_DISPLAY: dict[str, dict[str, Any]] = {
+    "generate_lorem_ipsum": {
+        "name": "Generación de texto",
+        "inputs": (("characters", "Caracteres"),),
+        "outputs": (("text", "Texto"),),
+    },
+    "sum_numbers": {
+        "name": "Suma de números",
+        "inputs": (("numbers", "Números"),),
+        "outputs": (("total", "Total"),),
+    },
+    "check_availability": {
+        "name": "Consulta de disponibilidad",
+        "inputs": (("date", "Fecha"), ("time", "Hora"), ("party_size", "Comensales")),
+        "outputs": (("date", "Fecha"), ("time", "Hora"), ("party_size", "Comensales"), ("available", "Disponible")),
+    },
+    "create_booking": {
+        "name": "Creación de reserva",
+        "inputs": (("customer_name", "Nombre"), ("date", "Fecha"), ("time", "Hora"), ("party_size", "Comensales")),
+        "outputs": (("booking_id", "Código de reserva"), ("status", "Estado")),
+    },
+}
+_STATUS_LABELS = {"confirmed": "Confirmada", "available": "Disponible"}
+
+
+def _humanize_key(key: str) -> str:
+    cleaned = " ".join(key.replace("_", " ").split())
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else key
+
+
+def _format_date(value: object) -> str | None:
+    text = str(value).strip()
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text[:10])
+    if not match:
+        return None
+    return f"{match.group(3)}/{match.group(2)}/{match.group(1)}"
+
+
+def _format_value(key: str, value: object) -> str:
+    if value is None:
+        return "—"
+    if key == "date":
+        formatted = _format_date(value)
+        if formatted:
+            return formatted
+    if key == "available":
+        return "Sí" if value in {True, "true", "True", 1, "1"} else "No"
+    if key == "status":
+        text = str(value).strip()
+        return _STATUS_LABELS.get(text.casefold(), _humanize_key(text))
+    if isinstance(value, bool):
+        return "Sí" if value else "No"
+    if isinstance(value, list):
+        return ", ".join(_format_value(key, item) for item in value)
+    return str(value)
+
+
+def present_tool_name(name: str) -> str:
+    catalog = _TOOL_DISPLAY.get(name)
+    if catalog:
+        return str(catalog["name"])
+    return _humanize_key(name)
+
+
+def present_tool_inputs(name: str, arguments: dict[str, Any]) -> list[DisplayField]:
+    catalog = _TOOL_DISPLAY.get(name)
+    if catalog:
+        return [
+            {"label": label, "value": _format_value(key, arguments[key])}
+            for key, label in catalog["inputs"]
+            if key in arguments
+        ]
+    return [{"label": _humanize_key(str(key)), "value": _format_value(str(key), value)} for key, value in arguments.items()]
+
+
+def present_tool_outputs(name: str, result: str) -> list[DisplayField]:
     if name == "generate_lorem_ipsum":
-        count = arguments.get("characters", "?")
-        return "Generando lorem ipsum", f"{count} caracteres"
+        return [{"label": "Texto", "value": result}]
+    if name == "sum_numbers":
+        return [{"label": "Total", "value": result}]
+    parsed = parse_arguments(result)
+    if parsed.get("error_code"):
+        return [{"label": "Error", "value": str(parsed.get("message") or parsed["error_code"])}]
+    catalog = _TOOL_DISPLAY.get(name)
+    if catalog and parsed:
+        fields = [
+            {"label": label, "value": _format_value(key, parsed[key])}
+            for key, label in catalog["outputs"]
+            if key in parsed
+        ]
+        if fields:
+            return fields
+    if parsed:
+        return [{"label": _humanize_key(str(key)), "value": _format_value(str(key), value)} for key, value in parsed.items()]
+    return [{"label": "Resultado", "value": result}]
+
+
+def describe_tool_start(name: str, arguments: dict[str, Any]) -> tuple[str, str]:
+    title = present_tool_name(name)
+    if name == "generate_lorem_ipsum":
+        return title, f"{arguments.get('characters', '?')} caracteres"
     if name == "sum_numbers":
         values = arguments.get("numbers") or []
-        return "Sumando números", f"{len(values)} valores"
-    return name, "Ejecutando"
+        return title, f"{len(values)} valores"
+    return title, "Ejecutando"
 
 
 def describe_tool_done(name: str, arguments: dict[str, Any], result: str) -> tuple[str, str]:
+    title = present_tool_name(name)
     if name == "generate_lorem_ipsum":
-        return "Lorem ipsum listo", f"{len(result)} caracteres · completado"
+        return title, f"{len(result)} caracteres · completado"
     if name == "sum_numbers":
-        return "Suma lista", f"Total {result}"
-    return name, "Completado"
+        return title, f"Total {result}"
+    return title, "Completado"
 
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> str:

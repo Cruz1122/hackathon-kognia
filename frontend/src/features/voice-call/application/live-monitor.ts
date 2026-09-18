@@ -1,8 +1,8 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
-import { showToast } from '../infrastructure/toast';
-import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
+import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
+import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
@@ -68,17 +68,17 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector('#conversationEmpty');
   if (!conversation) {
-    showToast('No se encontró el panel de la llamada.', 'error');
     return;
   }
   if (conversation instanceof HTMLElement && conversation.dataset.liveBooted === '1') return;
   if (conversation instanceof HTMLElement) conversation.dataset.liveBooted = '1';
+  bindDetailClicks(conversation);
+  mountSessionPanel();
 
   const restartBtn = stealButton('rewindBtn');
   const callBtn = stealButton('startBtn');
   const pauseBtn = stealButton('playBtn');
   if (!callBtn || !restartBtn || !pauseBtn) {
-    showToast('No se pudieron conectar los controles de la llamada.', 'error');
     return;
   }
 
@@ -151,7 +151,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   }
 
   function showTransportError(message: string, icon = 'triangle-alert'): void {
-    showToast(message, 'error');
     note(message, icon);
   }
 
@@ -257,22 +256,30 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     agentBubble = null;
   }
 
-  function addTool(id: string, title: string, status: string): void {
+  function addTool(id: string, payload: Record<string, unknown>): void {
+    const detail = toolDetailFromEvent(payload);
+    const title = detail.name;
+    const status = String(payload.status ?? 'Ejecutando');
     appendRow(
       'tool-row',
-      `<div class="tool-call" id="${id}"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">${escapeHtml(status)}</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></div>`,
+      `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">${escapeHtml(status)}</div></div>${toolCallBusyMarkup()}</button>`,
     );
   }
 
-  function completeTool(id: string, title: string, status: string): void {
+  function completeTool(id: string, payload: Record<string, unknown>): void {
     const tool = document.getElementById(id);
     if (!tool) return;
     tool.classList.add('done');
+    tool.setAttribute('aria-busy', 'false');
+    const previous = readDetail(tool);
+    const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
+    writeDetail(tool, detail);
+    refreshOpenDetail(id, detail);
     const titleNode = tool.querySelector('.tool-title');
     const statusNode = tool.querySelector('.tool-status');
-    if (titleNode) titleNode.textContent = title;
+    if (titleNode) titleNode.textContent = detail.name;
     if (statusNode) {
-      statusNode.textContent = status;
+      statusNode.textContent = String(payload.status ?? 'Completado');
       statusNode.classList.remove('loading');
     }
     const loader = tool.querySelector('.loader') as HTMLElement | null;
@@ -348,7 +355,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     });
     if (!started) {
       note('No se pudo abrir el micrófono', 'mic-off');
-      showToast('Permite el micrófono para enviar audio al agente.', 'error');
       return;
     }
     hookMicWave();
@@ -359,9 +365,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (type === 'call.connected') {
       if (connected) return;
       connected = true;
-      const stt = String(data.stt_model ?? '').trim();
-      showToast(stt ? `Llamada conectada · ${stt}` : 'Llamada conectada. Habla como en una llamada IP.', 'success');
-      note(stt ? `Llamada conectada · ${stt}` : 'Llamada conectada', 'phone');
+      note('Llamada conectada', 'phone');
       if (live && !paused && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
     } else if (type === 'wave.level') {
       waveApi?.setPlaying?.(true);
@@ -373,13 +377,12 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     } else if (type === 'agent.token') {
       appendToken(String(data.text ?? ''));
     } else if (type === 'tool.started') {
-      const title = String(data.title ?? data.tool ?? 'Tool');
       const id = `tool-${String(data.tool ?? 'tool')}-${Date.now()}`;
-      addTool(id, title, String(data.status ?? 'Ejecutando'));
+      addTool(id, data);
       pendingTools.set(String(data.tool ?? 'tool'), id);
     } else if (type === 'tool.completed') {
       const id = pendingTools.get(String(data.tool ?? 'tool'));
-      if (id) completeTool(id, String(data.title ?? data.tool ?? 'Tool'), String(data.status ?? 'Completado'));
+      if (id) completeTool(id, data);
     } else if (type === 'rag.started') {
       const id = `rag-${Date.now()}`;
       pendingRetrievalId = shouldRenderRetrieval(data) ? id : null;
@@ -484,7 +487,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         showTransportError('Esta cuenta no puede adjuntar la conversación.');
       } else {
         note('La llamada se desconectó', 'unplug');
-        showToast('La llamada se desconectó.', 'warning');
       }
     });
   }
@@ -499,7 +501,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       await resumeCall();
       return;
     }
-    showToast('Conectando la llamada…', 'info');
     capture.primeContext();
     pcm.prime();
     live = true;
@@ -509,6 +510,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     pcmReady = false;
     closing = false;
     startedAt = performance.now();
+    patchSession({ status: 'En vivo' });
     syncControls();
     bindSocket();
     if (!waveApi) {
@@ -568,6 +570,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     finishAgent();
     syncControls();
     if (notify) {
+      patchSession({ status: 'Finalizada' });
       appendRow(
         'system-event call-ended',
         `<span class="call-ended-label"><i data-lucide="phone-off"></i><span>Llamada finalizada · ${stamp()}</span></span>`,
@@ -588,7 +591,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
-      showToast(message, 'error');
     });
   });
   pauseBtn.addEventListener('click', () => {
@@ -610,7 +612,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
-      showToast(message, 'error');
     });
   }
 }

@@ -1,6 +1,6 @@
-import { showToast } from '../infrastructure/toast';
 import { backendMessage } from '../infrastructure/backend-error';
-import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
+import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
+import { bindDetailClicks, mountSessionPanel, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -21,6 +21,8 @@ export function bootEventsMonitor(apiUrl: string): void {
   const conversationEmpty = document.querySelector('#conversationEmpty');
   const hubChip = document.querySelector('#hubChipText');
   if (!conversation) return;
+  bindDetailClicks(conversation);
+  mountSessionPanel();
 
   const conversationId = sessionStorage.getItem('kognia.auth.conversation-id')?.trim() ?? '';
   const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
@@ -84,7 +86,6 @@ export function bootEventsMonitor(apiUrl: string): void {
     conversation.querySelectorAll('.timeline-item').forEach((node) => node.remove());
     setEmpty(true);
     if (hubChip) hubChip.textContent = 'Hub en vivo';
-    showToast('Monitoreo conectado a /ws/events', 'info');
   }
 
   function setCustomerPartial(text: string): void {
@@ -152,23 +153,32 @@ export function bootEventsMonitor(apiUrl: string): void {
       ensureAgent().append(node);
     } else if (type === 'tool.started') {
       enterLiveFeed();
-      const title = String(payload.title ?? payload.tool ?? 'Tool');
       const id = `hub-tool-${Date.now()}`;
       pendingTools.set(String(payload.tool ?? 'tool'), id);
+      const detail = toolDetailFromEvent(payload);
       appendRow(
         'tool-row',
-        `<div class="tool-call" id="${id}"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">${escapeHtml(String(payload.status ?? 'Ejecutando'))}</div></div></div>`,
+        `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status loading">${escapeHtml(String(payload.status ?? 'Ejecutando'))}</div></div>${toolCallBusyMarkup()}</button>`,
       );
     } else if (type === 'tool.completed') {
       const id = pendingTools.get(String(payload.tool ?? 'tool'));
       const tool = id ? document.getElementById(id) : null;
-      if (tool) {
+      if (tool && id) {
         tool.classList.add('done');
+        tool.setAttribute('aria-busy', 'false');
+        const previous = readDetail(tool);
+        const detail = toolDetailFromEvent(payload, previous?.kind === 'tool' ? previous : undefined);
+        writeDetail(tool, detail);
+        refreshOpenDetail(id, detail);
+        const titleNode = tool.querySelector('.tool-title');
+        if (titleNode) titleNode.textContent = detail.name;
         const statusNode = tool.querySelector('.tool-status');
         if (statusNode) {
           statusNode.textContent = String(payload.status ?? 'Completado');
           statusNode.classList.remove('loading');
         }
+        const loader = tool.querySelector('.loader') as HTMLElement | null;
+        if (loader) window.setTimeout(() => { loader.style.display = 'none'; }, 420);
       }
     } else if (type === 'rag.started') {
       enterLiveFeed();
@@ -206,7 +216,6 @@ export function bootEventsMonitor(apiUrl: string): void {
   });
   socket.addEventListener('message', (event) => {
     if (typeof event.data !== 'string') {
-      showToast('El hub envió un payload no JSON.', 'warning');
       return;
     }
     try {
@@ -214,12 +223,11 @@ export function bootEventsMonitor(apiUrl: string): void {
       if (!data || typeof data !== 'object' || Array.isArray(data)) return;
       handleEnvelope(data as RealtimeEnvelope);
     } catch {
-      showToast('El hub envió un evento inválido.', 'error');
+      return;
     }
   });
   socket.addEventListener('close', (event) => {
     if (event.code === 4401) {
-      showToast('La sesión del monitoreo no es válida.', 'error');
       if (hubChip) hubChip.textContent = 'Sesión inválida';
       return;
     }

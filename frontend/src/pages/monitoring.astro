@@ -1,6 +1,7 @@
 ---
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 import '../styles/toast.css';
+import '../styles/detail-panel.css';
 ---
 <html lang="es">
   <head>
@@ -21,6 +22,9 @@ import '../styles/toast.css';
       --ui-control: #e8e8e8;
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
+      --radius-min: 14px;
+      --radius-max: 32px;
+      --radius-ui: min(var(--radius-max), 50%);
     }
 
     * { box-sizing: border-box; }
@@ -80,14 +84,16 @@ import '../styles/toast.css';
     }
 
     .chip {
+      --chip-height: 40px;
       position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      min-height: 34px;
-      padding: 0 14px;
-      border-radius: var(--radius-full);
+      min-height: var(--chip-height);
+      min-width: 96px;
+      padding: 0 16px;
+      border-radius: calc(var(--chip-height) / 2);
       background: rgba(65,65,65,.07);
       font-size: 13px;
       font-weight: 600;
@@ -192,7 +198,7 @@ import '../styles/toast.css';
       right: 0;
       bottom: 5px;
       height: 10px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: rgba(65,65,65,.10);
       overflow: visible;
       transition: height .16s ease, bottom .16s ease;
@@ -367,7 +373,7 @@ import '../styles/toast.css';
     .message {
       width: fit-content;
       max-width: 100%;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       padding: 15px 21px;
       font-size: 15.5px;
       line-height: 1.44;
@@ -452,18 +458,28 @@ import '../styles/toast.css';
     .tool-row { display: flex; justify-content: flex-start; margin: 21px 0; }
 
     .tool-call {
+      appearance: none;
+      border: 0;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
       position: relative;
       width: min(520px, 84%);
       min-height: 82px;
-      border-radius: var(--radius-full);
-      background: var(--ui-control);
-      color: var(--ui-graphite);
-      padding: 15px 18px;
+      border-radius: var(--radius-ui);
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
+      padding: 15px 76px 15px 18px;
       display: flex;
       align-items: center;
       gap: 14px;
-      overflow: hidden;
+      overflow: visible;
       transform-origin: 0 50%;
+    }
+
+    .tool-call:focus-visible {
+      outline: 3px solid var(--ui-amber);
+      outline-offset: 3px;
     }
 
     .tool-row.enter .tool-call { animation: tool-arrive .72s cubic-bezier(.16,.9,.28,1) both; }
@@ -482,8 +498,10 @@ import '../styles/toast.css';
       border-radius: 50%;
       display: grid;
       place-items: center;
-      background: var(--ui-graphite);
-      color: var(--ui-control);
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
+      position: relative;
+      z-index: 2;
     }
 
     .tool-row.enter .tool-icon { animation: tool-icon-pop .82s .08s cubic-bezier(.18,.9,.25,1) both; }
@@ -495,7 +513,8 @@ import '../styles/toast.css';
     }
 
     .tool-icon i, .tool-icon svg { width: 20px; height: 20px; stroke-width: 2.5; }
-    .tool-copy { min-width: 0; flex: 1; position: relative; z-index: 2; }
+    .tool-copy, .loader, .done-mark { position: relative; z-index: 2; }
+    .tool-copy { min-width: 0; flex: 1; }
 
     .tool-label {
       display: flex;
@@ -511,72 +530,97 @@ import '../styles/toast.css';
     .tool-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
     .tool-status { margin-top: 4px; font-size: 12px; font-weight: 600; opacity: .58; }
 
-    .tool-status.loading::after {
-      content: "";
-      display: inline-block;
-      width: 14px;
-      text-align: left;
-      animation: ellipsis 1.25s steps(4,end) infinite;
+    .tool-status.loading {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 7px;
+      padding: 5px 12px;
+      min-height: 26px;
+      border-radius: var(--radius-full);
+      background: var(--ui-amber);
+      color: var(--ui-graphite);
+      opacity: 1;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .02em;
     }
 
-    @keyframes ellipsis {
-      0% { content: ""; }
-      25% { content: "."; }
-      50% { content: ".."; }
-      75%,100% { content: "..."; }
+    .tool-call:not(.done) .tool-icon {
+      box-shadow: 0 0 0 4px rgba(247, 201, 116, .22);
     }
 
     .loader {
-      position: relative;
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      margin-top: -29px;
       flex: 0 0 auto;
-      width: 54px;
-      height: 54px;
+      width: 58px;
+      height: 58px;
       filter: url(#ui-goo);
       -webkit-filter: url(#ui-goo);
       animation: ring-drift 15s linear infinite;
     }
 
-    .loader-dot, .loader-runner {
+    .loader-dot, .loader-runner, .loader-core {
       position: absolute;
       left: 50%;
       top: 50%;
       border-radius: 50%;
-      background: var(--ui-graphite);
-      transform-origin: 0 0;
+      background: var(--ui-amber);
     }
 
     .loader-dot {
-      width: 7px;
-      height: 7px;
-      margin: -3.5px;
-      transform: rotate(var(--angle)) translateY(-19px);
-      opacity: .76;
-    }
-
-    .loader-runner {
       width: 10px;
       height: 10px;
       margin: -5px;
+      transform-origin: center;
+      opacity: .84;
+    }
+
+    .loader-core {
+      width: 16px;
+      height: 16px;
+      margin: -8px;
+      animation: loader-core-breathe 2.6s cubic-bezier(.55, .02, .45, .98) infinite;
+    }
+
+    .loader-runner {
+      width: 14px;
+      height: 14px;
+      margin: -7px;
+      transform-origin: center;
       animation: runner-orbit 7.8s cubic-bezier(.55,.02,.45,.98) infinite;
     }
 
     @keyframes ring-drift { to { transform: rotate(360deg); } }
-    @keyframes runner-orbit { to { transform: rotate(360deg) translateY(-19px); } }
+    @keyframes runner-orbit {
+      from { transform: rotate(0deg) translateY(-20px); }
+      to { transform: rotate(360deg) translateY(-20px); }
+    }
+    @keyframes loader-core-breathe {
+      0%, 100% { transform: scale(.78); }
+      50% { transform: scale(1.12); }
+    }
 
     .tool-call.done .loader { animation: loader-out .34s ease forwards; }
     @keyframes loader-out { to { opacity: 0; transform: scale(.35); } }
 
     .done-mark {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      margin-top: -19px;
       display: grid;
-      flex: 0 0 auto;
       width: 38px;
       height: 38px;
       border-radius: 50%;
-      background: var(--ui-graphite);
-      color: var(--ui-control);
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
       place-items: center;
       opacity: 0;
       transform: scale(.3);
+      pointer-events: none;
     }
 
     .done-mark i, .done-mark svg { width: 19px; height: 19px; stroke-width: 2.5; }
@@ -656,14 +700,14 @@ import '../styles/toast.css';
       display: flex;
       gap: 5px;
       padding: 5px;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: var(--ui-control);
       box-shadow: 0 6px 24px rgba(65,65,65,.10);
     }
 
     .demo-switcher button {
       border: 0;
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-ui);
       background: transparent;
       padding: 8px 11px;
       cursor: pointer;
@@ -777,13 +821,13 @@ import '../styles/toast.css';
 
         <div class="system-event timeline-item" data-at="12.6" id="reconnect" role="status"><span class="reconnect-label"><span class="reconnect-mass" aria-hidden="true"></span><span class="reconnect-shine" aria-hidden="true"></span><span id="reconnectText">Reconectando</span></span></div>
 
-        <div class="tool-row timeline-item" data-at="15.6" id="tool1Row"><div class="tool-call" id="tool1"><div class="tool-icon" aria-hidden="true"><i data-lucide="search"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title" id="tool1Title">Consultando la reserva de Sofía Martínez</div><div class="tool-status loading" id="tool1Status">Buscando disponibilidad y condiciones</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></div></div>
+        <div class="tool-row timeline-item" data-at="15.6" id="tool1Row"><button type="button" class="tool-call" id="tool1" aria-busy="true" data-detail="{&quot;kind&quot;:&quot;tool&quot;,&quot;name&quot;:&quot;Consulta de disponibilidad&quot;,&quot;inputs&quot;:[{&quot;label&quot;:&quot;Nombre&quot;,&quot;value&quot;:&quot;Sofía Martínez&quot;},{&quot;label&quot;:&quot;Comensales&quot;,&quot;value&quot;:&quot;2&quot;}],&quot;outputs&quot;:[{&quot;label&quot;:&quot;Disponible&quot;,&quot;value&quot;:&quot;Sí&quot;},{&quot;label&quot;:&quot;Hora&quot;,&quot;value&quot;:&quot;15:00&quot;}]}"><div class="tool-icon" aria-hidden="true"><i data-lucide="search"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title" id="tool1Title">Consultando la reserva de Sofía Martínez</div><div class="tool-status loading" id="tool1Status">Buscando disponibilidad y condiciones</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="transform:rotate(0deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(45deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(90deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(135deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(180deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(225deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(270deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(315deg) translateY(-20px)"></span><span class="loader-core"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button></div>
 
         <div class="message-row agent timeline-item" data-at="20.3" id="m4"><div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message" data-text="Ya encontré tu reserva. La llegada estaba programada para las 3:00 p. m.; todavía puedo moverla a las 5:30 p. m. sin costo adicional." data-time="00:20"></div></div></div>
         <div class="message-row customer timeline-item" data-at="25.8" id="m5"><div class="message-wrap"><div class="message-meta"><span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i></div><div class="message" data-text="Perfecto, a las 5:30 está bien." data-time="00:26"></div></div></div>
         <div class="system-event timeline-item" data-at="28.0" id="changeEvent">Cambio de reserva solicitado</div>
 
-        <div class="tool-row timeline-item" data-at="29.0" id="tool2Row"><div class="tool-call" id="tool2"><div class="tool-icon" aria-hidden="true"><i data-lucide="calendar-sync"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Tool del agente</span></div><div class="tool-title" id="tool2Title">Actualizando hora de llegada</div><div class="tool-status loading" id="tool2Status">Guardando el cambio</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></div></div>
+        <div class="tool-row timeline-item" data-at="29.0" id="tool2Row"><button type="button" class="tool-call" id="tool2" aria-busy="true" data-detail="{&quot;kind&quot;:&quot;tool&quot;,&quot;name&quot;:&quot;Creación de reserva&quot;,&quot;inputs&quot;:[{&quot;label&quot;:&quot;Nombre&quot;,&quot;value&quot;:&quot;Sofía Martínez&quot;},{&quot;label&quot;:&quot;Hora&quot;,&quot;value&quot;:&quot;17:30&quot;},{&quot;label&quot;:&quot;Comensales&quot;,&quot;value&quot;:&quot;2&quot;}],&quot;outputs&quot;:[{&quot;label&quot;:&quot;Estado&quot;,&quot;value&quot;:&quot;Confirmada&quot;}]}"><div class="tool-icon" aria-hidden="true"><i data-lucide="calendar-sync"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title" id="tool2Title">Actualizando hora de llegada</div><div class="tool-status loading" id="tool2Status">Guardando el cambio</div></div><div class="loader" aria-label="Cargando"><span class="loader-dot" style="transform:rotate(0deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(45deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(90deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(135deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(180deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(225deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(270deg) translateY(-20px)"></span><span class="loader-dot" style="transform:rotate(315deg) translateY(-20px)"></span><span class="loader-core"></span><span class="loader-runner"></span></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button></div>
 
         <div class="message-row agent timeline-item" data-at="32.2" id="m6"><div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message" data-text="Listo. Ya quedó actualizada para mañana a las 5:30 p. m. ¿Necesitas que revise algo más de la reserva?" data-time="00:32"></div></div></div>
 
@@ -801,6 +845,13 @@ import '../styles/toast.css';
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
   </main>
+
+  <aside class="detail-panel" id="detailPanel" aria-label="Detalle">
+    <button class="detail-panel__close" type="button" data-detail-close="true" aria-label="Cerrar detalle">
+      <i data-lucide="x" aria-hidden="true"></i>
+    </button>
+    <div class="detail-panel__body"></div>
+  </aside>
 
   <nav class="demo-switcher" aria-label="Cambiar estado de la demo">
     <button type="button" class="active" data-mode="live">En vivo</button>
@@ -895,8 +946,8 @@ import '../styles/toast.css';
     function drawWaveShape(samples, from, to, fillStyle) {
       if (!samples.length || to <= from) return;
       const baseline = waveHeight - 1;
-      const minHeight = 2;
-      const maxHeight = Math.max(8, waveHeight - 5);
+      const minHeight = Math.max(10, Math.round(waveHeight * 0.24));
+      const maxHeight = Math.max(minHeight + 8, waveHeight - 5);
       const last = samples.length - 1;
       const startIndex = Math.max(0, Math.floor(from * last));
       const endIndex = Math.min(last, Math.ceil(to * last));
@@ -1189,6 +1240,7 @@ import '../styles/toast.css';
       const status = document.getElementById(id + 'Status');
       const title = document.getElementById(id + 'Title');
       tool.classList.toggle('done', done);
+      tool.setAttribute('aria-busy', done ? 'false' : 'true');
       if (status) status.classList.toggle('loading', !done);
 
       if (id === 'tool1') {

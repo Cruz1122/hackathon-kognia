@@ -75,7 +75,7 @@ class ProgressiveRetriever:
         semantic: list[RetrievalHit] = []
         try:
             embedding_started = time.perf_counter()
-            query_embedding = self.embeddings.embed_queries([expand_query(query)])[0]
+            query_embedding = (await asyncio.to_thread(self.embeddings.embed_queries, [expand_query(query)]))[0]
             embedding_ms = (time.perf_counter() - embedding_started) * 1000
             chroma_started = time.perf_counter()
             semantic = await asyncio.wait_for(
@@ -110,7 +110,7 @@ class ProgressiveRetriever:
                 timeout=float(os.getenv("RAG_REWRITE_TIMEOUT_S", "3")),
             )
             rewritten_lexical = LexicalRetriever(self._hits.get(active, [])).search(rewritten.standalone_query, lexical_top_k)
-            rewritten_embedding = self.embeddings.embed_queries([rewritten.standalone_query])[0]
+            rewritten_embedding = (await asyncio.to_thread(self.embeddings.embed_queries, [rewritten.standalone_query]))[0]
             rewritten_semantic = await asyncio.wait_for(
                 self.store.query(rewritten_embedding, semantic_top_k, active),
                 timeout=float(__import__("os").getenv("CHROMA_QUERY_TIMEOUT_S", "3")),

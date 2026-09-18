@@ -1,0 +1,257 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+
+  changes:
+    runs-on: ubuntu-latest
+
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          base: ${{ github.ref }}
+          filters: |
+            frontend:
+              - 'frontend/**'
+              - 'frontend/Dockerfile'
+            backend:
+              - 'backend/**'
+              - 'backend/Dockerfile'
+
+  build-frontend:
+    needs: [changes, deploy-backend]
+    if: >-
+      always() &&
+      needs.changes.outputs.frontend == 'true' &&
+      needs.deploy-backend.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          build-args: |
+            PUBLIC_API_URL=${{ needs.deploy-backend.outputs.backend-url }}
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
+
+  build-backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
+
+  deploy-backend:
+    needs: [changes, build-backend]
+    if: >-
+      always() &&
+      (needs.changes.outputs.backend == 'true' ||
+       needs.changes.outputs.frontend == 'true') &&
+      (needs.changes.outputs.backend != 'true' ||
+       needs.build-backend.result == 'success')
+    runs-on: ubuntu-latest
+    outputs:
+      backend-url: ${{ steps.backend-url.outputs.url }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy backend Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
+          registryUrl: docker.io
+          registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
+          registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
+          containerAppName: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+          containerAppEnvironment: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+          location: ${{ vars.AZURE_LOCATION }}
+          targetPort: 18474
+          ingress: external
+          disableTelemetry: true
+
+      - name: Configure backend runtime
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$POSTGRES_PASSWORD"
+          test -n "$POSTGRES_DB"
+          test -n "$POSTGRES_USER"
+          test -n "$JWT_SECRET_KEY"
+
+          database_host="$(az containerapp show \
+            --name "${{ vars.AZURE_DATABASE_APP_NAME }}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$database_host"
+
+          database_url="$(DATABASE_HOST="$database_host" python - <<'PY'
+          import os
+          import urllib.parse
+
+          user = urllib.parse.quote(os.environ["POSTGRES_USER"], safe="")
+          password = urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe="")
+          database = urllib.parse.quote(os.environ["POSTGRES_DB"], safe="")
+          host = os.environ["DATABASE_HOST"]
+          print(f"postgresql+asyncpg://{user}:{password}@{host}:5432/{database}")
+          PY
+          )"
+
+          secret_args=(
+            "database-url=$database_url"
+            "jwt-secret-key=$JWT_SECRET_KEY"
+          )
+          env_args=(
+            "APP_ENV=production"
+            "DATABASE_URL=secretref:database-url"
+            "JWT_SECRET_KEY=secretref:jwt-secret-key"
+            "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15"
+          )
+
+          if [[ -n "$OPENAI_API_KEY" ]]; then
+            secret_args+=("openai-api-key=$OPENAI_API_KEY")
+            env_args+=("OPENAI_API_KEY=secretref:openai-api-key")
+          fi
+
+          if [[ -n "$GEMINI_API_KEY" ]]; then
+            secret_args+=("gemini-api-key=$GEMINI_API_KEY")
+            env_args+=("GEMINI_API_KEY=secretref:gemini-api-key")
+          fi
+
+          az containerapp secret set \
+            --name "${{ vars.AZURE_BACKEND_APP_NAME }}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --secrets "${secret_args[@]}"
+
+          az containerapp update \
+            --name "${{ vars.AZURE_BACKEND_APP_NAME }}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --set-env-vars "${env_args[@]}"
+
+      - name: Get backend URL
+        id: backend-url
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          fqdn="$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$fqdn"
+          echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test backend
+        env:
+          BACKEND_URL: ${{ steps.backend-url.outputs.url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 12 \
+            --retry-delay 10 \
+            --retry-all-errors \
+            "$BACKEND_URL/health/live"
+
+  deploy-frontend:
+    needs: [build-frontend, deploy-backend]
+    if: >-
+      always() &&
+      needs.build-frontend.result == 'success' &&
+      needs.deploy-backend.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy frontend Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
+          registryUrl: docker.io
+          registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
+          registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
+          containerAppName: ${{ vars.AZURE_FRONTEND_APP_NAME }}
+          resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+          containerAppEnvironment: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+          location: ${{ vars.AZURE_LOCATION }}
+          targetPort: 80
+          ingress: external
+          disableTelemetry: true
+
+      - name: Link backend CORS to frontend
+        shell: bash
+        env:
+          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          FRONTEND_APP_NAME: ${{ vars.AZURE_FRONTEND_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          fqdn="$(az containerapp show \
+            --name "$FRONTEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$fqdn"
+          az containerapp update \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --set-env-vars "FRONTEND_ORIGIN=https://${fqdn}"

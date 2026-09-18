@@ -98,6 +98,37 @@ CALL_SILENCE_SECONDS = 0.8
 CALL_MAX_UTTERANCE_SECONDS = 8.0
 CALL_TURN_GUARD_SECONDS = 2.5
 CALL_POST_TURN_GUARD_SECONDS = 0.45
+DEMO_KNOWLEDGE_CANDIDATES = (
+    Path(__file__).resolve().parent / "platform" / "rag" / "demo_corpus.md",
+    REPOSITORY_ROOT / "tests" / "fixtures" / "rag" / "corpus_v1.md",
+)
+
+
+def demo_knowledge_path() -> Path | None:
+    for path in DEMO_KNOWLEDGE_CANDIDATES:
+        if path.is_file():
+            return path
+    return None
+
+
+async def seed_demo_knowledge() -> None:
+    path = demo_knowledge_path()
+    if path is None:
+        return
+    try:
+        active = await rag_store.get_active_document()
+        if active:
+            hits = await rag_retriever.ensure_document_chunks(active)
+            if hits:
+                return
+        result = await rag_ingestion.replace(path.read_bytes(), path.name)
+        logger.info(
+            "Seeded demo knowledge %s (%s chunks)",
+            result.get("filename"),
+            result.get("chunks"),
+        )
+    except Exception:
+        logger.exception("Demo knowledge could not be seeded")
 
 
 @asynccontextmanager
@@ -132,6 +163,12 @@ async def lifespan(_app: FastAPI):
     except Exception:
         tts_status = "error"
         logger.exception("Piper TTS failed to load during backend startup")
+    try:
+        await asyncio.to_thread(rag_embeddings.preload)
+        logger.info("E5 embeddings are ready")
+    except Exception:
+        logger.exception("E5 embeddings failed to load during backend startup")
+    await seed_demo_knowledge()
     try:
         yield
     finally:

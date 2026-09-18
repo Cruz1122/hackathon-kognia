@@ -11,10 +11,10 @@ from dotenv import load_dotenv
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ..db.models import User, UserRole
+from ..db.models import Organization, User, UserRole
 from ..db.session import dispose_engine, get_session_factory
 from .passwords import hash_password
-from .schemas import normalize_email
+from .schemas import normalize_email, normalize_name, normalize_slug
 
 
 def _required_environment() -> tuple[str, str]:
@@ -32,23 +32,61 @@ async def _bootstrap() -> int:
         if existing is not None:
             if existing.role != UserRole.SUPERADMIN or existing.organization_id is not None:
                 raise RuntimeError("A user with the bootstrap email already exists.")
-            print("SUPERADMIN already exists.")
-            return 0
+            created = False
+        else:
+            session.add(
+                User(
+                    email=email,
+                    password_hash=hash_password(password),
+                    role=UserRole.SUPERADMIN,
+                    organization_id=None,
+                )
+            )
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                raise RuntimeError("Bootstrap could not create the SUPERADMIN.") from exc
+            created = True
+    print("SUPERADMIN created." if created else "SUPERADMIN already exists.")
+    await _bootstrap_demo_admin()
+    return 0
+
+
+async def _bootstrap_demo_admin() -> None:
+    email = os.getenv("DEMO_ADMIN_EMAIL", "").strip()
+    password = os.getenv("DEMO_ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    email = normalize_email(email)
+    org_name = normalize_name(os.getenv("DEMO_ORG_NAME", "Demo Kognia") or "Demo Kognia")
+    org_slug = normalize_slug(os.getenv("DEMO_ORG_SLUG", "demo-kognia") or "demo-kognia")
+    async with get_session_factory()() as session:
+        organization = await session.scalar(select(Organization).where(Organization.slug == org_slug))
+        if organization is None:
+            organization = Organization(name=org_name, slug=org_slug)
+            session.add(organization)
+            await session.flush()
+        existing = await session.scalar(select(User).where(User.email == email))
+        if existing is not None:
+            if existing.role != UserRole.ADMIN or existing.organization_id != organization.id:
+                raise RuntimeError("A user with the demo admin email already exists.")
+            print("DEMO ADMIN already exists.")
+            return
         session.add(
             User(
                 email=email,
                 password_hash=hash_password(password),
-                role=UserRole.SUPERADMIN,
-                organization_id=None,
+                role=UserRole.ADMIN,
+                organization_id=organization.id,
             )
         )
         try:
             await session.commit()
         except IntegrityError as exc:
             await session.rollback()
-            raise RuntimeError("Bootstrap could not create the SUPERADMIN.") from exc
-    print("SUPERADMIN created.")
-    return 0
+            raise RuntimeError("Bootstrap could not create the DEMO ADMIN.") from exc
+    print("DEMO ADMIN created.")
 
 
 async def _run_bootstrap() -> int:

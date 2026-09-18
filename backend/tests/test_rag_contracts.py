@@ -1,6 +1,7 @@
 import asyncio
 import os
 
+from app.platform.rag.chunking import chunk_heading
 from app.platform.rag.chroma_store import MemoryVectorStore
 from app.platform.rag.contracts import RetrievalHit
 from app.platform.rag.embeddings import HashEmbeddingProvider
@@ -114,3 +115,8 @@ def test_retriever_hydrates_lexical_chunks_after_backend_restart() -> None:
 def test_cancellation_inflections_reach_the_cancellation_chunk() -> None:
     expanded = expand_query("qué pasa si la cance")
     assert "cancelación" in expanded
+
+
+def test_chunk_heading_reads_the_heading_inside_the_chunk() -> None:
+    assert chunk_heading("## Métodos de pago\n\nAceptamos tarjetas.") == "Métodos de pago"
+    assert chunk_heading("Aceptamos tarjetas.") is None
