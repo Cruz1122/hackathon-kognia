@@ -1,10 +1,13 @@
 import asyncio
 
+import pytest
 from pydantic import BaseModel
 
 from app.agent.tools.contracts import ToolContext, ToolDefinition
 from app.agent.tools.loader import load_tool_registry
 from app.agent.tools.registry import ToolRegistry
+from app.analytics.schemas import DashboardResponse
+from app.domains.business_analytics.tools import BusinessAnalyticsArgs, get_business_analytics
 
 
 def test_demo_tools_are_loaded_without_runtime_domain_imports() -> None:
@@ -35,3 +38,27 @@ def test_duplicate_names_are_rejected() -> None:
         assert "TOOL_DUPLICATE_NAME" in str(exc)
     else:
         raise AssertionError("duplicate tool name was accepted")
+
+
+def test_business_analytics_tool_requires_tenant_context() -> None:
+    context = ToolContext("req-analytics")
+    with pytest.raises(ValueError):
+        asyncio.run(get_business_analytics(BusinessAnalyticsArgs(), context))
+
+
+def test_business_analytics_tool_is_registered_once() -> None:
+    registry = load_tool_registry("app.domains.business_analytics.tools")
+    assert [item.name for item in registry.list_definitions()] == ["get_business_analytics"]
+
+
+def test_business_analytics_rejects_invalid_tenant_context_as_tool_error() -> None:
+    registry = load_tool_registry("app.domains.business_analytics.tools")
+    result = asyncio.run(
+        registry.execute(
+            "get_business_analytics",
+            {},
+            ToolContext("req-invalid-analytics", organization_id="not-a-uuid"),
+        )
+    )
+    assert result.ok is False
+    assert result.error_code == "TOOL_EXECUTION_ERROR"

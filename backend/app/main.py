@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -37,11 +39,13 @@ from .auth.tokens import (
     get_access_token_expire_minutes,
 )
 from .config import AppEnv, Provider, get_app_env, get_model_chain
-from .db.models import Conversation, Message as DbMessage
+from .db.models import Call, CallStatus, Conversation, Message as DbMessage
 from .db.models import MessageRole, Organization, User, UserRole
 from .db.queries import create_conversation, get_conversation, list_messages
 from .db.session import check_database, dispose_engine, get_db
+from .platform.redis import close_redis
 from .features.agent.service import stream_agent
+from .agent.tools.contracts import ToolContext
 from .features.transcription.service import pcm_speech_features, stt_label
 from .features.chat.schemas import (
     AskRequest,
@@ -63,6 +67,9 @@ from .platform.rag.runtime import store as rag_store, embeddings as rag_embeddin
 from .platform.rag.ingestion import RagIngestionService
 from .platform.rag.retrieval import ProgressiveRetriever
 from .platform.rag.extraction import RagExtractionError
+from .analytics.router import router as analytics_router
+from .platform.queue import enqueue_enrichment
+from .commercial.router import router as commercial_router
 
 
 logger = logging.getLogger("hackathon.voice")
@@ -172,7 +179,13 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        await dispose_engine()
+        try:
+            try:
+                await close_redis()
+            except Exception:
+                logger.exception("Redis cleanup failed")
+        finally:
+            await dispose_engine()
 
 
 app = FastAPI(title="Hackathon API", version="0.1.0", lifespan=lifespan)
@@ -189,6 +202,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(analytics_router)
+app.include_router(commercial_router)
 
 
 def _health_status() -> dict[str, str]:
@@ -400,11 +415,13 @@ async def _persist_message(
     conversation_id: uuid.UUID,
     role: MessageRole,
     content: str,
+    channel: str = "voice",
 ) -> DbMessage:
     message = DbMessage(
         conversation_id=conversation_id,
         role=role,
         content=content,
+        channel=channel,
     )
     session.add(message)
     try:
@@ -747,6 +764,25 @@ class ErrorResponse(BaseModel):
     detail: str = Field(description="Descripción segura del error.")
 
 
+def _agent_stream(
+    prompt: str,
+    *,
+    messages: list[dict[str, str]] | None,
+    organization_id: uuid.UUID | None = None,
+    conversation_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+):
+    kwargs: dict[str, object] = {"messages": messages, "llm": llm_provider}
+    if "tool_context" in inspect.signature(stream_agent).parameters:
+        kwargs["tool_context"] = ToolContext(
+            request_id=f"request-{uuid.uuid4()}",
+            organization_id=str(organization_id) if organization_id else None,
+            conversation_id=str(conversation_id) if conversation_id else None,
+            user_id=str(user_id) if user_id else None,
+        )
+    return stream_agent(prompt, **kwargs)
+
+
 def _event(name: str, payload: dict[str, object]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -757,12 +793,16 @@ async def _ask_stream(
     *,
     session: AsyncSession | None = None,
     conversation_id: uuid.UUID | None = None,
+    organization_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> AsyncIterator[str]:
     answer_parts: list[str] = []
-    async for name, payload in stream_agent(
+    async for name, payload in _agent_stream(
         prompt,
         messages=messages,
-        llm=llm_provider,
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
     ):
         if name == "token":
             answer_parts.append(str(payload.get("text", "")))
@@ -876,6 +916,8 @@ async def ask(
         history or None,
         session=session if conversation_id is not None else None,
         conversation_id=conversation_id,
+        organization_id=organization_id,
+        user_id=user.id,
     )
     buffered_chunks: list[str] = []
     terminal_event = ""
@@ -976,6 +1018,7 @@ async def _run_call_turn(
     session: AsyncSession,
     organization_id: uuid.UUID,
     conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
 ) -> None:
     try:
         await _persist_message(
@@ -1020,10 +1063,12 @@ async def _run_call_turn(
 
     speaker = asyncio.create_task(speak_worker())
     try:
-        async for name, payload in stream_agent(
+        async for name, payload in _agent_stream(
             prompt,
             messages=history or None,
-            llm=llm_provider,
+            organization_id=organization_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
         ):
             if name == "error":
                 failed = True
@@ -1142,6 +1187,32 @@ async def _receive_json_message(websocket: WebSocket) -> dict[str, object] | Non
     return payload if isinstance(payload, dict) else None
 
 
+async def _finish_call(
+    session: AsyncSession,
+    call: Call,
+    *,
+    organization_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    status: CallStatus = CallStatus.ENDED,
+) -> None:
+    if call.status != CallStatus.ACTIVE:
+        return
+    call.status = status
+    call.ended_at = datetime.now(UTC)
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Call status persistence failed")
+        return
+    if status == CallStatus.ENDED and not await enqueue_enrichment(organization_id, conversation_id):
+        logger.warning(
+            "Enrichment job was not queued after call completion organization_id=%s conversation_id=%s",
+            organization_id,
+            conversation_id,
+        )
+
+
 @app.websocket("/ws/events")
 async def events_socket(
     websocket: WebSocket,
@@ -1195,6 +1266,8 @@ async def call_socket(
 ) -> None:
     """Live PCM: authenticate and attach a tenant conversation before media."""
     await websocket.accept()
+    call_record: Call | None = None
+    call_completion_status = CallStatus.ENDED
     try:
         auth_payload = await _receive_json_message(websocket)
         token = auth_payload.get("token") if auth_payload is not None else None
@@ -1245,6 +1318,13 @@ async def call_socket(
                 organization_id=organization_id,
                 conversation_id=conversation_id,
             )
+            call_record = Call(
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+                status=CallStatus.ACTIVE,
+            )
+            session.add(call_record)
+            await session.commit()
         except Exception:
             logger.exception("Call conversation lookup failed")
             await websocket.close(code=1011)
@@ -1329,6 +1409,7 @@ async def call_socket(
                     session=session,
                     organization_id=organization_id,
                     conversation_id=conversation_id,
+                    user_id=user.id,
                 )
             )
 
@@ -1457,6 +1538,7 @@ async def call_socket(
                     session=session,
                     organization_id=organization_id,
                     conversation_id=conversation_id,
+                    user_id=user.id,
                 )
                 continue
             if not text:
@@ -1545,8 +1627,19 @@ async def call_socket(
                 session=session,
                 organization_id=organization_id,
                 conversation_id=conversation_id,
+                user_id=user.id,
             )
     except WebSocketDisconnect:
         logger.info("Call WebSocket disconnected")
     except Exception:
+        call_completion_status = CallStatus.FAILED
         logger.exception("Call WebSocket failed")
+    finally:
+        if call_record is not None:
+            await _finish_call(
+                session,
+                call_record,
+                organization_id=call_record.organization_id,
+                conversation_id=call_record.conversation_id,
+                status=call_completion_status,
+            )

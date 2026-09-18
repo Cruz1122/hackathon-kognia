@@ -17,6 +17,18 @@ make check-image-size
 The default guardrail is 3.5 GB. Override it with
 `COMPOSE_IMAGE_SIZE_LIMIT_BYTES` when comparing a different deployment budget.
 
+BuildKit retains intermediate layers from the multi-stage backend build. Keep
+that cache bounded after builds with:
+
+```bash
+make docker-cache-prune
+```
+
+The default limit is 5 GB. Override it with
+`DOCKER_BUILDX_CACHE_MAX_SPACE`, for example `DOCKER_BUILDX_CACHE_MAX_SPACE=3GB`.
+This only removes build cache; it does not remove images, containers, or named
+volumes.
+
 ## Orden
 
 ```text

@@ -2,6 +2,7 @@
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 import '../styles/toast.css';
 import '../styles/detail-panel.css';
+import '../styles/dashboard.css';
 ---
 <html lang="es">
   <head>
@@ -2115,8 +2116,29 @@ import '../styles/detail-panel.css';
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
 
-    <section class="section-view" data-section="dashboard" aria-label="Dashboard" aria-hidden="true">
-      <div class="state-copy"><i data-lucide="layout-dashboard" aria-hidden="true"></i><p>Aún no hay métricas para mostrar.</p></div>
+    <section class="section-view section-view--dashboard" data-section="dashboard" aria-label="Dashboard" aria-hidden="true">
+      <div class="dashboard-page">
+        <header class="dashboard-topline">
+          <div><p class="dashboard-eyebrow">Inteligencia comercial</p><h2>Rendimiento comercial</h2><p>Una lectura determinista de conversaciones, oportunidades y recuperación después de cada llamada.</p></div>
+          <div class="dashboard-filters" aria-label="Filtrar métricas"><label class="sr-only" for="dashboardFrom">Desde</label><input id="dashboardFrom" type="date" /><label class="sr-only" for="dashboardTo">Hasta</label><input id="dashboardTo" type="date" /><button id="dashboardApply" type="button">Actualizar</button></div>
+        </header>
+        <div class="dashboard-state" id="dashboardLoading" role="status"><p>Cargando métricas…</p></div>
+        <div class="dashboard-state" id="dashboardError" hidden role="alert"><div><p>No pudimos cargar las métricas.</p><button id="dashboardRetry" type="button">Reintentar</button></div></div>
+        <div class="dashboard-state" id="dashboardEmpty" hidden><p>Aún no hay datos comerciales para este periodo.</p></div>
+        <div class="dashboard-data" id="dashboardData" hidden>
+            <div class="dashboard-kpis">
+             <article class="dashboard-kpi"><small>Revenue generado</small><strong id="dashboardRevenue">—</strong><span>valor cerrado</span></article><article class="dashboard-kpi"><small>Ventas ganadas</small><strong id="dashboardWon">—</strong><span>oportunidades cerradas</span></article><article class="dashboard-kpi"><small>Tasa de conversión</small><strong id="dashboardConversion">—</strong><span>won / oportunidades</span></article><article class="dashboard-kpi dashboard-kpi--priority"><small>Revenue recuperado</small><strong id="dashboardRecoveredRevenue">—</strong><span>cerradas después de WhatsApp</span></article>
+            </div>
+           <div class="dashboard-secondary"><span><strong id="dashboardConversations">—</strong> conversaciones</span><span><strong id="dashboardRecoveredSales">—</strong> ventas recuperadas</span><span><strong id="dashboardRecoveryRate">—</strong> tasa de recuperación</span></div>
+           <div class="dashboard-grid">
+              <article class="dashboard-card dashboard-card--conversion"><div class="dashboard-card-head"><div><h3>Conversión a lo largo del tiempo</h3><p>Won / oportunidades por período.</p></div></div><div class="dashboard-chart-host" id="dashboardConversionChart"></div></article>
+              <article class="dashboard-card dashboard-card--recovery"><div class="dashboard-card-head"><div><h3>Tasa de recuperación</h3><p>Oportunidades recuperadas después de WhatsApp.</p></div></div><div class="dashboard-chart-host" id="dashboardRecoveryChart"></div></article>
+              <article class="dashboard-card dashboard-card--losses"><div class="dashboard-card-head"><div><h3>Razones de pérdida</h3><p>Ordenadas por volumen de oportunidades.</p></div></div><div class="dashboard-chart-host" id="dashboardLossesChart"></div></article>
+              <article class="dashboard-card dashboard-card--objections"><div class="dashboard-card-head"><div><h3>Resolución de objeciones</h3><p>Porcentaje resuelto y pendiente por categoría.</p></div></div><div class="dashboard-chart-host" id="dashboardObjectionsChart"></div></article>
+              <article class="dashboard-card dashboard-card--wide"><div class="dashboard-card-head"><div><h3>Interés → conversión por producto</h3><p>Qué llama la atención pero no necesariamente vende.</p></div></div><div class="dashboard-chart-host dashboard-chart-host--products" id="dashboardProductsChart"></div></article>
+          </div>
+        </div>
+      </div>
     </section>
     <section class="section-view" data-section="call-1" aria-label="Llamada 1" aria-hidden="true">
       <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
@@ -2890,6 +2912,7 @@ import '../styles/detail-panel.css';
 
       <script>
        import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
+       import { bootDashboard } from '../features/dashboard/dashboard';
        import { mountSessionPanel } from '../features/voice-call/application/detail-panel';
        import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
 
@@ -2986,6 +3009,7 @@ import '../styles/detail-panel.css';
        const detailPanel = document.getElementById('detailPanel');
        const railMs = 1550;
        let navReadyTimer = 0;
+       let dashboardStarted = false;
        let navReadyHandler: ((event: TransitionEvent) => void) | null = null;
 
        function lucideRefresh(): void {
@@ -3140,6 +3164,7 @@ import '../styles/detail-panel.css';
          revealApp(animate);
          mountSessionPanel();
          bootLiveMonitor(apiUrl, token, conversationId, true);
+         if (!dashboardStarted) { dashboardStarted = true; bootDashboard(apiUrl, token); }
        }
 
        async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {

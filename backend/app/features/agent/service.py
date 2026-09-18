@@ -56,6 +56,7 @@ async def stream_agent(
     *,
     messages: Sequence[Message] | None = None,
     llm: LLMProvider | None = None,
+    tool_context: ToolContext | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm
@@ -116,7 +117,7 @@ async def stream_agent(
                         tool_result = await TOOL_REGISTRY.execute(
                             name,
                             arguments,
-                            ToolContext(request_id=f"agent-{config.provider.value}-{attempt}"),
+                            tool_context or ToolContext(request_id=f"agent-{config.provider.value}-{attempt}"),
                         )
                         if tool_result.ok:
                             result = tool_result.data if isinstance(tool_result.data, str) else __import__("json").dumps(tool_result.data, ensure_ascii=False)

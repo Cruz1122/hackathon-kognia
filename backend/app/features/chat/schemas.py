@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ...db.models import MessageRole
 
@@ -40,7 +40,13 @@ class ConversationMessageResponse(BaseModel):
     id: uuid.UUID
     role: MessageRole
     content: str
+    channel: str
     created_at: datetime
+
+    @field_validator("channel", mode="before")
+    @classmethod
+    def default_legacy_channel(cls, value: str | None) -> str:
+        return value or "voice"
 
 
 class ConversationResponse(BaseModel):
@@ -49,6 +55,7 @@ class ConversationResponse(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     created_by: uuid.UUID
+    customer_id: uuid.UUID | None = None
     channel: str
     status: str
     created_at: datetime
