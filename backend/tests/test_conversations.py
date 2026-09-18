@@ -318,7 +318,7 @@ def test_ws_attaches_conversation_and_persists_user_and_assistant(
         "agent.token",
         "turn.completed",
     ]
-    stored = [call.args[0] for call in session.add.call_args_list]
+    stored = [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], DbMessage)]
     assert [(message.role, message.content) for message in stored] == [
         (MessageRole.USER, "Hola desde WS"),
         (MessageRole.ASSISTANT, "respuesta WS"),

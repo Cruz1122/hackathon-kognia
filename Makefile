@@ -1,7 +1,7 @@
 .PHONY: help setup smoke \
 	dev-api dev-web \
 	build build-api build-web \
-	check-venv check-image-size
+	check-venv check-image-size docker-cache-prune
 
 PYTHON := backend/.venv/bin/python
 HOST := 127.0.0.1
@@ -17,6 +17,7 @@ help:
 	@echo "make build-web  build de Astro"
 	@echo "make smoke      health check de la API"
 	@echo "make check-image-size  mide las imágenes únicas de Compose"
+	@echo "make docker-cache-prune  limita la caché de BuildKit a 5 GB"
 
 setup:
 	./scripts/setup.sh
@@ -46,3 +47,6 @@ smoke:
 
 check-image-size:
 	./scripts/check-compose-image-size.sh
+
+docker-cache-prune:
+	./scripts/prune-docker-cache.sh

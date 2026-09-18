@@ -27,12 +27,18 @@ def test_models_create_expected_tables_foreign_keys_and_indexes() -> None:
 
     try:
         inspector = inspect(engine)
-        assert inspector.get_table_names() == [
+        assert set(inspector.get_table_names()) == {
+            "calls",
             "conversations",
+            "customers",
             "messages",
             "organizations",
+            "objections",
+            "opportunities",
+            "product_interests",
+            "products",
             "users",
-        ]
+        }
         assert {
             (
                 constraint["constrained_columns"][0],
@@ -43,6 +49,7 @@ def test_models_create_expected_tables_foreign_keys_and_indexes() -> None:
         } == {
             ("organization_id", "organizations", "id"),
             ("created_by", "users", "id"),
+            ("customer_id", "customers", "id"),
         }
         assert inspector.get_indexes("users")[0]["name"] == "ix_users_organization_id"
         assert {
@@ -51,6 +58,18 @@ def test_models_create_expected_tables_foreign_keys_and_indexes() -> None:
         assert {
             index["name"] for index in inspector.get_indexes("messages")
         } == {"ix_messages_conversation_created_at"}
+        assert {
+            index["name"] for index in inspector.get_indexes("customers")
+        } == {"ix_customers_organization_id", "ix_customers_organization_phone"}
+        assert {
+            index["name"] for index in inspector.get_indexes("opportunities")
+        } == {
+            "ix_opportunities_organization_created_at",
+            "ix_opportunities_organization_status_created_at",
+            "ix_opportunities_organization_recovery_started_at",
+            "ix_opportunities_conversation_id",
+            "ix_opportunities_product_id",
+        }
     finally:
         engine.dispose()
 

@@ -1,0 +1,1 @@
+"""Business analytics agent tool."""

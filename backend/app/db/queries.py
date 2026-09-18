@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..analytics.cache import bump_version
 from .models import Conversation, Message, User, UserRole
 
 
@@ -30,6 +31,7 @@ async def create_conversation(
         status=status,
     )
     session.add(conversation)
+    await bump_version(session, organization_id)
     await session.flush()
     return conversation
 

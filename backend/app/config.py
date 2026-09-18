@@ -17,6 +17,10 @@ class Provider(StrEnum):
     OPENAI = "openai"
 
 
+DEFAULT_REDIS_URL = "redis://localhost:16379/0"
+DEFAULT_ANALYTICS_CACHE_TTL_SECONDS = 60
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     provider: Provider
@@ -79,3 +83,18 @@ def get_model_chain(app_env: AppEnv | str | None = None) -> tuple[ModelConfig, .
 def _api_key_for(provider: Provider) -> str:
     value = os.getenv(API_KEY_ENV[provider], "").strip()
     return "" if value.lower() in PLACEHOLDER_KEYS else value
+
+
+def get_redis_url() -> str:
+    return os.getenv("REDIS_URL", DEFAULT_REDIS_URL).strip() or DEFAULT_REDIS_URL
+
+
+def get_analytics_cache_ttl_seconds() -> int:
+    raw = os.getenv("ANALYTICS_CACHE_TTL_SECONDS", str(DEFAULT_ANALYTICS_CACHE_TTL_SECONDS))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("ANALYTICS_CACHE_TTL_SECONDS must be an integer") from exc
+    if value < 1:
+        raise ValueError("ANALYTICS_CACHE_TTL_SECONDS must be positive")
+    return value

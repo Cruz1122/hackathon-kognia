@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HackaKognia — Intelligence Dashboard Chart Lab</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Urbanist:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js"></script>
+
+  <style>
+    :root {
+      --graphite: #414141;
+      --amber: #f7c974;
+      --cream: #faeccf;
+      --paper: #f8f8f8;
+      --surface: #ffffff;
+      --graphite-72: rgba(65, 65, 65, .72);
+      --graphite-42: rgba(65, 65, 65, .42);
+      --graphite-18: rgba(65, 65, 65, .18);
+      --graphite-10: rgba(65, 65, 65, .10);
+      --amber-74: rgba(247, 201, 116, .74);
+      --amber-46: rgba(247, 201, 116, .46);
+      --amber-20: rgba(247, 201, 116, .20);
+      --cream-76: rgba(250, 236, 207, .76);
+      --paper-82: rgba(248, 248, 248, .82);
+      --radius-full: 9999px;
+      --radius-kpi: 26px;
+      --radius-card: 22px;
+      --radius-card-tall: 18px;
+      --radius-card-full: 16px;
+      --font-ui: "Urbanist", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--paper);
+      color: var(--graphite);
+      font-family: var(--font-ui);
+    }
+
+    button, input, select { font: inherit; }
+
+    .page {
+      width: min(1540px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 30px 0 72px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 28px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 46px;
+      height: 46px;
+      flex: 0 0 46px;
+      border-radius: var(--radius-full);
+      background: var(--graphite);
+      position: relative;
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      border-radius: var(--radius-full);
+      background: var(--amber);
+    }
+
+    .brand-mark::before {
+      width: 17px;
+      height: 17px;
+      left: 8px;
+      top: 8px;
+    }
+
+    .brand-mark::after {
+      width: 11px;
+      height: 11px;
+      right: 8px;
+      bottom: 8px;
+    }
+
+    .brand-copy { min-width: 0; }
+    .brand-copy strong { display: block; font-size: 15px; font-weight: 800; letter-spacing: -.02em; }
+    .brand-copy span { display: block; margin-top: 1px; font-size: 12px; font-weight: 600; color: var(--graphite-42); }
+
+    .top-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .pill {
+      min-height: 42px;
+      border: 1px solid var(--graphite-10);
+      border-radius: var(--radius-full);
+      background: var(--paper);
+      color: var(--graphite);
+      padding: 0 18px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .22s ease, background .22s ease, border-color .22s ease;
+    }
+
+    .pill:hover { transform: translateY(-1px); border-color: var(--graphite-18); }
+    .pill.active { background: var(--graphite); color: var(--paper); border-color: var(--graphite); }
+
+    .hero {
+      position: relative;
+      min-height: 214px;
+      border-radius: 28px;
+      background: var(--graphite);
+      color: var(--paper);
+      padding: 46px 68px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 42px;
+      margin-bottom: 28px;
+      overflow: hidden;
+    }
+
+    .hero-copy { position: relative; z-index: 2; max-width: 830px; }
+    .eyebrow { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
+    h1 { margin: 9px 0 10px; font-size: clamp(34px, 4vw, 62px); line-height: .98; letter-spacing: -.055em; font-weight: 800; }
+    .hero p { margin: 0; max-width: 720px; font-size: 15px; line-height: 1.55; color: rgba(248,248,248,.72); }
+
+    .hero-orbit {
+      width: 146px;
+      height: 146px;
+      position: relative;
+      flex: 0 0 auto;
+      filter: url(#ui-goo);
+      -webkit-filter: url(#ui-goo);
+    }
+
+    .hero-orbit .mass {
+      position: absolute;
+      border-radius: var(--radius-full);
+      background: var(--amber);
+    }
+
+    .hero-orbit .m1 { width: 88px; height: 88px; left: 18px; top: 28px; }
+    .hero-orbit .m2 { width: 44px; height: 44px; right: 11px; top: 14px; animation: drift 5.8s ease-in-out infinite; }
+    .hero-orbit .m3 { width: 31px; height: 31px; right: 18px; bottom: 12px; animation: drift2 7.2s ease-in-out infinite; }
+
+    @keyframes drift {
+      0%,100% { transform: translate(0,0); }
+      50% { transform: translate(-17px, 17px); }
+    }
+    @keyframes drift2 {
+      0%,100% { transform: translate(0,0); }
+      50% { transform: translate(-13px, -13px); }
+    }
+
+    .section-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 24px;
+      margin: 34px 14px 15px;
+    }
+
+    .section-label h2 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -.025em; }
+    .section-label p { margin: 4px 0 0; color: var(--graphite-42); font-size: 13px; font-weight: 600; }
+    .section-index { font-size: 12px; font-weight: 800; color: var(--graphite-42); }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .kpi {
+      min-height: 154px;
+      border-radius: var(--radius-kpi);
+      background: var(--surface);
+      padding: 28px 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      border: 1px solid transparent;
+      transition: transform .22s ease, border-color .22s ease;
+    }
+
+    .kpi:hover { transform: translateY(-2px); border-color: var(--graphite-10); }
+    .kpi { border-color: var(--graphite-10); }
+    .kpi.accent { background: var(--amber); border-color: transparent; }
+    .kpi.dark { background: var(--graphite); color: var(--paper); border-color: transparent; }
+
+    .kpi-label { font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; opacity: .62; }
+    .kpi-value { margin-top: 6px; font-size: clamp(29px, 3vw, 44px); line-height: 1; font-weight: 800; letter-spacing: -.05em; }
+    .kpi-foot { margin-top: 7px; font-size: 12px; font-weight: 600; opacity: .62; }
+    .kpi-dot { width: 16px; height: 16px; border-radius: var(--radius-full); background: currentColor; opacity: .22; flex: 0 0 auto; }
+    .kpi.accent .kpi-dot { background: var(--graphite); opacity: .28; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .chart-card {
+      min-width: 0;
+      min-height: 430px;
+      border-radius: var(--radius-card);
+      background: var(--surface);
+      border: 1px solid var(--graphite-10);
+      padding: 34px 46px 30px;
+      position: relative;
+    }
+
+    .chart-card.featured { background: var(--graphite); color: var(--paper); border-color: transparent; }
+    .chart-card.tall { min-height: 500px; border-radius: var(--radius-card-tall); }
+    .chart-card.full { grid-column: 1 / -1; min-height: 480px; border-radius: var(--radius-card-full); }
+
+    .card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 0 18px;
+      margin-bottom: 4px;
+    }
+
+    .card-copy h3 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -.025em; }
+    .card-copy p { margin: 4px 0 0; font-size: 12px; line-height: 1.45; font-weight: 600; color: var(--graphite-42); }
+    .featured .card-copy p { color: rgba(248,248,248,.52); }
+
+    .micro-tag {
+      flex: 0 0 auto;
+      border-radius: var(--radius-full);
+      padding: 8px 12px;
+      background: var(--cream);
+      color: var(--graphite);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .featured .micro-tag { background: var(--amber); }
+
+    .chart {
+      width: 100%;
+      height: 338px;
+    }
+    .tall .chart { height: 400px; }
+    .full .chart { height: 385px; }
+
+    .insight-strip {
+      margin: 18px 12px 0;
+      min-height: 42px;
+      border-radius: 14px;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(247,201,116,.20);
+      color: var(--graphite-72);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .featured .insight-strip { background: rgba(247,201,116,.14); color: rgba(248,248,248,.68); }
+    .insight-strip::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      flex: 0 0 7px;
+      border-radius: var(--radius-full);
+      background: var(--amber);
+    }
+
+    .timeline-shell {
+      padding: 32px 42px 38px;
+    }
+
+    .timeline {
+      position: relative;
+      margin: 54px 28px 18px;
+      height: 112px;
+    }
+
+    .timeline-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 4px;
+      transform: translateY(-50%);
+      border-radius: var(--radius-full);
+      background: var(--graphite-10);
+    }
+
+    .timeline-fill {
+      position: absolute;
+      left: 0;
+      width: 76%;
+      top: 50%;
+      height: 4px;
+      transform: translateY(-50%);
+      border-radius: var(--radius-full);
+      background: var(--amber);
+    }
+
+    .event {
+      position: absolute;
+      top: 50%;
+      width: 18px;
+      height: 18px;
+      transform: translate(-50%, -50%);
+      border-radius: var(--radius-full);
+      background: var(--graphite);
+      border: 4px solid var(--paper);
+      box-shadow: 0 0 0 1px var(--graphite-18);
+    }
+
+    .event.hot { background: var(--amber); }
+
+    .event-label {
+      position: absolute;
+      width: 132px;
+      transform: translateX(-50%);
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.25;
+      text-align: center;
+      color: var(--graphite-72);
+    }
+
+    .event-label.top { bottom: 74px; }
+    .event-label.bottom { top: 75px; }
+    .event-label strong { display: block; font-size: 11px; color: var(--graphite); }
+
+    .legend-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 8px;
+    }
+
+    .legend-pill {
+      border-radius: var(--radius-full);
+      padding: 7px 11px;
+      background: var(--cream);
+      font-size: 10px;
+      font-weight: 800;
+      color: var(--graphite-72);
+    }
+
+    .footer-note {
+      margin: 32px 12px 0;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--graphite-42);
+      font-weight: 600;
+    }
+
+    @media (max-width: 1120px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-2 { grid-template-columns: 1fr; }
+      .chart-card.full { grid-column: auto; }
+      .hero { grid-template-columns: 1fr; }
+      .hero-orbit { display: none; }
+    }
+
+    @media (max-width: 720px) {
+      .page { width: min(100% - 18px, 1540px); padding-top: 16px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .top-actions { justify-content: flex-start; }
+      .hero { border-radius: 22px; padding: 42px 32px; }
+      .kpi-grid { grid-template-columns: 1fr; }
+      .kpi { min-height: 130px; border-radius: 22px; }
+      .chart-card { border-radius: 18px; padding: 30px 22px 24px; min-height: 410px; }
+      .chart-card.tall { border-radius: 16px; }
+      .chart-card.full { border-radius: 14px; }
+      .card-head { padding: 0 8px; }
+      .chart { height: 320px; }
+      .timeline-shell { padding: 30px 24px; }
+      .timeline { margin-left: 12px; margin-right: 12px; }
+      .event-label { width: 88px; font-size: 9px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <defs>
+      <filter id="ui-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+        <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -10" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+      </filter>
+    </defs>
+  </svg>
+
+  <main class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-copy">
+          <strong>HackaKognia</strong>
+          <span>Commercial intelligence · chart lab</span>
+        </div>
+      </div>
+
+      <div class="top-actions" aria-label="Rango temporal">
+        <button class="pill">Hoy</button>
+        <button class="pill active">7 días</button>
+        <button class="pill">30 días</button>
+        <button class="pill">Trimestre</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Intelligence dashboard</div>
+        <h1>No medir actividad.<br>Entender resultados.</h1>
+        <p>Prototipo visual de las gráficas base para CRM + revenue intelligence + conversation intelligence. Los datos son ficticios, pero todas las relaciones están diseñadas para representar preguntas reales del producto.</p>
+      </div>
+      <div class="hero-orbit" aria-hidden="true">
+        <span class="mass m1"></span>
+        <span class="mass m2"></span>
+        <span class="mass m3"></span>
+      </div>
+    </section>
+
+    <div class="section-label">
+      <div>
+        <h2>Resumen ejecutivo</h2>
+        <p>La capa que un administrador debería entender en menos de diez segundos.</p>
+      </div>
+      <span class="section-index">01 / KPI</span>
+    </div>
+
+    <section class="kpi-grid">
+      <article class="kpi">
+        <div>
+          <div class="kpi-label">Conversion rate</div>
+          <div class="kpi-value">31.8%</div>
+          <div class="kpi-foot">+4.2 pp vs. periodo anterior</div>
+        </div>
+        <div class="kpi-dot"></div>
+      </article>
+      <article class="kpi accent">
+        <div>
+          <div class="kpi-label">Won</div>
+          <div class="kpi-value">184</div>
+          <div class="kpi-foot">de 579 oportunidades</div>
+        </div>
+        <div class="kpi-dot"></div>
+      </article>
+      <article class="kpi">
+        <div>
+          <div class="kpi-label">Revenue</div>
+          <div class="kpi-value">$48.2M</div>
+          <div class="kpi-foot">COP · ticket medio $262K</div>
+        </div>
+        <div class="kpi-dot"></div>
+      </article>
+      <article class="kpi">
+        <div>
+          <div class="kpi-label">Objection resolved</div>
+          <div class="kpi-value">64%</div>
+          <div class="kpi-foot">precio sigue siendo el mayor bloqueo</div>
+        </div>
+        <div class="kpi-dot"></div>
+      </article>
+    </section>
+
+    <div class="section-label">
+      <div>
+        <h2>Performance & pipeline</h2>
+        <p>Qué está pasando y en qué punto se está deteriorando.</p>
+      </div>
+      <span class="section-index">02 / TREND</span>
+    </div>
+
+    <section class="grid-2">
+      <article class="chart-card full">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Conversión a lo largo del tiempo</h3>
+            <p>Won / total opportunities por día, con comparación del periodo anterior.</p>
+          </div>
+          <span class="micro-tag">Line</span>
+        </div>
+        <div id="lineChart" class="chart" role="img" aria-label="Gráfica de conversión por día"></div>
+        <div class="insight-strip">La conversión sube después del miércoles; sirve como punto de partida, no como explicación causal.</div>
+      </article>
+
+      <article class="chart-card">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Ventas por agente</h3>
+            <p>Comparación directa de resultados cerrados.</p>
+          </div>
+          <span class="micro-tag">Bar</span>
+        </div>
+        <div id="barChart" class="chart" role="img" aria-label="Ventas ganadas por agente"></div>
+      </article>
+
+      <article class="chart-card">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Outcome por agente</h3>
+            <p>Won, lost y pending en una misma base comparable.</p>
+          </div>
+          <span class="micro-tag">Stacked</span>
+        </div>
+        <div id="stackedChart" class="chart" role="img" aria-label="Resultados apilados por agente"></div>
+      </article>
+
+      <article class="chart-card tall">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Funnel comercial</h3>
+            <p>Cuánto volumen se pierde entre conversación, oportunidad y cierre.</p>
+          </div>
+          <span class="micro-tag">Funnel</span>
+        </div>
+        <div id="funnelChart" class="chart" role="img" aria-label="Embudo comercial"></div>
+        <div class="insight-strip">La mayor caída ocurre entre interés calificado y propuesta.</div>
+      </article>
+
+      <article class="chart-card tall">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Distribución de outcome</h3>
+            <p>Composición puntual del universo de oportunidades.</p>
+          </div>
+          <span class="micro-tag">Donut</span>
+        </div>
+        <div id="donutChart" class="chart" role="img" aria-label="Distribución de oportunidades ganadas perdidas y pendientes"></div>
+      </article>
+    </section>
+
+    <div class="section-label">
+      <div>
+        <h2>Conversation intelligence</h2>
+        <p>Buscar relaciones behavior → outcome, no acumular gráficas de actividad.</p>
+      </div>
+      <span class="section-index">03 / INTELLIGENCE</span>
+    </div>
+
+    <section class="grid-2">
+      <article class="chart-card full tall">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Matriz de objeciones</h3>
+            <p>Frecuencia de cada objeción por agente. Click/hover debería abrir luego evidencia de llamadas reales.</p>
+          </div>
+          <span class="micro-tag">Heatmap</span>
+        </div>
+        <div id="heatmapChart" class="chart" role="img" aria-label="Heatmap de objeciones por agente"></div>
+        <div class="insight-strip">Juan concentra objeciones de precio; Pedro recibe más menciones de competencia. Es una señal para investigar conversaciones concretas.</div>
+      </article>
+
+      <article class="chart-card featured tall">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Talk ratio vs. conversión</h3>
+            <p>Cada punto representa un agente-periodo. El ratio no se interpreta como calidad por sí solo.</p>
+          </div>
+          <span class="micro-tag">Scatter</span>
+        </div>
+        <div id="scatterChart" class="chart" role="img" aria-label="Relación entre ratio de habla del agente y conversión"></div>
+      </article>
+
+      <article class="chart-card tall">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Duración de llamadas</h3>
+            <p>Distribución para detectar dónde se concentra la conversación y cuáles son los extremos.</p>
+          </div>
+          <span class="micro-tag">Histogram</span>
+        </div>
+        <div id="histogramChart" class="chart" role="img" aria-label="Histograma de duración de llamadas"></div>
+      </article>
+
+      <article class="chart-card full tall">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Flujo de oportunidades</h3>
+            <p>Desde la necesidad detectada hasta el outcome. Muestra rutas, no únicamente una caída lineal.</p>
+          </div>
+          <span class="micro-tag">Sankey</span>
+        </div>
+        <div id="sankeyChart" class="chart" role="img" aria-label="Diagrama Sankey de oportunidades"></div>
+        <div class="insight-strip">El flujo permite detectar que “Precio” termina en pérdida con mucha más frecuencia que “Funcionalidad”.</div>
+      </article>
+    </section>
+
+    <div class="section-label">
+      <div>
+        <h2>Evidence layer</h2>
+        <p>La analítica debería poder bajar hasta la conversación que originó el dato.</p>
+      </div>
+      <span class="section-index">04 / TRACE</span>
+    </div>
+
+    <section class="grid-2">
+      <article class="chart-card full timeline-shell">
+        <div class="card-head">
+          <div class="card-copy">
+            <h3>Conversation timeline</h3>
+            <p>Prototipo de tira de eventos para una llamada: temas, objeciones, intervención del agente y outcome.</p>
+          </div>
+          <span class="micro-tag">Timeline</span>
+        </div>
+
+        <div class="timeline" aria-label="Línea de tiempo de una conversación comercial">
+          <div class="timeline-line"></div>
+          <div class="timeline-fill"></div>
+
+          <span class="event" style="left: 5%"></span>
+          <span class="event-label bottom" style="left: 5%"><strong>00:18</strong>Necesidad detectada</span>
+
+          <span class="event hot" style="left: 25%"></span>
+          <span class="event-label top" style="left: 25%"><strong>01:24</strong>Objeción: precio</span>
+
+          <span class="event" style="left: 43%"></span>
+          <span class="event-label bottom" style="left: 43%"><strong>02:17</strong>Agente explica valor</span>
+
+          <span class="event hot" style="left: 61%"></span>
+          <span class="event-label top" style="left: 61%"><strong>03:06</strong>Descuento aplicado</span>
+
+          <span class="event" style="left: 76%"></span>
+          <span class="event-label bottom" style="left: 76%"><strong>03:48</strong>Intención de compra</span>
+
+          <span class="event hot" style="left: 94%"></span>
+          <span class="event-label top" style="left: 94%"><strong>04:31</strong>Won</span>
+        </div>
+
+        <div class="legend-row">
+          <span class="legend-pill">Topic</span>
+          <span class="legend-pill">Objection</span>
+          <span class="legend-pill">Agent action</span>
+          <span class="legend-pill">Outcome</span>
+        </div>
+      </article>
+    </section>
+
+    <p class="footer-note">Demo data only. Este archivo funciona como chart lab reusable: superficies principalmente blancas, datos centralizados y builders independientes por visualización. La conexión real a analytics puede reemplazar DASHBOARD_DATA sin reescribir la capa visual.</p>
+  </main>
+
+  <script>
+    const UI = Object.freeze({
+      colors: {
+        graphite: '#414141',
+        amber: '#f7c974',
+        cream: '#faeccf',
+        paper: '#f8f8f8',
+        surface: '#ffffff',
+        graphite72: 'rgba(65,65,65,.72)',
+        graphite42: 'rgba(65,65,65,.42)',
+        graphite18: 'rgba(65,65,65,.18)',
+        graphite10: 'rgba(65,65,65,.10)',
+        amber74: 'rgba(247,201,116,.74)',
+        amber46: 'rgba(247,201,116,.46)'
+      },
+      font: 'Urbanist'
+    });
+
+    const C = UI.colors;
+
+    const DASHBOARD_DATA = Object.freeze({
+      days: ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'],
+      conversion: {
+        current: [24, 26, 25, 30, 33, 36, 35],
+        previous: [23, 24, 24, 27, 29, 30, 31]
+      },
+      agents: ['Ana', 'Luisa', 'Pedro', 'Juan', 'Mateo'],
+      agentSales: [49, 42, 37, 31, 25],
+      outcomes: {
+        won: [49, 42, 37, 31, 25],
+        pending: [16, 18, 17, 19, 13],
+        lost: [31, 35, 39, 45, 37]
+      },
+      funnel: [
+        ['Conversaciones', 980],
+        ['Calificadas', 721],
+        ['Propuesta', 462],
+        ['Decisión', 302],
+        ['Won', 184]
+      ],
+      outcomeDistribution: [
+        ['Won', 184],
+        ['Lost', 248],
+        ['Pending', 147]
+      ],
+      objections: ['Precio', 'Competencia', 'Tiempo', 'Funcionalidad', 'Confianza', 'Presupuesto'],
+      objectionMatrix: [
+        [0,0,18],[1,0,8],[2,0,11],[3,0,25],[4,0,13],[5,0,9],
+        [0,1,22],[1,1,10],[2,1,9],[3,1,17],[4,1,12],[5,1,14],
+        [0,2,12],[1,2,27],[2,2,19],[3,2,9],[4,2,8],[5,2,11],
+        [0,3,31],[1,3,14],[2,3,7],[3,3,12],[4,3,18],[5,3,26],
+        [0,4,19],[1,4,11],[2,4,13],[3,4,16],[4,4,10],[5,4,15]
+      ],
+      talkRatio: [
+        [38,42,'Ana'], [46,39,'Luisa'], [51,33,'Pedro'], [59,28,'Juan'], [67,21,'Mateo'],
+        [43,45,'Ana · previous'], [49,34,'Luisa · previous'], [55,31,'Pedro · previous'], [62,24,'Juan · previous']
+      ],
+      durationBuckets: ['<1m','1–2m','2–3m','3–4m','4–5m','5–6m','6–8m','8m+'],
+      durationCounts: [21, 66, 112, 147, 101, 63, 41, 28],
+      sankey: {
+        nodes: ['Necesidad','Precio','Funcionalidad','Competencia','Resuelta','No resuelta','Propuesta','Won','Lost'],
+        links: [
+          ['Necesidad','Precio',190], ['Necesidad','Funcionalidad',150], ['Necesidad','Competencia',92],
+          ['Precio','Resuelta',78], ['Precio','No resuelta',112],
+          ['Funcionalidad','Resuelta',104], ['Funcionalidad','No resuelta',46],
+          ['Competencia','Resuelta',39], ['Competencia','No resuelta',53],
+          ['Resuelta','Propuesta',196], ['No resuelta','Lost',148], ['No resuelta','Propuesta',63],
+          ['Propuesta','Won',184], ['Propuesta','Lost',75]
+        ]
+      }
+    });
+
+    const chartInstances = new Map();
+
+    function tooltip({ dark = false, trigger = 'item' } = {}) {
+      return {
+        trigger,
+        backgroundColor: dark ? C.paper : C.graphite,
+        borderWidth: 0,
+        padding: [10, 13],
+        textStyle: {
+          color: dark ? C.graphite : C.paper,
+          fontFamily: UI.font,
+          fontSize: 12,
+          fontWeight: 600
+        },
+        extraCssText: 'border-radius:14px;box-shadow:none;'
+      };
+    }
+
+    function cartesianTheme({ dark = false, grid = {} } = {}) {
+      const text = dark ? 'rgba(248,248,248,.55)' : C.graphite42;
+      const axis = dark ? 'rgba(248,248,248,.12)' : C.graphite10;
+
+      return {
+        grid: { left: 48, right: 22, top: 28, bottom: 34, containLabel: true, ...grid },
+        xAxis: {
+          axisLine: { lineStyle: { color: axis } },
+          axisTick: { show: false },
+          axisLabel: { color: text, fontFamily: UI.font, fontSize: 11, fontWeight: 600 }
+        },
+        yAxis: {
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: { color: text, fontFamily: UI.font, fontSize: 11, fontWeight: 600 },
+          splitLine: { lineStyle: { color: axis } }
+        }
+      };
+    }
+
+    function legend({ dark = false, ...overrides } = {}) {
+      return {
+        icon: 'circle',
+        itemWidth: 10,
+        itemHeight: 10,
+        textStyle: {
+          color: dark ? 'rgba(248,248,248,.55)' : C.graphite42,
+          fontFamily: UI.font,
+          fontSize: 10,
+          fontWeight: 700
+        },
+        ...overrides
+      };
+    }
+
+    function conversionOption() {
+      const base = cartesianTheme({ grid: { left: 42, right: 26, top: 36, bottom: 28 } });
+      return {
+        animationDuration: 700,
+        tooltip: { ...tooltip({ trigger: 'axis' }) },
+        legend: legend({ top: 0, right: 12 }),
+        grid: base.grid,
+        xAxis: { ...base.xAxis, type: 'category', boundaryGap: false, data: DASHBOARD_DATA.days },
+        yAxis: {
+          ...base.yAxis,
+          type: 'value',
+          min: 18,
+          max: 40,
+          axisLabel: { ...base.yAxis.axisLabel, formatter: '{value}%' }
+        },
+        series: [
+          {
+            name: 'Actual', type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+            lineStyle: { width: 4, color: C.amber },
+            itemStyle: { color: C.amber, borderColor: C.surface, borderWidth: 3 },
+            data: DASHBOARD_DATA.conversion.current
+          },
+          {
+            name: 'Anterior', type: 'line', smooth: true, showSymbol: false,
+            lineStyle: { width: 2, type: 'dashed', color: C.graphite42 },
+            data: DASHBOARD_DATA.conversion.previous
+          }
+        ]
+      };
+    }
+
+    function salesByAgentOption() {
+      const base = cartesianTheme({ grid: { left: 14, right: 18, top: 22, bottom: 16 } });
+      return {
+        animationDuration: 650,
+        tooltip: { ...tooltip({ trigger: 'axis' }), axisPointer: { type: 'none' } },
+        grid: base.grid,
+        xAxis: { ...base.xAxis, type: 'value', splitLine: { show: false }, axisLabel: { show: false } },
+        yAxis: {
+          ...base.yAxis, type: 'category', inverse: true, data: DASHBOARD_DATA.agents,
+          splitLine: { show: false },
+          axisLabel: { ...base.yAxis.axisLabel, color: C.graphite72, margin: 18 }
+        },
+        series: [{
+          type: 'bar', data: DASHBOARD_DATA.agentSales, barWidth: 16,
+          itemStyle: { color: C.graphite, borderRadius: 99 },
+          label: { show: true, position: 'right', color: C.graphite, fontFamily: UI.font, fontWeight: 800 }
+        }]
+      };
+    }
+
+    function outcomesOption() {
+      const base = cartesianTheme({ grid: { left: 42, right: 16, top: 42, bottom: 20 } });
+      return {
+        animationDuration: 700,
+        tooltip: {
+          ...tooltip({ trigger: 'axis' }),
+          axisPointer: { type: 'shadow', shadowStyle: { color: C.graphite10 } }
+        },
+        legend: legend({ top: 0, right: 10 }),
+        grid: base.grid,
+        xAxis: { ...base.xAxis, type: 'category', data: DASHBOARD_DATA.agents },
+        yAxis: { ...base.yAxis, type: 'value' },
+        series: [
+          { name: 'Won', type: 'bar', stack: 'outcome', data: DASHBOARD_DATA.outcomes.won, barWidth: 34, itemStyle: { color: C.amber } },
+          { name: 'Pending', type: 'bar', stack: 'outcome', data: DASHBOARD_DATA.outcomes.pending, itemStyle: { color: C.cream } },
+          { name: 'Lost', type: 'bar', stack: 'outcome', data: DASHBOARD_DATA.outcomes.lost, itemStyle: { color: C.graphite, borderRadius: [12,12,0,0] } }
+        ]
+      };
+    }
+
+    function funnelOption() {
+      const funnelColors = [C.cream, C.amber46, C.amber74, C.amber, C.graphite];
+      return {
+        animationDuration: 750,
+        textStyle: { fontFamily: UI.font },
+        tooltip: tooltip(),
+        series: [{
+          type: 'funnel', left: '17%', top: 24, bottom: 16, width: '66%',
+          min: 0, max: 1000, minSize: '24%', maxSize: '100%', sort: 'descending', gap: 5,
+          label: {
+            show: true, position: 'inside', color: C.graphite, fontFamily: UI.font, fontWeight: 800,
+            formatter: p => `${p.name}  ${p.value}`
+          },
+          labelLine: { show: false },
+          itemStyle: { borderWidth: 0, borderRadius: 10 },
+          data: DASHBOARD_DATA.funnel.map(([name, value], index) => ({
+            name, value, itemStyle: { color: funnelColors[index] },
+            label: index === funnelColors.length - 1 ? { color: C.paper } : undefined
+          }))
+        }]
+      };
+    }
+
+    function donutOption() {
+      const colors = [C.graphite, C.cream, C.amber];
+      const total = DASHBOARD_DATA.outcomeDistribution.reduce((sum, [, value]) => sum + value, 0);
+      return {
+        animationDuration: 700,
+        textStyle: { fontFamily: UI.font },
+        tooltip: tooltip(),
+        legend: legend({ bottom: 2, left: 'center' }),
+        graphic: [
+          { type: 'text', left: 'center', top: '39%', style: { text: String(total), fill: C.graphite, font: `800 38px ${UI.font}`, textAlign: 'center' } },
+          { type: 'text', left: 'center', top: '51%', style: { text: 'opportunities', fill: C.graphite42, font: `700 11px ${UI.font}`, textAlign: 'center' } }
+        ],
+        series: [{
+          type: 'pie', radius: ['58%', '78%'], center: ['50%', '47%'],
+          itemStyle: { borderColor: C.surface, borderWidth: 5, borderRadius: 99 },
+          label: { show: false },
+          data: DASHBOARD_DATA.outcomeDistribution.map(([name, value], index) => ({
+            name, value, itemStyle: { color: colors[index] }
+          }))
+        }]
+      };
+    }
+
+    function heatmapOption() {
+      return {
+        animationDuration: 600,
+        tooltip: {
+          ...tooltip(),
+          formatter: p => `${DASHBOARD_DATA.agents[p.value[1]]}<br><b>${DASHBOARD_DATA.objections[p.value[0]]}</b>: ${p.value[2]}%`
+        },
+        grid: { top: 24, right: 78, bottom: 38, left: 88, containLabel: true },
+        xAxis: {
+          type: 'category', data: DASHBOARD_DATA.objections,
+          axisLine: { show: false }, axisTick: { show: false },
+          axisLabel: { color: C.graphite72, fontFamily: UI.font, fontSize: 11, fontWeight: 700, interval: 0 }
+        },
+        yAxis: {
+          type: 'category', data: DASHBOARD_DATA.agents,
+          axisLine: { show: false }, axisTick: { show: false },
+          axisLabel: { color: C.graphite72, fontFamily: UI.font, fontSize: 11, fontWeight: 700 }
+        },
+        visualMap: {
+          min: 0, max: 32, orient: 'vertical', right: 2, top: 'center',
+          text: ['Alta', 'Baja'], calculable: false,
+          textStyle: { color: C.graphite42, fontFamily: UI.font, fontSize: 10, fontWeight: 700 },
+          inRange: { color: [C.surface, C.cream, C.amber, C.graphite] }, itemWidth: 10, itemHeight: 110
+        },
+        series: [{
+          type: 'heatmap', data: DASHBOARD_DATA.objectionMatrix,
+          label: { show: true, color: C.graphite, fontFamily: UI.font, fontSize: 10, fontWeight: 800, formatter: p => `${p.value[2]}%` },
+          itemStyle: { borderColor: C.surface, borderWidth: 4, borderRadius: 10 },
+          emphasis: { itemStyle: { borderColor: C.graphite, borderWidth: 2 } }
+        }]
+      };
+    }
+
+    function scatterOption() {
+      const base = cartesianTheme({ dark: true, grid: { left: 44, right: 24, top: 26, bottom: 36 } });
+      return {
+        animationDuration: 650,
+        tooltip: {
+          ...tooltip({ dark: true }),
+          formatter: p => `<b>${p.data[2]}</b><br>Talk ratio: ${p.data[0]}%<br>Conversión: ${p.data[1]}%`
+        },
+        grid: base.grid,
+        xAxis: {
+          ...base.xAxis, type: 'value', min: 25, max: 75, name: 'Talk ratio (%)', nameLocation: 'middle', nameGap: 27,
+          nameTextStyle: { color: 'rgba(248,248,248,.45)', fontFamily: UI.font, fontSize: 10, fontWeight: 700 }
+        },
+        yAxis: {
+          ...base.yAxis, type: 'value', min: 15, max: 50,
+          axisLabel: { ...base.yAxis.axisLabel, formatter: '{value}%' }
+        },
+        series: [{
+          type: 'scatter', data: DASHBOARD_DATA.talkRatio,
+          symbolSize: point => 14 + point[1] * .22,
+          itemStyle: { color: C.amber, opacity: .9 }, emphasis: { scale: 1.15 }
+        }]
+      };
+    }
+
+    function histogramOption() {
+      const base = cartesianTheme({ grid: { left: 40, right: 18, top: 28, bottom: 34 } });
+      return {
+        animationDuration: 600,
+        tooltip: {
+          ...tooltip({ trigger: 'axis' }),
+          axisPointer: { type: 'shadow', shadowStyle: { color: C.graphite10 } }
+        },
+        grid: base.grid,
+        xAxis: {
+          ...base.xAxis, type: 'category', data: DASHBOARD_DATA.durationBuckets,
+          name: 'Duración', nameLocation: 'middle', nameGap: 26,
+          nameTextStyle: { color: C.graphite42, fontFamily: UI.font, fontSize: 10, fontWeight: 700 }
+        },
+        yAxis: { ...base.yAxis, type: 'value' },
+        series: [{
+          type: 'bar', data: DASHBOARD_DATA.durationCounts, barWidth: '84%',
+          itemStyle: { color: C.amber, borderRadius: [10,10,0,0] }
+        }]
+      };
+    }
+
+    function sankeyOption() {
+      const nodeColors = {
+        'Necesidad': C.graphite, 'Precio': C.amber, 'Funcionalidad': C.cream,
+        'Competencia': C.graphite72, 'Resuelta': C.amber74, 'No resuelta': C.graphite42,
+        'Propuesta': C.cream, 'Won': C.amber, 'Lost': C.graphite
+      };
+      return {
+        animationDuration: 800,
+        textStyle: { fontFamily: UI.font },
+        tooltip: tooltip(),
+        series: [{
+          type: 'sankey', left: 56, right: 72, top: 18, bottom: 20,
+          nodeWidth: 18, nodeGap: 16, draggable: false,
+          emphasis: { focus: 'adjacency' },
+          lineStyle: { color: 'source', curveness: .52, opacity: .22 },
+          label: { color: C.graphite72, fontFamily: UI.font, fontSize: 11, fontWeight: 700 },
+          itemStyle: { borderWidth: 0, borderRadius: 99 },
+          data: DASHBOARD_DATA.sankey.nodes.map(name => ({ name, itemStyle: { color: nodeColors[name] } })),
+          links: DASHBOARD_DATA.sankey.links.map(([source, target, value]) => ({ source, target, value }))
+        }]
+      };
+    }
+
+    const CHARTS = Object.freeze({
+      lineChart: conversionOption,
+      barChart: salesByAgentOption,
+      stackedChart: outcomesOption,
+      funnelChart: funnelOption,
+      donutChart: donutOption,
+      heatmapChart: heatmapOption,
+      scatterChart: scatterOption,
+      histogramChart: histogramOption,
+      sankeyChart: sankeyOption
+    });
+
+    function mountCharts() {
+      Object.entries(CHARTS).forEach(([id, createOption]) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        const chart = echarts.init(element, null, { renderer: 'canvas' });
+        chart.setOption(createOption());
+        chartInstances.set(id, chart);
+      });
+    }
+
+    function bindRangeControls() {
+      const controls = [...document.querySelectorAll('.top-actions .pill')];
+      controls.forEach(button => {
+        button.addEventListener('click', () => {
+          controls.forEach(item => item.classList.remove('active'));
+          button.classList.add('active');
+        });
+      });
+    }
+
+    function resizeCharts() {
+      chartInstances.forEach(chart => chart.resize());
+    }
+
+    mountCharts();
+    bindRangeControls();
+    window.addEventListener('resize', resizeCharts, { passive: true });
+  </script>
+</body>
+</html>

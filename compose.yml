@@ -28,6 +28,21 @@ services:
       timeout: 5s
       retries: 12
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: hackathon-redis
+    ports:
+      - "127.0.0.1:16379:6379"
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   migrate:
     build:
       context: ./backend
@@ -64,7 +79,9 @@ services:
       CHROMA_PORT: 8000
       CHROMA_SSL: "false"
       CHROMA_RAG_COLLECTION: rag_documents
-      AGENT_TOOL_MODULES: app.domains.demo_booking.tools
+      AGENT_TOOL_MODULES: app.domains.demo_booking.tools,app.domains.business_analytics.tools
+      REDIS_URL: redis://redis:6379/0
+      ANALYTICS_CACHE_TTL_SECONDS: ${ANALYTICS_CACHE_TTL_SECONDS:-60}
     ports:
       - "127.0.0.1:18474:18474"
     restart: unless-stopped
@@ -82,6 +99,37 @@ services:
       chroma:
         condition: service_started
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: hackathon-kognia-backend
+    container_name: hackathon-worker
+    working_dir: /app/backend
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-test}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kognia}:${POSTGRES_PASSWORD:-kognia}@postgres:5432/${POSTGRES_DB:-kognia}
+      REDIS_URL: redis://redis:6379/0
+      ANALYTICS_CACHE_TTL_SECONDS: ${ANALYTICS_CACHE_TTL_SECONDS:-60}
+      AGENT_TOOL_MODULES: app.domains.demo_booking.tools,app.domains.business_analytics.tools
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend
@@ -96,7 +144,13 @@ services:
     ports:
       - "127.0.0.1:18473:80"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://localhost/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 volumes:
   postgres_data:
   chroma_data:
+  redis_data:
