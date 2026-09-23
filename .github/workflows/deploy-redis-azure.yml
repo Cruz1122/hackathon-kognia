@@ -45,8 +45,8 @@ jobs:
               --image redis:7.4-alpine \
               --min-replicas 1 \
               --max-replicas 1 \
-              --command redis-server \
-              --args "--appendonly=yes"
+              --command "" \
+              --args ""
 
             az containerapp ingress enable \
               --name "$REDIS_APP_NAME" \
@@ -64,9 +64,7 @@ jobs:
               --max-replicas 1 \
               --ingress internal \
               --target-port 6379 \
-              --transport tcp \
-              --command redis-server \
-              --args "--appendonly=yes"
+              --transport tcp
           fi
 
       - name: Wait for Redis Container App
