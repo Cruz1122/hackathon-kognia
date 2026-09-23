@@ -1,0 +1,147 @@
+name: Deploy Chroma Container App
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-chroma-container
+  cancel-in-progress: false
+
+jobs:
+  deploy-chroma:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+      CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
+      BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+      WORKER_APP_NAME: ${{ vars.AZURE_WORKER_APP_NAME }}
+      CHROMA_COLLECTION: ${{ vars.CHROMA_RAG_COLLECTION }}
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create or update Chroma Container App
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_ENVIRONMENT"
+          test -n "$CHROMA_APP_NAME"
+
+          if [[ -z "$CHROMA_COLLECTION" ]]; then
+            CHROMA_COLLECTION="rag_documents"
+          fi
+
+          if az containerapp show \
+            --name "$CHROMA_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            az containerapp update \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --image chromadb/chroma:1.1.1 \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --set-env-vars \
+                IS_PERSISTENT=TRUE
+
+            az containerapp ingress enable \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --type internal \
+              --target-port 8000 \
+              --transport http
+          else
+            az containerapp create \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --environment "$CONTAINER_ENVIRONMENT" \
+              --image chromadb/chroma:1.1.1 \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --ingress internal \
+              --target-port 8000 \
+              --transport http \
+              --env-vars IS_PERSISTENT=TRUE
+          fi
+
+      - name: Wait for Chroma Container App
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..30}; do
+            state="$(az containerapp show \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --query properties.runningStatus \
+              --output tsv)"
+
+            if [[ "$state" == "Running" ]]; then
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Chroma did not become ready in time." >&2
+          exit 1
+
+      - name: Configure backend Chroma connection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$CHROMA_COLLECTION" ]]; then
+            CHROMA_COLLECTION="rag_documents"
+          fi
+
+          if ! az containerapp show \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            printf '%s\n' 'Backend Container App todavía no existe; Chroma se configurará en el primer despliegue del backend.'
+            exit 0
+          fi
+
+          az containerapp update \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --set-env-vars \
+              CHROMA_HOST="$CHROMA_APP_NAME" \
+              CHROMA_PORT=8000 \
+              CHROMA_SSL=false \
+              CHROMA_RAG_COLLECTION="$CHROMA_COLLECTION"
+
+      - name: Configure worker Chroma connection
+        if: ${{ vars.AZURE_WORKER_APP_NAME != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$CHROMA_COLLECTION" ]]; then
+            CHROMA_COLLECTION="rag_documents"
+          fi
+
+          if ! az containerapp show \
+            --name "$WORKER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            printf '%s\n' 'Worker Container App todavía no existe; se omitirá su configuración.'
+            exit 0
+          fi
+
+          az containerapp update \
+            --name "$WORKER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --set-env-vars \
+              CHROMA_HOST="$CHROMA_APP_NAME" \
+              CHROMA_PORT=8000 \
+              CHROMA_SSL=false \
+              CHROMA_RAG_COLLECTION="$CHROMA_COLLECTION"
