@@ -1,4 +1,8 @@
-"""Create the initial SUPERADMIN explicitly: python -m app.auth.bootstrap."""
+"""Create the initial SUPERADMIN explicitly: python -m app.auth.bootstrap.
+
+Pass --demo-only to create just the demo organization and ADMIN, without
+requiring SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD.
+"""
 
 from __future__ import annotations
 
@@ -53,10 +57,12 @@ async def _bootstrap() -> int:
     return 0
 
 
-async def _bootstrap_demo_admin() -> None:
+async def _bootstrap_demo_admin(*, required: bool = False) -> None:
     email = os.getenv("DEMO_ADMIN_EMAIL", "").strip()
     password = os.getenv("DEMO_ADMIN_PASSWORD", "")
     if not email or not password:
+        if required:
+            raise RuntimeError("DEMO_ADMIN_EMAIL and DEMO_ADMIN_PASSWORD are required.")
         return
     email = normalize_email(email)
     org_name = normalize_name(os.getenv("DEMO_ORG_NAME", "Demo Kognia") or "Demo Kognia")
@@ -89,8 +95,11 @@ async def _bootstrap_demo_admin() -> None:
     print("DEMO ADMIN created.")
 
 
-async def _run_bootstrap() -> int:
+async def _run_bootstrap(*, demo_only: bool = False) -> int:
     try:
+        if demo_only:
+            await _bootstrap_demo_admin(required=True)
+            return 0
         return await _bootstrap()
     finally:
         await dispose_engine()
@@ -101,10 +110,11 @@ def main() -> int:
     load_dotenv(Path.cwd() / "backend" / ".env", override=False)
     load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
     load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+    demo_only = "--demo-only" in sys.argv[1:]
     try:
-        return asyncio.run(_run_bootstrap())
+        return asyncio.run(_run_bootstrap(demo_only=demo_only))
     except Exception:
-        print("SUPERADMIN bootstrap failed.", file=sys.stderr)
+        print("Bootstrap failed.", file=sys.stderr)
         return 1
 
 
