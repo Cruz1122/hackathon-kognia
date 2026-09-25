@@ -1,0 +1,108 @@
+name: Setup Demo Database
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-demo-db-setup
+  cancel-in-progress: false
+
+jobs:
+  setup-demo-db:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+      DEMO_ADMIN_EMAIL: ${{ vars.DEMO_ADMIN_EMAIL }}
+      DEMO_ADMIN_PASSWORD: ${{ secrets.DEMO_ADMIN_PASSWORD }}
+      DEMO_ORG_NAME: ${{ vars.DEMO_ORG_NAME }}
+      DEMO_ORG_SLUG: ${{ vars.DEMO_ORG_SLUG }}
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Migrate schema and create demo admin inside the backend container
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$RESOURCE_GROUP"
+          test -n "$BACKEND_APP_NAME"
+          if [[ -z "${DEMO_ADMIN_EMAIL:-}" || -z "${DEMO_ADMIN_PASSWORD:-}" ]]; then
+            printf '%s\n' 'DEMO_ADMIN_EMAIL/DEMO_ADMIN_PASSWORD sin configurar; no se puede crear el admin de demo.' >&2
+            exit 1
+          fi
+
+          # El contenedor del backend no tiene DEMO_ADMIN_*; se inyectan inline.
+          # shlex.quote evita que caracteres especiales rompan el comando remoto.
+          remote_command="$(python - <<'PY'
+          import os
+          import shlex
+
+          variables = {
+              "DEMO_ADMIN_EMAIL": os.environ["DEMO_ADMIN_EMAIL"],
+              "DEMO_ADMIN_PASSWORD": os.environ["DEMO_ADMIN_PASSWORD"],
+              "DEMO_ORG_NAME": os.environ.get("DEMO_ORG_NAME") or "Demo Kognia",
+              "DEMO_ORG_SLUG": os.environ.get("DEMO_ORG_SLUG") or "demo-kognia",
+          }
+          assignments = " ".join(f"{key}={shlex.quote(value)}" for key, value in variables.items())
+          script = (
+              "cd /app/backend && "
+              "alembic -c alembic.ini upgrade head && "
+              f"{assignments} python -m app.auth.bootstrap --demo-only && "
+              "echo SETUP_DEMO_DB_OK"
+          )
+          print("/bin/sh -c " + shlex.quote(script))
+          PY
+          )"
+          export REMOTE_COMMAND="$remote_command"
+
+          # az containerapp exec exige una réplica viva; un request la despierta.
+          fqdn="$(az containerapp show -n "$BACKEND_APP_NAME" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+          test -n "$fqdn"
+          for attempt in {1..12}; do
+            if [[ "$(az containerapp replica list -n "$BACKEND_APP_NAME" -g "$RESOURCE_GROUP" --query 'length(@)' -o tsv)" -gt 0 ]]; then
+              break
+            fi
+            printf '%s\n' "Sin réplicas del backend todavía; despertando la app ($attempt/12)..."
+            curl --fail --silent --show-error --max-time 10 "https://${fqdn}/health/live" >/dev/null || true
+            sleep 5
+          done
+
+          replicas="$(az containerapp replica list -n "$BACKEND_APP_NAME" -g "$RESOURCE_GROUP" --query 'length(@)' -o tsv)"
+          if [[ "$replicas" -eq 0 ]]; then
+            printf '%s\n' 'El backend no tiene réplicas activas; ábrelo una vez y reintenta.' >&2
+            exit 1
+          fi
+
+          # az containerapp exec rechaza stdin sin TTY; script le da una PTY.
+          # shellcheck disable=SC2016
+          cat > /tmp/container-exec.sh <<'EOF'
+          #!/bin/sh
+          exec az containerapp exec -n "$BACKEND_APP_NAME" -g "$RESOURCE_GROUP" --command "$REMOTE_COMMAND"
+          EOF
+          chmod +x /tmp/container-exec.sh
+
+          set +e
+          output="$(timeout 420 script -qec /tmp/container-exec.sh /dev/null 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+
+          if [[ $status -ne 0 ]]; then
+            printf '%s\n' "az containerapp exec terminó con código ${status}." >&2
+            exit 1
+          fi
+          if ! grep -q "SETUP_DEMO_DB_OK" <<<"$output"; then
+            printf '%s\n' 'No se confirmó la migración y el bootstrap dentro del contenedor.' >&2
+            exit 1
+          fi
+
+          printf '%s\n' 'Schema migrado y admin de demo inicializado.'
