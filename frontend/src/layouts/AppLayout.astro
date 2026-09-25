@@ -30,7 +30,7 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
   </head>
   <body data-api-url={apiUrl}>
     <div class:list={['app-shell', showDetailPanel && 'has-detail-panel']}>
-      <aside class="app-sidebar" aria-label="Demo" transition:persist>
+      <aside class="app-sidebar" aria-label="Demo" transition:persist transition:name="app-sidebar">
         <div class="app-mobile-topbar">
           <div class="app-sidebar__brand">
             <div class="app-sidebar__face" aria-hidden="true">
@@ -49,7 +49,7 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
         </div>
         <AppNav mode="route" active={activeRoute} />
       </aside>
-      <main class="app-main" id="appMain">
+      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="slide">
         <slot />
       </main>
       {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">

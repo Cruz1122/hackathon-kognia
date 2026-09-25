@@ -81,7 +81,32 @@ function setInsight(id: string, text: string): void { setText(id, text); }
 
 const charts = new Map<string, ECharts>();
 function escapeHtml(value: unknown): string { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char)); }
-function tooltip(trigger: 'axis' | 'item' = 'item'): EChartsOption['tooltip'] { return { trigger, confine: true, enterable: false, triggerOn: 'click', transitionDuration: 0, backgroundColor: C.graphite, borderWidth: 0, padding: [10, 13], textStyle: { color: C.paper, fontFamily: 'Urbanist', fontSize: 12, fontWeight: 600 }, extraCssText: 'border-radius:14px;box-shadow:none;max-width: min(280px, calc(100vw - 32px));white-space:normal;pointer-events:none;' }; }
+function tooltip(trigger: 'axis' | 'item' = 'item'): EChartsOption['tooltip'] {
+  return {
+    trigger,
+    confine: true,
+    enterable: false,
+    triggerOn: 'mousemove',
+    alwaysShowContent: false,
+    hideDelay: 0,
+    transitionDuration: .12,
+    renderMode: 'html',
+    backgroundColor: C.graphite,
+    borderWidth: 0,
+    padding: [10, 13],
+    textStyle: { color: C.paper, fontFamily: 'Urbanist', fontSize: 12, fontWeight: 600 },
+    extraCssText: 'width:max-content;height:auto;min-height:0;max-height:none;max-width:min(320px,calc(100vw - 32px));border-radius:14px;box-shadow:0 8px 24px rgba(65,65,65,.16);white-space:normal;pointer-events:none;',
+    position: (point, _params, _dom, _rect, size) => {
+      const gap = 12;
+      const [x, y] = point;
+      const [width, height] = size.contentSize;
+      const [viewWidth, viewHeight] = size.viewSize;
+      const left = x + gap + width <= viewWidth ? x + gap : x - width - gap;
+      const top = Math.max(6, Math.min(y - height / 2, viewHeight - height - 6));
+      return [left, top];
+    },
+  };
+}
 function cartesian(dark = false): Pick<EChartsOption, 'grid' | 'xAxis' | 'yAxis'> {
   const text = dark ? 'rgba(248,248,248,.55)' : C.graphite42; const axis = dark ? 'rgba(248,248,248,.12)' : C.graphite10;
   return { grid: { left: 48, right: 22, top: 36, bottom: 34, containLabel: true }, xAxis: { axisLine: { lineStyle: { color: axis } }, axisTick: { show: false }, axisLabel: { color: text, fontFamily: 'Urbanist', fontSize: 11, fontWeight: 600 } }, yAxis: { axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: text, fontFamily: 'Urbanist', fontSize: 11, fontWeight: 600 }, splitLine: { lineStyle: { color: axis } } } };
@@ -137,13 +162,13 @@ function sparklineOption(values: number[], color = C.amber): EChartsOption {
   return { animationDuration: 500, grid: { left: 2, right: 2, top: 4, bottom: 4 }, xAxis: { type: 'category', show: false, data: values.map((_, index) => index) }, yAxis: { type: 'value', show: false, scale: true }, tooltip: { show: false }, series: [{ type: 'line', data: values, smooth: true, showSymbol: false, lineStyle: { width: 2, color }, areaStyle: { color, opacity: .16 } }] };
 }
 function funnelOption(items: DashboardPayload['funnel']): EChartsOption {
-  return { animationDuration: 700, tooltip: tooltip('item'), series: [{ type: 'funnel', left: '8%', right: '8%', top: 10, bottom: 10, min: 0, max: Math.max(1, items[0]?.value ?? 0), minSize: '12%', maxSize: '100%', sort: 'descending', gap: 4, label: { show: true, position: 'inside', color: C.graphite, fontFamily: 'Urbanist', fontWeight: 800, formatter: (params) => `${params.name}  ${params.value}` }, labelLine: { show: false }, itemStyle: { borderWidth: 0, borderRadius: 10 }, data: items.map((item, index) => ({ name: item.stage, value: item.value, itemStyle: { color: [C.graphite, C.cream, C.amber, C.cream, C.amber][index % 5] } })) }] };
+  return { animationDuration: 700, tooltip: tooltip('item'), series: [{ type: 'funnel', left: '8%', right: '8%', top: 10, bottom: 10, min: 0, max: Math.max(1, items[0]?.value ?? 0), minSize: '12%', maxSize: '100%', sort: 'descending', gap: 4, label: { show: true, position: 'inside', color: C.graphite, fontFamily: 'Urbanist', fontWeight: 800, formatter: (params) => `${params.name}  ${params.value}` }, labelLine: { show: false }, itemStyle: { borderWidth: 0, borderRadius: 10 }, data: items.map((item, index) => ({ name: item.stage, value: item.value, itemStyle: { color: [C.graphite, C.cream, C.amber, C.cream, C.amber][index % 5] }, label: { color: index % 5 === 0 ? C.paper : C.graphite } })) }] };
 }
 function objectionProductHeatmapOption(items: DashboardPayload['objection_product_heatmap']): EChartsOption {
   const categories = [...new Set(items.map((item) => item.category))];
   const products = [...new Set(items.map((item) => item.product_name))];
   const maximum = Math.max(1, ...items.map((item) => item.count));
-  return { animationDuration: 600, tooltip: { ...tooltip('item'), formatter: (params) => { const value = Array.isArray(params.value) ? params.value : []; return `${escapeHtml(products[Number(value[1])])}<br><b>${escapeHtml(categories[Number(value[0])])}</b>: ${numberValue(value[2])}`; } }, grid: { top: 12, right: 56, bottom: 38, left: 70, containLabel: true }, xAxis: { type: 'category', data: categories, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.graphite42, fontFamily: 'Urbanist', fontSize: 10, fontWeight: 700, interval: 0 } }, yAxis: { type: 'category', data: products, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.graphite42, fontFamily: 'Urbanist', fontSize: 10, fontWeight: 700 } }, visualMap: { min: 0, max: maximum, calculable: false, orient: 'vertical', right: 0, top: 'center', text: ['Alta', 'Baja'], textStyle: { color: C.graphite42, fontFamily: 'Urbanist', fontSize: 9, fontWeight: 700 }, inRange: { color: [C.paper, C.cream, C.amber, C.graphite] }, itemWidth: 9, itemHeight: 90 }, series: [{ type: 'heatmap', data: items.map((item) => [categories.indexOf(item.category), products.indexOf(item.product_name), item.count]), label: { show: true, color: C.graphite, fontFamily: 'Urbanist', fontSize: 10, fontWeight: 800 }, itemStyle: { borderColor: C.paper, borderWidth: 3 } }] };
+  return { animationDuration: 600, tooltip: { ...tooltip('item'), formatter: (params) => { const value = Array.isArray(params.value) ? params.value : []; return `${escapeHtml(products[Number(value[1])])}<br><b>${escapeHtml(categories[Number(value[0])])}</b>: ${numberValue(value[2])}`; } }, grid: { top: 12, right: 56, bottom: 38, left: 34, containLabel: false }, xAxis: { type: 'category', data: categories, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.graphite42, fontFamily: 'Urbanist', fontSize: 10, fontWeight: 700, interval: 0 } }, yAxis: { type: 'category', data: products, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.graphite42, fontFamily: 'Urbanist', fontSize: 10, fontWeight: 700, rotate: 25, width: 32, overflow: 'truncate', margin: 2 } }, visualMap: { min: 0, max: maximum, calculable: false, orient: 'vertical', right: 0, top: 'center', text: ['Alta', 'Baja'], textStyle: { color: C.graphite42, fontFamily: 'Urbanist', fontSize: 9, fontWeight: 700 }, inRange: { color: [C.paper, C.cream, C.amber, C.graphite] }, itemWidth: 9, itemHeight: 90 }, series: [{ type: 'heatmap', data: items.map((item) => [categories.indexOf(item.category), products.indexOf(item.product_name), item.count]), label: { show: true, color: C.graphite, fontFamily: 'Urbanist', fontSize: 10, fontWeight: 800 }, itemStyle: { borderColor: C.paper, borderWidth: 3 } }] };
 }
 function objectionOption(items: DashboardPayload['objection_categories']): EChartsOption {
   const base = cartesian();

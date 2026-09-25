@@ -1,4 +1,6 @@
 ---
+import { ClientRouter } from 'astro:transitions';
+
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
  import AppNav from '../components/navigation/AppNav.astro';
 import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
@@ -12,6 +14,7 @@ import '../styles/dashboard.css';
   <meta charset="utf-8" />
    <meta name="viewport" content="width=device-width, initial-scale=1" />
    <title>Monitoreo de llamadas — Demo</title>
+   <ClientRouter fallback="swap" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -673,22 +676,32 @@ import '../styles/dashboard.css';
     }
     .auth-field input:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
     .auth-password-field {
-      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
+    }
+    .auth-password-control {
+      position: relative;
+      min-width: 0;
     }
     .auth-password-field input {
-      grid-area: 2 / 1;
+      display: block;
       min-width: 0;
       padding-right: 62px;
       font-size: 18px;
       letter-spacing: 0;
     }
+    .auth-password-field input[type="password"] {
+      font-size: 25px;
+      font-weight: 700;
+      letter-spacing: .1em;
+    }
     .auth-password-toggle {
-      position: relative;
-      grid-area: 2 / 1;
+      position: absolute;
+      top: 50%;
+      right: 8px;
       justify-self: end;
       align-self: center;
       z-index: 1;
-      margin-right: 8px;
+      transform: translateY(-50%);
       width: 40px;
       height: 40px;
       display: grid;
@@ -1669,10 +1682,12 @@ import '../styles/dashboard.css';
             </label>
             <label class="auth-field auth-password-field">
               <span>Contraseña</span>
-              <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
-              <button class="auth-password-toggle" type="button" id="authPasswordToggle" aria-label="Mostrar contraseña" aria-pressed="false">
-                <i data-lucide="eye" aria-hidden="true"></i>
-              </button>
+              <div class="auth-password-control">
+                <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
+                <button class="auth-password-toggle" type="button" id="authPasswordToggle" aria-label="Mostrar contraseña" aria-pressed="false">
+                  <i data-lucide="eye" aria-hidden="true"></i>
+                </button>
+              </div>
             </label>
             <div class="auth-submit-wrap">
               <span class="auth-submit-loader" aria-hidden="true">
@@ -2076,7 +2091,7 @@ import '../styles/dashboard.css';
       })();
     </script>
 
-    <div class="app-content" id="appContent" aria-hidden="true">
+    <div class="app-content" id="appContent" aria-hidden="true" transition:name="app-main" transition:animate="slide">
       <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
       <div class="player-wrap">
         <section class="player" aria-label="Reproductor de llamada">
@@ -2907,9 +2922,9 @@ import '../styles/dashboard.css';
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
       const authForm = document.getElementById('authForm');
-       const authEmail = document.getElementById('authEmail');
-        const authPassword = document.getElementById('authPassword');
-        const authPasswordToggle = document.getElementById('authPasswordToggle');
+         const authEmail = document.getElementById('authEmail');
+         const authPassword = document.getElementById('authPassword');
+         const authPasswordToggle = document.getElementById('authPasswordToggle');
         const authSubmit = document.getElementById('authSubmit');
        const appContent = document.getElementById('appContent');
        const loginFormContent = document.querySelector('.login-form-content');
@@ -2935,8 +2950,8 @@ import '../styles/dashboard.css';
           authPasswordToggle.setAttribute('aria-pressed', String(visible));
           authPasswordToggle.innerHTML = `<i data-lucide="${visible ? 'eye-off' : 'eye'}" aria-hidden="true"></i>`;
           const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
-          lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
-        }
+           lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+         }
 
         authPasswordToggle?.addEventListener('mousedown', (event) => {
           event.preventDefault();
@@ -3012,10 +3027,7 @@ import '../styles/dashboard.css';
        const callsToggle = document.getElementById('callsToggle');
        const sectionViews = Array.from(document.querySelectorAll<HTMLElement>('.section-view'));
        const detailPanel = document.getElementById('detailPanel');
-        const railMs = 1550;
-        const materialDelayMs = 1550;
-        const materialCollapseMs = 850;
-        const wipeMs = railMs + materialDelayMs + materialCollapseMs;
+        const sidebarReadyMs = 1550;
         let navReadyTimer = 0;
         let dashboardStarted = false;
         let dashboardCleanup: (() => void) | null = null;
@@ -3055,7 +3067,7 @@ import '../styles/dashboard.css';
            return;
          }
          clearNavReadyWait();
-          const readyAt = performance.now() + wipeMs;
+          const readyAt = performance.now() + sidebarReadyMs;
           navReadyHandler = (event: TransitionEvent) => {
             if (event.target !== authPanel) return;
             if (event.propertyName !== '--left-rail') return;
@@ -3063,7 +3075,7 @@ import '../styles/dashboard.css';
             markNavReady();
           };
           authPanel.addEventListener('transitionend', navReadyHandler);
-          navReadyTimer = window.setTimeout(markNavReady, wipeMs);
+          navReadyTimer = window.setTimeout(markNavReady, sidebarReadyMs);
        }
 
         function notifyLayoutChange(): void {

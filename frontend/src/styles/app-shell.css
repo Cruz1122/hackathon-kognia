@@ -48,6 +48,20 @@ button, input { font: inherit; }
 .analytics-dashboard { height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; }
 .app-detail-panel { grid-column: 3; min-width: 0; }
 
+::view-transition-group(app-main) {
+  z-index: 1;
+  animation-duration: .62s;
+  animation-timing-function: cubic-bezier(.22, .8, .24, 1);
+}
+::view-transition-old(app-main),
+::view-transition-new(app-main) {
+  animation-duration: .62s;
+  animation-timing-function: cubic-bezier(.22, .8, .24, 1);
+}
+::view-transition-group(app-sidebar) {
+  z-index: 2;
+}
+
 @media (max-width: 767px) {
   .app-shell, .app-shell.has-detail-panel { grid-template-columns: 1fr; height: auto; min-height: 100dvh; overflow: visible; }
   .app-sidebar { min-height: auto; gap: 10px; padding: 18px 16px 12px; }
@@ -69,4 +83,5 @@ button, input { font: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  ::view-transition-group(app-main), ::view-transition-old(app-main), ::view-transition-new(app-main) { animation-duration: .001ms !important; }
 }
