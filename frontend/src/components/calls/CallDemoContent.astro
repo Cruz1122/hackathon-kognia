@@ -1,0 +1,59 @@
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <defs>
+    <filter id="ui-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+      <feColorMatrix in="blur" type="matrix" values="
+        1 0 0 0 0
+        0 1 0 0 0
+        0 0 1 0 0
+        0 0 0 22 -10" result="goo" />
+      <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+    </filter>
+  </defs>
+</svg>
+
+<div class="call-demo-page">
+  <div class="app-content is-nav-ready" id="appContent" aria-hidden="false">
+    <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
+    <div class="player-wrap">
+      <div class="call-connection-status" id="callConnectionStatus" role="status" aria-live="polite" hidden>
+        <span class="call-connection-status__dot" aria-hidden="true"></span>
+        <span id="callConnectionStatusText">Conectando…</span>
+      </div>
+      <section class="player" aria-label="Reproductor de llamada">
+        <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+          <div class="wave-window" aria-hidden="true">
+            <canvas class="wave-canvas" id="waveCanvas"></canvas>
+          </div>
+          <div class="progress-shell" aria-hidden="true">
+            <div class="progress-fill"></div>
+            <div class="playhead"></div>
+          </div>
+        </div>
+        <div class="transport">
+          <div class="timecode"><span id="currentTime">00:00</span> <span style="opacity:.34">/</span> <span id="duration">00:00</span></div>
+          <div class="controls" aria-label="Controles de llamada">
+            <div class="control-stack">
+              <button class="control" type="button" id="rewindBtn" aria-label="Reiniciar llamada" title="Reiniciar llamada"><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>
+              <span class="control-caption">Reiniciar</span>
+            </div>
+            <div class="control-stack">
+              <button class="control primary" type="button" id="startBtn" aria-label="Empezar llamada" title="Empezar llamada"><i data-lucide="phone" aria-hidden="true"></i></button>
+              <span class="control-caption">Llamar</span>
+            </div>
+            <div class="control-stack">
+              <button class="control" type="button" id="playBtn" aria-label="Pausar llamada" title="Pausar llamada"><i data-lucide="pause" aria-hidden="true"></i></button>
+              <span class="control-caption">Pausa</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <section class="conversation" id="conversation" aria-label="Transcripción de la llamada">
+      <div class="conversation-empty" id="conversationEmpty" role="status">
+        <div class="conversation-empty__copy"><i data-lucide="message-circle" aria-hidden="true"></i><p>Aún no hay mensajes.</p></div>
+      </div>
+    </section>
+  </div>
+
+</div>

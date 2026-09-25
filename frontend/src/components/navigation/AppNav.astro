@@ -1,0 +1,78 @@
+---
+interface Props {
+  mode?: 'legacy' | 'route';
+  active?: 'analytics' | 'calls-demo';
+}
+
+const { mode = 'route', active = 'analytics' } = Astro.props;
+const isLegacy = mode === 'legacy';
+const callsOpen = !isLegacy;
+---
+
+<nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden={isLegacy ? 'true' : undefined} inert={isLegacy ? true : undefined}>
+  {isLegacy ? (
+    <>
+      <button class="app-nav__item" type="button" data-view="dashboard">
+        <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+        <span>Dashboard</span>
+      </button>
+    </>
+  ) : (
+    <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="../analytics" data-route="analytics" aria-current={active === 'analytics' ? 'page' : undefined}>
+      <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+      <span>Dashboard</span>
+    </a>
+  )}
+
+  <div class:list={['app-nav__group', callsOpen && 'is-open']} id="callsGroup">
+    <button class="app-nav__label" type="button" id="callsToggle" aria-expanded={callsOpen} aria-controls="callsChildren">
+      <i data-lucide="phone" aria-hidden="true"></i>
+      <span>Llamadas</span>
+    </button>
+    <div class="app-nav__children" id="callsChildren" inert={isLegacy ? true : undefined} aria-hidden={isLegacy ? 'true' : undefined}>
+      <div class="app-nav__children-inner">
+        {isLegacy ? (
+          <>
+            <a class="app-nav__item app-nav__call is-active" href="../calls/demo" data-route="calls-demo" aria-current="page">
+              <span>Llamada Demo</span>
+            </a>
+            <button class="app-nav__item app-nav__call" type="button" data-view="call-1">
+              <span>Llamada 1</span>
+            </button>
+            <button class="app-nav__item app-nav__call" type="button" data-view="call-2">
+              <span>Llamada 2</span>
+            </button>
+          </>
+        ) : (
+          <a class:list={['app-nav__item', 'app-nav__call', active === 'calls-demo' && 'is-active']} href="../calls/demo" data-route="calls-demo" aria-current={active === 'calls-demo' ? 'page' : undefined}>
+            <span>Llamada Demo</span>
+          </a>
+        )}
+      </div>
+    </div>
+  </div>
+
+  {isLegacy ? (
+    <>
+      <button class="app-nav__item" type="button" data-view="sales">
+        <i data-lucide="shopping-bag" aria-hidden="true"></i>
+        <span>Ventas</span>
+      </button>
+      <button class="app-nav__item" type="button" data-view="settings">
+        <i data-lucide="settings" aria-hidden="true"></i>
+        <span>Ajustes</span>
+      </button>
+    </>
+  ) : (
+    <>
+      <span class="app-nav__item app-nav__item--disabled" aria-disabled="true">
+        <i data-lucide="shopping-bag" aria-hidden="true"></i>
+        <span>Ventas</span>
+      </span>
+      <span class="app-nav__item app-nav__item--disabled" aria-disabled="true">
+        <i data-lucide="settings" aria-hidden="true"></i>
+        <span>Ajustes</span>
+      </span>
+    </>
+  )}
+</nav>

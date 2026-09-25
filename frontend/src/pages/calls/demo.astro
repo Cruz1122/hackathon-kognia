@@ -1,0 +1,59 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import CallDemoContent from '../../components/calls/CallDemoContent.astro';
+import '../../styles/call-demo.css';
+---
+
+<AppLayout title="Kognia — Llamada Demo">
+  <CallDemoContent />
+</AppLayout>
+
+<script>
+  import { bootLiveMonitor } from '../../features/voice-call/application/live-monitor';
+  import { accessTokenKey, checkSession, conversationIdKey, redirectToLogin } from '../../features/auth/session-guard';
+  import { mountCallDemoWave } from '../../features/voice-call/ui/call-demo-wave';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+  let waveCleanup: (() => void) | null = null;
+  let mountedRoot: HTMLElement | null = null;
+  let pendingRoot: HTMLElement | null = null;
+
+  function lucideRefresh(): void {
+    const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+    lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+  }
+
+  async function mountCallDemo(): Promise<void> {
+    const root = document.querySelector<HTMLElement>('.call-demo-page');
+    if (!root || mountedRoot === root || pendingRoot === root) return;
+    pendingRoot = root;
+    const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
+    const conversationId = sessionStorage.getItem(conversationIdKey)?.trim() ?? '';
+    const sessionState = await checkSession(apiUrl);
+    if (sessionState === 'invalid' || !token || !conversationId) {
+      redirectToLogin();
+      return;
+    }
+    cleanup?.();
+    waveCleanup?.();
+    waveCleanup = mountCallDemoWave();
+    cleanup = bootLiveMonitor(apiUrl, token, conversationId, false);
+    mountedRoot = root;
+    pendingRoot = null;
+    lucideRefresh();
+  }
+
+  function unmountCallDemo(): void {
+    cleanup?.();
+    waveCleanup?.();
+    cleanup = null;
+    waveCleanup = null;
+    mountedRoot = null;
+    pendingRoot = null;
+  }
+
+  document.addEventListener('astro:before-swap', unmountCallDemo);
+  document.addEventListener('astro:page-load', mountCallDemo);
+  void mountCallDemo();
+</script>

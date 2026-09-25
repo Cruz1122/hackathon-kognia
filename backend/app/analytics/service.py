@@ -12,8 +12,13 @@ from .schemas import (
     AnalyticsPeriod,
     AnalyticsSummary,
     ConversionTrendPoint,
+    DashboardComparison,
     DashboardResponse,
+    FunnelPoint,
     LostReasonPoint,
+    MetricDelta,
+    MetricTrendPoint,
+    ObjectionProductPoint,
     ObjectionCategoryPoint,
     ObjectionMetrics,
     ProductConversionPoint,
@@ -33,24 +38,53 @@ class AnalyticsService:
         if cached is not None:
             return DashboardResponse.model_validate(cached)
 
-        conversations = await self.repository.get_conversation_count(session, organization_id, date_from, date_to)
-        summary_data = await self.repository.get_opportunity_summary(session, organization_id, date_from, date_to)
+        async def build_summary(period_from: datetime, period_to: datetime) -> AnalyticsSummary:
+            conversations = await self.repository.get_conversation_count(session, organization_id, period_from, period_to)
+            summary_data = await self.repository.get_opportunity_summary(session, organization_id, period_from, period_to)
+            return AnalyticsSummary(
+                conversations=conversations,
+                opportunities=summary_data["opportunities"],
+                won=summary_data["won"],
+                conversion_rate=_rate(summary_data["won"], summary_data["opportunities"]),
+                revenue_minor=summary_data["revenue"],
+                recovered_sales=summary_data["recovered"],
+                recovery_opportunities=summary_data["recovery_opportunities"],
+                recovery_rate=_rate(summary_data["recovered"], summary_data["recovery_opportunities"]),
+                recovered_revenue_minor=summary_data["recovered_revenue"],
+            )
+
+        summary = await build_summary(date_from, date_to)
+        period_length = date_to - date_from
+        previous_summary = await build_summary(date_from - period_length, date_from)
         trend = await self.repository.get_conversion_trend(session, organization_id, date_from, date_to)
         recovery_trend = await self.repository.get_recovery_trend(session, organization_id, date_from, date_to)
+        metric_trend = await self.repository.get_metric_trend(session, organization_id, date_from, date_to)
         lost_reasons = await self.repository.get_lost_reasons(session, organization_id, date_from, date_to)
         objections = await self.repository.get_objection_resolution(session, organization_id, date_from, date_to)
         products = await self.repository.get_product_conversion(session, organization_id, date_from, date_to)
         objection_categories = await self.repository.get_objection_categories(session, organization_id, date_from, date_to)
-        summary = AnalyticsSummary(
-            conversations=conversations,
-            opportunities=summary_data["opportunities"],
-            won=summary_data["won"],
-            conversion_rate=_rate(summary_data["won"], summary_data["opportunities"]),
-            revenue_minor=summary_data["revenue"],
-            recovered_sales=summary_data["recovered"],
-            recovery_opportunities=summary_data["recovery_opportunities"],
-            recovery_rate=_rate(summary_data["recovered"], summary_data["recovery_opportunities"]),
-            recovered_revenue_minor=summary_data["recovered_revenue"],
+        funnel_values = [
+            ("Conversaciones", summary.conversations),
+            ("Oportunidades", summary.opportunities),
+            ("Won", summary.won),
+        ]
+        funnel = [
+            {"stage": stage, "value": value, "percentage": _rate(value, summary.conversations)}
+            for stage, value in funnel_values
+        ]
+        objection_product_heatmap = await self.repository.get_objection_product_heatmap(session, organization_id, date_from, date_to)
+
+        def delta(current: float, previous: float) -> MetricDelta:
+            absolute = current - previous
+            percentage = None if previous == 0 else round(absolute * 100 / abs(previous), 2)
+            return MetricDelta(current=current, previous=previous, absolute=absolute, percentage=percentage)
+
+        comparison = DashboardComparison(
+            revenue_minor=delta(summary.revenue_minor, previous_summary.revenue_minor),
+            won=delta(summary.won, previous_summary.won),
+            conversion_rate=delta(summary.conversion_rate, previous_summary.conversion_rate),
+            recovered_revenue_minor=delta(summary.recovered_revenue_minor, previous_summary.recovered_revenue_minor),
+            recovery_rate=delta(summary.recovery_rate, previous_summary.recovery_rate),
         )
         response = DashboardResponse(
             period=AnalyticsPeriod.model_validate({"from": date_from, "to": date_to}),
@@ -61,6 +95,10 @@ class AnalyticsService:
             objections=ObjectionMetrics.model_validate(objections),
             objection_categories=[ObjectionCategoryPoint.model_validate(item) for item in objection_categories],
             products=[ProductConversionPoint.model_validate(item) for item in products],
+            comparison=comparison,
+            metric_trend=[MetricTrendPoint.model_validate(item) for item in metric_trend],
+            funnel=[FunnelPoint.model_validate(item) for item in funnel],
+            objection_product_heatmap=[ObjectionProductPoint.model_validate(item) for item in objection_product_heatmap],
         )
         await self.cache.set(key, response.model_dump(mode="json", by_alias=True))
         return response

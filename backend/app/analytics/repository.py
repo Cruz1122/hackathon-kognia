@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
@@ -40,20 +41,9 @@ class AnalyticsRepository:
                     func.count(Opportunity.id).label("opportunities"),
                     func.count(case((Opportunity.status == OpportunityStatus.WON, Opportunity.id))).label("won"),
                     func.coalesce(func.sum(case((Opportunity.status == OpportunityStatus.WON, Opportunity.amount_minor), else_=0)), 0).label("revenue"),
-                    func.count(
-                        case(
-                            (
-                                and_(
-                                    Opportunity.recovery_started_at.is_not(None),
-                                    Opportunity.status == OpportunityStatus.WON,
-                                    Opportunity.recovered_at.is_not(None),
-                                ),
-                                Opportunity.id,
-                            )
-                        )
-                    ).label("recovered"),
-                    func.count(case((Opportunity.recovery_started_at.is_not(None), Opportunity.id))).label("recovery_opportunities"),
-                    func.coalesce(func.sum(case((and_(Opportunity.status == OpportunityStatus.WON, Opportunity.recovered_at.is_not(None)), Opportunity.amount_minor), else_=0)), 0).label("recovered_revenue"),
+                    func.count(case((_recovered_condition(), Opportunity.id))).label("recovered"),
+                    func.count(case((_recovery_started_condition(), Opportunity.id))).label("recovery_opportunities"),
+                    func.coalesce(func.sum(case((_recovered_condition(), Opportunity.amount_minor), else_=0)), 0).label("recovered_revenue"),
                 ).where(
                     Opportunity.organization_id == organization_id,
                     Opportunity.created_at >= date_from,
@@ -208,19 +198,56 @@ class AnalyticsRepository:
     @staticmethod
     async def get_recovery_trend(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
         day = func.date_trunc("day", Opportunity.recovery_started_at).label("date")
-        rows = (await session.execute(select(day, func.count(Opportunity.id).label("started"), func.count(case((Opportunity.recovered_at.is_not(None), Opportunity.id))).label("recovered")).where(Opportunity.organization_id == organization_id, Opportunity.recovery_started_at >= date_from, Opportunity.recovery_started_at < date_to).group_by(day).order_by(day))).all()
+        rows = (await session.execute(select(day, func.count(Opportunity.id).label("started"), func.count(case((_recovered_condition(), Opportunity.id))).label("recovered")).where(Opportunity.organization_id == organization_id, _recovery_started_condition(), Opportunity.recovery_started_at >= date_from, Opportunity.recovery_started_at < date_to).group_by(day).order_by(day))).all()
         return [{"date": row.date, "recovery_rate": _rate(row.recovered, row.started)} for row in rows]
+
+    @staticmethod
+    async def get_metric_trend(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
+        conversation_day = func.date_trunc("day", Conversation.created_at).label("date")
+        conversation_rows = (await session.execute(select(conversation_day, func.count(Conversation.id).label("conversations")).where(Conversation.organization_id == organization_id, Conversation.created_at >= date_from, Conversation.created_at < date_to).group_by(conversation_day))).all()
+        opportunity_day = func.date_trunc("day", Opportunity.created_at).label("date")
+        opportunity_rows = (await session.execute(select(opportunity_day, func.count(Opportunity.id).label("opportunities"), func.count(case((Opportunity.status == OpportunityStatus.WON, Opportunity.id))).label("won"), func.coalesce(func.sum(case((Opportunity.status == OpportunityStatus.WON, Opportunity.amount_minor), else_=0)), 0).label("revenue"), func.count(case((_recovered_condition(), Opportunity.id))).label("recovered"), func.coalesce(func.sum(case((_recovered_condition(), Opportunity.amount_minor), else_=0)), 0).label("recovered_revenue")).where(Opportunity.organization_id == organization_id, Opportunity.created_at >= date_from, Opportunity.created_at < date_to).group_by(opportunity_day))).all()
+        buckets: dict[datetime, dict[str, int]] = defaultdict(lambda: {"conversations": 0, "opportunities": 0, "won": 0, "revenue_minor": 0, "recovered_sales": 0, "recovered_revenue_minor": 0})
+        for row in conversation_rows:
+            buckets[row.date]["conversations"] = int(row.conversations or 0)
+        for row in opportunity_rows:
+            bucket = buckets[row.date]
+            bucket.update(opportunities=int(row.opportunities or 0), won=int(row.won or 0), revenue_minor=int(row.revenue or 0), recovered_sales=int(row.recovered or 0), recovered_revenue_minor=int(row.recovered_revenue or 0))
+        return [{"date": date, **buckets[date]} for date in sorted(buckets)]
 
     @staticmethod
     async def get_objection_categories(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
         rows = (await session.execute(select(Objection.category, func.count(case((Objection.resolved.is_(True), Objection.id))).label("resolved"), func.count(case((Objection.resolved.is_(False), Objection.id))).label("unresolved")).where(Objection.organization_id == organization_id, Objection.created_at >= date_from, Objection.created_at < date_to).group_by(Objection.category).order_by(func.count(Objection.id).desc()))).all()
         return [{"category": row.category, "resolved": int(row.resolved or 0), "unresolved": int(row.unresolved or 0), "resolution_rate": _rate(row.resolved, (row.resolved or 0) + (row.unresolved or 0))} for row in rows]
 
+    @staticmethod
+    async def get_objection_product_heatmap(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
+        interest_pairs = (
+            select(ProductInterest.conversation_id, ProductInterest.product_id)
+            .where(
+                ProductInterest.organization_id == organization_id,
+                ProductInterest.created_at >= date_from,
+                ProductInterest.created_at < date_to,
+            )
+            .distinct()
+            .subquery()
+        )
+        rows = (await session.execute(select(Objection.category, Product.name.label("product_name"), func.count(distinct(Objection.id)).label("count"), func.count(distinct(case((Objection.resolved.is_(True), Objection.id)))).label("resolved")).join(interest_pairs, interest_pairs.c.conversation_id == Objection.conversation_id).join(Product, and_(Product.id == interest_pairs.c.product_id, Product.organization_id == organization_id)).where(Objection.organization_id == organization_id, Objection.created_at >= date_from, Objection.created_at < date_to).group_by(Objection.category, Product.name).order_by(Objection.category, Product.name))).all()
+        return [{"category": row.category, "product_name": row.product_name, "count": int(row._mapping["count"] or 0), "resolved": int(row.resolved or 0), "resolution_rate": _rate(row.resolved, row._mapping["count"])} for row in rows]
+
 
 def _rate(numerator: int | None, denominator: int | None) -> float:
     if not denominator:
         return 0.0
     return round(float(numerator or 0) * 100 / float(denominator), 2)
+
+
+def _recovery_started_condition():
+    return Opportunity.recovery_started_at.is_not(None)
+
+
+def _recovered_condition():
+    return and_(_recovery_started_condition(), Opportunity.status == OpportunityStatus.WON, Opportunity.recovered_at.is_not(None))
 
 
 __all__ = ["AnalyticsRepository"]

@@ -172,6 +172,9 @@ async def test_dashboard_formulas_and_tenant_isolation_against_postgres() -> Non
         assert dashboard.products[0].interested_count == 10
         assert dashboard.products[0].won_count == 4
         assert dashboard.products[0].conversion_rate == 40.0
+        assert dashboard.metric_trend
+        assert [item.stage for item in dashboard.funnel] == ["Conversaciones", "Oportunidades", "Won"]
+        assert dashboard.objection_product_heatmap[0].product_name == product.name
 
         reasons = {item.reason: item.count for item in dashboard.lost_reasons}
         assert reasons == {"price": 3, "timing": 3}
@@ -207,6 +210,12 @@ async def test_dashboard_falls_back_to_postgres_when_redis_is_unavailable(
         async def get_conversion_trend(self, *_args) -> list:
             return []
 
+        async def get_recovery_trend(self, *_args) -> list:
+            return []
+
+        async def get_metric_trend(self, *_args) -> list:
+            return []
+
         async def get_lost_reasons(self, *_args) -> list:
             return []
 
@@ -214,6 +223,12 @@ async def test_dashboard_falls_back_to_postgres_when_redis_is_unavailable(
             return {"total": 0, "resolved": 0, "resolution_rate": 0.0}
 
         async def get_product_conversion(self, *_args) -> list:
+            return []
+
+        async def get_objection_categories(self, *_args) -> list:
+            return []
+
+        async def get_objection_product_heatmap(self, *_args) -> list:
             return []
 
     session = AsyncMock()
