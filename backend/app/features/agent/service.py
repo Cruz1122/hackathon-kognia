@@ -113,7 +113,7 @@ async def stream_agent(
                         arguments = parse_arguments(raw_arguments)
                         title, status = describe_tool_start(name, arguments)
                         inputs = present_tool_inputs(name, arguments)
-                        yield "tool.started", {"tool": name, "title": title, "status": status, "inputs": inputs}
+                        yield "tool.started", {"tool": name, "tool_call_id": call_id, "title": title, "status": status, "inputs": inputs}
                         tool_result = await TOOL_REGISTRY.execute(
                             name,
                             arguments,
@@ -126,6 +126,7 @@ async def stream_agent(
                         done_title, done_status = describe_tool_done(name, arguments, result)
                         yield "tool.completed", {
                             "tool": name,
+                            "tool_call_id": call_id,
                             "title": done_title,
                             "status": done_status,
                             "result": result,

@@ -1,15 +1,20 @@
 ---
+import { ClientRouter } from 'astro:transitions';
+
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
+ import AppNav from '../components/navigation/AppNav.astro';
+import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
 import '../styles/toast.css';
 import '../styles/detail-panel.css';
 import '../styles/dashboard.css';
 ---
-<html lang="es">
+<html lang="es" transition:animate="none">
   <head>
 
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Monitoreo de llamadas — Demo</title>
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+   <title>Monitoreo de llamadas — Demo</title>
+   <ClientRouter fallback="swap" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -33,7 +38,7 @@ import '../styles/dashboard.css';
     @property --left-rail {
       syntax: '<length-percentage>';
       inherits: false;
-      initial-value: 56%;
+      initial-value: 50%;
     }
 
     @property --right-rail {
@@ -67,7 +72,7 @@ import '../styles/dashboard.css';
     .auth-panel {
       position: relative;
       display: grid;
-      --left-rail: 56%;
+      --left-rail: 50%;
       --right-rail: 0%;
       grid-template-columns: minmax(0, var(--left-rail)) minmax(0, 1fr) minmax(0, var(--right-rail));
       width: 100%;
@@ -155,10 +160,22 @@ import '../styles/dashboard.css';
       display: none !important;
     }
 
+    .auth-panel.is-resizing,
+    .auth-panel.is-resizing .login-left,
+    .auth-panel.is-resizing .login-sidebar,
+    .auth-panel.is-resizing .login-brand,
+    .auth-panel.is-resizing .login-face-wrap,
+    .auth-panel.is-resizing .login-name,
+    .auth-panel.is-resizing .login-material,
     .login-material.is-resizing {
-      opacity: 0;
-      visibility: hidden;
-      transform: var(--material-enter-from);
+      transition: none !important;
+      animation: none !important;
+    }
+
+    .login-material.is-resizing {
+      opacity: 1;
+      visibility: visible;
+      transform: none;
     }
 
     .login-material.is-entering {
@@ -206,6 +223,12 @@ import '../styles/dashboard.css';
       transition:
         gap 1.55s cubic-bezier(.32, .04, .18, 1),
         color 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .login-topbar {
+      display: flex;
+      width: 100%;
+      align-items: center;
     }
 
     .auth-panel.is-app .login-brand {
@@ -328,17 +351,21 @@ import '../styles/dashboard.css';
       transition:
         opacity .7s cubic-bezier(.32, .04, .18, 1),
         transform .85s cubic-bezier(.32, .04, .18, 1),
-        visibility 0s;
+       visibility 0s;
     }
+
+    .mobile-nav-toggle { display: none; }
+    .mobile-nav-toggle[hidden] { display: none !important; }
 
     .app-nav__item,
     .app-nav__label {
-      display: flex;
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
       align-items: center;
       gap: 16px;
-      width: 100%;
+      width: min(100%, 320px);
       min-width: 0;
-      margin: 0;
+      margin: 0 auto;
       border: 0;
       border-radius: var(--radius-full);
       background: transparent;
@@ -351,11 +378,13 @@ import '../styles/dashboard.css';
       padding: 16px 18px;
       cursor: pointer;
       white-space: nowrap;
+      transition: color .24s ease, transform .24s ease;
     }
 
     .app-nav__item span,
     .app-nav__label span {
       min-width: 0;
+      white-space: nowrap;
     }
 
     .app-nav__label {
@@ -375,9 +404,11 @@ import '../styles/dashboard.css';
       stroke-width: 2.3;
     }
 
-    .app-nav__item:hover,
+    .app-nav__item:not(.app-nav__item--disabled):hover,
     .app-nav__label:hover {
-      background: rgba(248, 248, 248, .08);
+      background: transparent;
+      color: var(--ui-amber);
+      transform: translateX(3px);
     }
 
     .app-nav__item:focus-visible,
@@ -392,6 +423,7 @@ import '../styles/dashboard.css';
 
     .app-nav__group {
       display: flex;
+      width: 100%;
       flex-direction: column;
       gap: 4px;
     }
@@ -399,7 +431,9 @@ import '../styles/dashboard.css';
     .app-nav__children {
       display: grid;
       grid-template-rows: 0fr;
-      padding-left: clamp(16px, 12%, 44px);
+      width: min(100%, 320px);
+      margin-inline: auto;
+      padding-left: 44px;
       min-width: 0;
       transition: grid-template-rows .45s cubic-bezier(.32, .04, .18, 1);
     }
@@ -417,9 +451,13 @@ import '../styles/dashboard.css';
     }
 
     .app-nav__children .app-nav__item {
+      grid-template-columns: minmax(0, 1fr);
+      width: 100%;
+      margin-inline: 0;
       font-size: 1.2rem;
       font-weight: 600;
       padding: 12px 16px;
+      white-space: nowrap;
     }
 
     .app-nav__call {
@@ -638,22 +676,32 @@ import '../styles/dashboard.css';
     }
     .auth-field input:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
     .auth-password-field {
-      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
+    }
+    .auth-password-control {
+      position: relative;
+      min-width: 0;
     }
     .auth-password-field input {
-      grid-area: 2 / 1;
+      display: block;
       min-width: 0;
       padding-right: 62px;
       font-size: 18px;
       letter-spacing: 0;
     }
+    .auth-password-field input[type="password"] {
+      font-size: 25px;
+      font-weight: 700;
+      letter-spacing: .1em;
+    }
     .auth-password-toggle {
-      position: relative;
-      grid-area: 2 / 1;
+      position: absolute;
+      top: 50%;
+      right: 8px;
       justify-self: end;
       align-self: center;
       z-index: 1;
-      margin-right: 8px;
+      transform: translateY(-50%);
       width: 40px;
       height: 40px;
       display: grid;
@@ -1429,6 +1477,15 @@ import '../styles/dashboard.css';
         grid-template-columns: 1fr;
         min-height: 100dvh;
       }
+      .auth-panel:not(.is-app) {
+        --mobile-login-top-height: clamp(211px, 34svh, 292px);
+        display: block;
+        width: 100%;
+        height: auto;
+        min-height: 100svh;
+        overflow: clip;
+        transition: none;
+      }
       .login-left {
         min-height: 38dvh;
         overflow: visible;
@@ -1444,6 +1501,7 @@ import '../styles/dashboard.css';
         transform-origin: 50% 100%;
         --material-enter-from: scaleY(.16);
       }
+      .auth-panel:not(.is-app) .login-material { transition: none; }
       .auth-panel.is-app .login-material {
         width: 200%;
         height: 0;
@@ -1452,9 +1510,20 @@ import '../styles/dashboard.css';
         bottom: 0;
       }
       .login-brand { width: 100%; }
-      .login-face-wrap { width: 150px; }
-      .login-name { width: auto; font-size: 2.5rem; }
-      .login-right { min-height: 62dvh; padding: 0; }
+      .auth-panel:not(.is-app) .login-left {
+        width: 100%;
+        min-height: var(--mobile-login-top-height);
+        justify-content: flex-start;
+        padding: clamp(24px, 5vh, 42px) 24px 18px;
+        transition: none;
+      }
+      .auth-panel:not(.is-app) .login-face-wrap { width: min(40vw, 160px); }
+      .auth-panel:not(.is-app) .login-name { width: auto; margin-top: 14px; font-size: clamp(2rem, 9vw, 2.5rem); }
+      .auth-panel:not(.is-app) .login-right { display: flex; width: 100%; height: auto; min-height: calc(100svh - var(--mobile-login-top-height)); align-items: center; justify-content: center; padding: 64px 20px; overflow: visible; }
+      .auth-panel:not(.is-app) .login-form-content { position: relative; inset: auto; width: min(100%, 430px); transform: none; }
+      .auth-panel:not(.is-app) .detail-panel { display: none; }
+      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-left { display: none; }
+      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-right { min-height: 100svh; }
       .auth-copy { margin-bottom: 34px; }
       .auth-panel.is-app .login-left {
         min-height: 0;
@@ -1464,13 +1533,22 @@ import '../styles/dashboard.css';
         padding: 16px 16px 14px;
         overflow: visible;
       }
-      .auth-panel.is-app .login-name { cursor: pointer; }
+      .auth-panel.is-app .login-topbar { justify-content: space-between; }
+      .auth-panel.is-app .login-brand { width: auto; justify-content: flex-start; }
+      .auth-panel.is-app .login-face-wrap { display: none; }
+      .auth-panel.is-app.is-nav-ready .mobile-nav-toggle { display: grid; width: 32px; height: 32px; place-items: center; align-self: center; margin-top: 0; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ui-amber); cursor: pointer; padding: 4px; }
+      .auth-panel.is-app .mobile-nav-toggle svg { width: 20px; height: 20px; transition: transform .3s ease; }
+      .auth-panel.is-app:not(.is-rail-collapsed) .mobile-nav-toggle svg { transform: rotate(180deg); }
       .auth-panel.is-app .app-content { padding: 0 16px 72px; }
       .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
       .auth-panel.is-app .login-face-wrap { width: 40px; }
       .auth-panel.is-app .login-name { font-size: 1.35rem; margin-top: 0; }
       .auth-panel.is-app .login-right { min-height: 58dvh; }
-      .auth-panel.is-app.is-nav-ready .app-nav { margin-top: 14px; }
+      .auth-panel.is-app.is-nav-ready .app-nav { height: 0; margin-top: 0; opacity: 0; overflow: hidden; pointer-events: none; visibility: hidden; transform: translateY(-8px); }
+      .auth-panel.is-app.is-nav-ready:not(.is-rail-collapsed) .app-nav { height: auto; margin-top: 14px; opacity: 1; overflow-x: hidden; overflow-y: auto; pointer-events: auto; visibility: visible; transform: none; }
+      .auth-panel.is-app .app-nav { align-items: stretch; }
+      .auth-panel.is-app .app-nav__item, .auth-panel.is-app .app-nav__label { width: 100%; margin-inline: 0; }
+      .auth-panel.is-app .app-nav__children { width: 100%; margin-inline: 0; }
       .auth-panel.is-app.is-rail-collapsed .login-left {
         padding-bottom: 12px;
       }
@@ -1549,102 +1627,46 @@ import '../styles/dashboard.css';
             </g>
           </svg>
         </div>
-        <script is:inline>
-          (() => {
-            const material = document.querySelector('.login-material');
-            if (!(material instanceof HTMLElement)) return;
-            let hideTimer = 0;
-            const hideWhileResizing = () => {
-              if (material.classList.contains('is-gone')) return;
-              material.classList.add('is-resizing');
-              material.classList.remove('is-entering');
-              window.clearTimeout(hideTimer);
-              hideTimer = window.setTimeout(() => {
-                if (material.classList.contains('is-gone')) {
-                  material.classList.remove('is-resizing', 'is-entering');
-                  return;
-                }
-                material.classList.remove('is-resizing');
-                void material.offsetWidth;
-                material.classList.add('is-entering');
-              }, 1600);
-            };
-            material.addEventListener('animationend', (event) => {
-              if (event.animationName !== 'material-enter') return;
-              material.classList.remove('is-entering');
-            });
-            window.addEventListener('resize', hideWhileResizing);
-            window.addEventListener('orientationchange', hideWhileResizing);
-            visualViewport?.addEventListener('resize', hideWhileResizing);
-          })();
-        </script>
         <div class="login-sidebar">
-        <div class="login-brand">
-          <div class="login-face-wrap" id="demoFaceWrap" role="button" tabindex="0">
-            <span class="sr-only">Carita de Demo</span>
-            <svg class="login-face" id="demoFace" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
-              <circle cx="256" cy="256" r="216" fill="#f7c974" />
+        <div class="login-topbar">
+          <div class="login-brand">
+            <div class="login-face-wrap" id="demoFaceWrap" role="button" tabindex="0">
+              <span class="sr-only">Carita de Demo</span>
+              <svg class="login-face" id="demoFace" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+                <circle cx="256" cy="256" r="216" fill="#f7c974" />
 
-              <g class="face-eye-assembly" id="leftEyeAssembly">
-                <path id="leftFaceEye" d="M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
-                <g fill="#f7c974" pointer-events="none">
-                  <rect class="face-lid" id="leftTopLid" x="122" y="160" width="78" height="25" rx="18" />
-                  <rect class="face-lid" id="leftBottomLid" x="122" y="233" width="78" height="25" rx="18" />
+                <g class="face-eye-assembly" id="leftEyeAssembly">
+                  <path id="leftFaceEye" d="M 161 208.5 C 161 208.7 161 208.8 161 209 C 161 209.2 161 209.3 161 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+                  <g fill="#f7c974" pointer-events="none">
+                    <rect class="face-lid" id="leftTopLid" x="122" y="160" width="78" height="25" rx="18" />
+                    <rect class="face-lid" id="leftBottomLid" x="122" y="233" width="78" height="25" rx="18" />
+                  </g>
                 </g>
-              </g>
 
-              <g class="face-eye-assembly" id="rightEyeAssembly">
-                <path id="rightFaceEye" d="M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
-                <g fill="#f7c974" pointer-events="none">
-                  <rect class="face-lid" id="rightTopLid" x="312" y="160" width="78" height="25" rx="18" />
-                  <rect class="face-lid" id="rightBottomLid" x="312" y="233" width="78" height="25" rx="18" />
+                <g class="face-eye-assembly" id="rightEyeAssembly">
+                  <path id="rightFaceEye" d="M 351 208.5 C 351 208.7 351 208.8 351 209 C 351 209.2 351 209.3 351 209.5" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+                  <g fill="#f7c974" pointer-events="none">
+                    <rect class="face-lid" id="rightTopLid" x="312" y="160" width="78" height="25" rx="18" />
+                    <rect class="face-lid" id="rightBottomLid" x="312" y="233" width="78" height="25" rx="18" />
+                  </g>
                 </g>
-              </g>
 
-              <g class="face-folds" id="faceFolds" fill="none" stroke="#414141" stroke-width="0" stroke-linecap="round" stroke-linejoin="round">
-                <path id="leftFaceFold" d="M 142 166 C 166 156 188 154 209 160" />
-                <path id="rightFaceFold" d="M 303 160 C 324 154 346 156 370 166" />
-              </g>
+                <g class="face-folds" id="faceFolds" fill="none" stroke="#414141" stroke-width="0" stroke-linecap="round" stroke-linejoin="round">
+                  <path id="leftFaceFold" d="M 142 166 C 166 156 188 154 209 160" />
+                  <path id="rightFaceFold" d="M 303 160 C 324 154 346 156 370 166" />
+                </g>
 
-              <path class="face-mouth" id="faceMouth" d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <div class="login-face-hit" id="demoFaceHit" aria-hidden="true"></div>
-          </div>
-          <div class="login-name">Demo</div>
-        </div>
-        <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden="true" inert>
-          <button class="app-nav__item" type="button" data-view="dashboard">
-            <i data-lucide="layout-dashboard" aria-hidden="true"></i>
-            <span>Dashboard</span>
-          </button>
-          <div class="app-nav__group" id="callsGroup">
-            <button class="app-nav__label" type="button" id="callsToggle" aria-expanded="false" aria-controls="callsChildren">
-              <i data-lucide="phone" aria-hidden="true"></i>
-              <span>Llamadas</span>
-            </button>
-            <div class="app-nav__children" id="callsChildren" inert aria-hidden="true">
-              <div class="app-nav__children-inner">
-                <button class="app-nav__item app-nav__call is-active" type="button" data-view="call-demo" aria-current="page">
-                  <span>Llamada Demo</span>
-                </button>
-                <button class="app-nav__item app-nav__call" type="button" data-view="call-1">
-                  <span>Llamada 1</span>
-                </button>
-                <button class="app-nav__item app-nav__call" type="button" data-view="call-2">
-                  <span>Llamada 2</span>
-                </button>
-              </div>
+                <path class="face-mouth" id="faceMouth" d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <div class="login-face-hit" id="demoFaceHit" aria-hidden="true"></div>
             </div>
+            <div class="login-name">Demo</div>
           </div>
-          <button class="app-nav__item" type="button" data-view="sales">
-            <i data-lucide="shopping-bag" aria-hidden="true"></i>
-            <span>Ventas</span>
+          <button class="mobile-nav-toggle" type="button" hidden aria-controls="appNav" aria-expanded="false" aria-label="Expandir navegación">
+            <i data-lucide="chevron-down" aria-hidden="true"></i>
           </button>
-          <button class="app-nav__item" type="button" data-view="settings">
-            <i data-lucide="settings" aria-hidden="true"></i>
-            <span>Ajustes</span>
-          </button>
-        </nav>
+        </div>
+        <AppNav mode="legacy" />
         </div>
       </section>
 
@@ -1660,10 +1682,12 @@ import '../styles/dashboard.css';
             </label>
             <label class="auth-field auth-password-field">
               <span>Contraseña</span>
-              <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
-              <button class="auth-password-toggle" type="button" id="authPasswordToggle" aria-label="Mostrar contraseña" aria-pressed="false">
-                <i data-lucide="eye" aria-hidden="true"></i>
-              </button>
+              <div class="auth-password-control">
+                <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
+                <button class="auth-password-toggle" type="button" id="authPasswordToggle" aria-label="Mostrar contraseña" aria-pressed="false">
+                  <i data-lucide="eye" aria-hidden="true"></i>
+                </button>
+              </div>
             </label>
             <div class="auth-submit-wrap">
               <span class="auth-submit-loader" aria-hidden="true">
@@ -2067,7 +2091,7 @@ import '../styles/dashboard.css';
       })();
     </script>
 
-    <div class="app-content" id="appContent" aria-hidden="true">
+    <div class="app-content" id="appContent" aria-hidden="true" transition:name="app-main" transition:animate="slide">
       <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
       <div class="player-wrap">
         <section class="player" aria-label="Reproductor de llamada">
@@ -2116,30 +2140,7 @@ import '../styles/dashboard.css';
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
 
-    <section class="section-view section-view--dashboard" data-section="dashboard" aria-label="Dashboard" aria-hidden="true">
-      <div class="dashboard-page">
-        <header class="dashboard-topline">
-          <div><p class="dashboard-eyebrow">Inteligencia comercial</p><h2>Rendimiento comercial</h2><p>Una lectura determinista de conversaciones, oportunidades y recuperación después de cada llamada.</p></div>
-          <div class="dashboard-filters" aria-label="Filtrar métricas"><label class="sr-only" for="dashboardFrom">Desde</label><input id="dashboardFrom" type="date" /><label class="sr-only" for="dashboardTo">Hasta</label><input id="dashboardTo" type="date" /><button id="dashboardApply" type="button">Actualizar</button></div>
-        </header>
-        <div class="dashboard-state" id="dashboardLoading" role="status"><p>Cargando métricas…</p></div>
-        <div class="dashboard-state" id="dashboardError" hidden role="alert"><div><p>No pudimos cargar las métricas.</p><button id="dashboardRetry" type="button">Reintentar</button></div></div>
-        <div class="dashboard-state" id="dashboardEmpty" hidden><p>Aún no hay datos comerciales para este periodo.</p></div>
-        <div class="dashboard-data" id="dashboardData" hidden>
-            <div class="dashboard-kpis">
-             <article class="dashboard-kpi"><small>Revenue generado</small><strong id="dashboardRevenue">—</strong><span>valor cerrado</span></article><article class="dashboard-kpi"><small>Ventas ganadas</small><strong id="dashboardWon">—</strong><span>oportunidades cerradas</span></article><article class="dashboard-kpi"><small>Tasa de conversión</small><strong id="dashboardConversion">—</strong><span>won / oportunidades</span></article><article class="dashboard-kpi dashboard-kpi--priority"><small>Revenue recuperado</small><strong id="dashboardRecoveredRevenue">—</strong><span>cerradas después de WhatsApp</span></article>
-            </div>
-           <div class="dashboard-secondary"><span><strong id="dashboardConversations">—</strong> conversaciones</span><span><strong id="dashboardRecoveredSales">—</strong> ventas recuperadas</span><span><strong id="dashboardRecoveryRate">—</strong> tasa de recuperación</span></div>
-           <div class="dashboard-grid">
-              <article class="dashboard-card dashboard-card--conversion"><div class="dashboard-card-head"><div><h3>Conversión a lo largo del tiempo</h3><p>Won / oportunidades por período.</p></div></div><div class="dashboard-chart-host" id="dashboardConversionChart"></div></article>
-              <article class="dashboard-card dashboard-card--recovery"><div class="dashboard-card-head"><div><h3>Tasa de recuperación</h3><p>Oportunidades recuperadas después de WhatsApp.</p></div></div><div class="dashboard-chart-host" id="dashboardRecoveryChart"></div></article>
-              <article class="dashboard-card dashboard-card--losses"><div class="dashboard-card-head"><div><h3>Razones de pérdida</h3><p>Ordenadas por volumen de oportunidades.</p></div></div><div class="dashboard-chart-host" id="dashboardLossesChart"></div></article>
-              <article class="dashboard-card dashboard-card--objections"><div class="dashboard-card-head"><div><h3>Resolución de objeciones</h3><p>Porcentaje resuelto y pendiente por categoría.</p></div></div><div class="dashboard-chart-host" id="dashboardObjectionsChart"></div></article>
-              <article class="dashboard-card dashboard-card--wide"><div class="dashboard-card-head"><div><h3>Interés → conversión por producto</h3><p>Qué llama la atención pero no necesariamente vende.</p></div></div><div class="dashboard-chart-host dashboard-chart-host--products" id="dashboardProductsChart"></div></article>
-          </div>
-        </div>
-      </div>
-    </section>
+    <AnalyticsContent />
     <section class="section-view" data-section="call-1" aria-label="Llamada 1" aria-hidden="true">
       <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
     </section>
@@ -2181,7 +2182,7 @@ import '../styles/dashboard.css';
         const conversation = sessionStorage.getItem('kognia.auth.conversation-id')?.trim();
         if (!panel || !token || !conversation) return;
         panel.classList.add('is-app', 'no-wipe', 'is-nav-ready');
-        panel.dataset.view = 'call-demo';
+        panel.dataset.view = 'dashboard';
         panel.setAttribute('aria-labelledby', 'screenTitle');
         form?.setAttribute('inert', '');
         form?.setAttribute('aria-hidden', 'true');
@@ -2197,7 +2198,8 @@ import '../styles/dashboard.css';
     const SAMPLE_INTERVAL = 1 / 30;
     const VISUAL_SAMPLES = 128;
 
-    let mode = 'live';
+     window.__kogniaPageLeaving = false;
+     let mode = 'live';
     let current = 0;
     let liveEdge = 0;
     let playing = true;
@@ -2597,6 +2599,7 @@ import '../styles/dashboard.css';
 
     function showItem(item, animate) {
       if (item.classList.contains('visible')) return;
+      const followLive = appContent && appContent.scrollHeight - appContent.scrollTop - appContent.clientHeight <= 120;
       item.classList.add('visible');
       if (animate) {
         item.classList.remove('enter');
@@ -2606,7 +2609,7 @@ import '../styles/dashboard.css';
       }
       const message = item.querySelector('.message[data-text]');
       if (message) animate ? animateMessage(message) : renderMessageInstant(message);
-      if (animate && mode === 'live' && !seeking) setTimeout(() => item.scrollIntoView({ behavior: 'smooth', block: 'center' }), 180);
+      if (animate && mode === 'live' && !seeking && followLive) setTimeout(() => item.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 180);
     }
 
     function hideItem(item) {
@@ -2828,7 +2831,9 @@ import '../styles/dashboard.css';
       const dt = Math.min(.05, (now - last) / 1000);
       last = now;
 
-      if (mode === 'live' && !callEnded) {
+     if (window.__kogniaPageLeaving) return;
+
+     if (mode === 'live' && !callEnded) {
         const wasAtEdge = Math.abs(current - liveEdge) < .14;
         const previousEdge = liveEdge;
         const frozen = window.__liveDebugControls && !playing;
@@ -2910,18 +2915,16 @@ import '../styles/dashboard.css';
     requestAnimationFrame(tick);
   </script>
 
-      <script>
-       import { bootLiveMonitor } from '../features/voice-call/application/live-monitor';
-       import { bootDashboard } from '../features/dashboard/dashboard';
-       import { mountSessionPanel } from '../features/voice-call/application/detail-panel';
-       import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
+       <script>
+        import { bootDashboard } from '../features/dashboard/dashboard';
+        import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
       const authForm = document.getElementById('authForm');
-       const authEmail = document.getElementById('authEmail');
-        const authPassword = document.getElementById('authPassword');
-        const authPasswordToggle = document.getElementById('authPasswordToggle');
+         const authEmail = document.getElementById('authEmail');
+         const authPassword = document.getElementById('authPassword');
+         const authPasswordToggle = document.getElementById('authPasswordToggle');
         const authSubmit = document.getElementById('authSubmit');
        const appContent = document.getElementById('appContent');
        const loginFormContent = document.querySelector('.login-form-content');
@@ -2947,8 +2950,8 @@ import '../styles/dashboard.css';
           authPasswordToggle.setAttribute('aria-pressed', String(visible));
           authPasswordToggle.innerHTML = `<i data-lucide="${visible ? 'eye-off' : 'eye'}" aria-hidden="true"></i>`;
           const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
-          lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
-        }
+           lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+         }
 
         authPasswordToggle?.addEventListener('mousedown', (event) => {
           event.preventDefault();
@@ -2998,18 +3001,37 @@ import '../styles/dashboard.css';
          material.addEventListener('transitionend', onEnd);
        }
 
-       function restoreStrip(): void {
-         loginMaterial()?.classList.remove('is-gone');
-       }
+        function restoreStrip(): void {
+          loginMaterial()?.classList.remove('is-gone');
+        }
 
-       const appNav = document.getElementById('appNav');
-       const callsGroup = document.getElementById('callsGroup');
+        let resizeStabilizationTimer = 0;
+        function stabilizeLoginLayout(): void {
+          const material = loginMaterial();
+          authPanel?.classList.add('is-resizing');
+          material?.classList.add('is-resizing');
+          window.clearTimeout(resizeStabilizationTimer);
+          resizeStabilizationTimer = window.setTimeout(() => {
+            authPanel?.classList.remove('is-resizing');
+            material?.classList.remove('is-resizing');
+          }, 180);
+        }
+
+        window.addEventListener('resize', stabilizeLoginLayout, { passive: true });
+        window.addEventListener('orientationchange', stabilizeLoginLayout, { passive: true });
+        visualViewport?.addEventListener('resize', stabilizeLoginLayout, { passive: true });
+
+         const appNav = document.getElementById('appNav');
+        const mobileNavToggle = document.querySelector<HTMLButtonElement>('.mobile-nav-toggle');
+        const callsGroup = document.getElementById('callsGroup');
        const callsToggle = document.getElementById('callsToggle');
        const sectionViews = Array.from(document.querySelectorAll<HTMLElement>('.section-view'));
        const detailPanel = document.getElementById('detailPanel');
-       const railMs = 1550;
-       let navReadyTimer = 0;
-       let dashboardStarted = false;
+        const sidebarReadyMs = 1550;
+        let navReadyTimer = 0;
+        let dashboardStarted = false;
+        let dashboardCleanup: (() => void) | null = null;
+        let analyticsHandoffPending = false;
        let navReadyHandler: ((event: TransitionEvent) => void) | null = null;
 
        function lucideRefresh(): void {
@@ -3025,12 +3047,17 @@ import '../styles/dashboard.css';
          navReadyHandler = null;
        }
 
-       function markNavReady(): void {
+        function markNavReady(): void {
          if (!authPanel) return;
-         clearNavReadyWait();
-         authPanel.classList.add('is-nav-ready');
-         appNav?.removeAttribute('aria-hidden');
-         appNav?.removeAttribute('inert');
+          clearNavReadyWait();
+          authPanel.classList.add('is-nav-ready');
+          appNav?.removeAttribute('aria-hidden');
+          syncMobileNavToggle();
+          if (analyticsHandoffPending && authPanel.dataset.view === 'dashboard') {
+            analyticsHandoffPending = false;
+            history.replaceState(history.state, '', '/analytics');
+            document.title = 'Kognia — Analíticas';
+          }
        }
 
        function scheduleNavReady(immediate: boolean): void {
@@ -3040,18 +3067,37 @@ import '../styles/dashboard.css';
            return;
          }
          clearNavReadyWait();
-         navReadyHandler = (event: TransitionEvent) => {
-           if (event.target !== authPanel) return;
-           if (event.propertyName !== '--left-rail') return;
-           markNavReady();
-         };
-         authPanel.addEventListener('transitionend', navReadyHandler);
-         navReadyTimer = window.setTimeout(markNavReady, railMs);
+          const readyAt = performance.now() + sidebarReadyMs;
+          navReadyHandler = (event: TransitionEvent) => {
+            if (event.target !== authPanel) return;
+            if (event.propertyName !== '--left-rail') return;
+            if (performance.now() < readyAt - 16) return;
+            markNavReady();
+          };
+          authPanel.addEventListener('transitionend', navReadyHandler);
+          navReadyTimer = window.setTimeout(markNavReady, sidebarReadyMs);
        }
 
-       function notifyLayoutChange(): void {
-         window.dispatchEvent(new Event('app-layout-change'));
-       }
+        function notifyLayoutChange(): void {
+          window.dispatchEvent(new Event('app-layout-change'));
+        }
+
+        function syncMobileNavToggle(): void {
+          if (!authPanel || !mobileNavToggle) return;
+          mobileNavToggle.hidden = !authPanel.classList.contains('is-app') || !authPanel.classList.contains('is-nav-ready') || !isCompactShell();
+          const collapsed = authPanel.classList.contains('is-rail-collapsed');
+          mobileNavToggle.setAttribute('aria-expanded', String(!collapsed));
+          mobileNavToggle.setAttribute('aria-label', collapsed ? 'Expandir navegación' : 'Contraer navegación');
+          if (!isCompactShell() || !collapsed) appNav?.removeAttribute('inert');
+          else appNav?.setAttribute('inert', '');
+        }
+
+        function setMobileNavExpanded(expanded: boolean): void {
+          if (!authPanel?.classList.contains('is-app') || !isCompactShell()) return;
+          authPanel.classList.toggle('is-rail-collapsed', !expanded);
+          syncMobileNavToggle();
+          notifyLayoutChange();
+        }
 
        function setCallsOpen(open: boolean): void {
          callsGroup?.classList.toggle('is-open', open);
@@ -3084,6 +3130,8 @@ import '../styles/dashboard.css';
            const active = empty && section.dataset.section === view;
            section.classList.toggle('is-active', active);
            section.setAttribute('aria-hidden', active ? 'false' : 'true');
+           if (active) section.removeAttribute('inert');
+           else section.setAttribute('inert', '');
          });
          notifyLayoutChange();
          if (empty) {
@@ -3097,29 +3145,34 @@ import '../styles/dashboard.css';
          detailPanel?.removeAttribute('inert');
        }
 
-       function resetAppShell(): void {
-         clearNavReadyWait();
-         authPanel?.classList.remove('is-app', 'no-wipe', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
+        function resetAppShell(): void {
+          clearNavReadyWait();
+          authPanel?.classList.remove('is-app', 'no-wipe', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
+          mobileNavToggle?.setAttribute('hidden', '');
+          mobileNavToggle?.setAttribute('aria-expanded', 'false');
+          mobileNavToggle?.setAttribute('aria-label', 'Expandir navegación');
          authPanel?.removeAttribute('data-view');
          appNav?.setAttribute('aria-hidden', 'true');
          appNav?.setAttribute('inert', '');
          setCallsOpen(false);
          callsToggle?.classList.remove('is-active');
-         sectionViews.forEach((section) => {
-           section.classList.remove('is-active');
-           section.setAttribute('aria-hidden', 'true');
-         });
+          sectionViews.forEach((section) => {
+            section.classList.remove('is-active');
+            section.setAttribute('aria-hidden', 'true');
+            section.setAttribute('inert', '');
+          });
          appContent?.removeAttribute('inert');
          detailPanel?.removeAttribute('inert');
        }
 
-       function revealApp(animate: boolean): void {
+        function revealApp(animate: boolean): void {
          if (!authPanel) return;
-         if (!animate) authPanel.classList.add('no-wipe');
-         authPanel.classList.add('is-app');
-         authPanel.setAttribute('aria-labelledby', 'screenTitle');
+          if (!animate) authPanel.classList.add('no-wipe');
+          authPanel.classList.add('is-app');
+          authPanel.classList.toggle('is-rail-collapsed', isCompactShell());
+          authPanel.setAttribute('aria-labelledby', 'screenTitle');
          setFormInert(true);
-         setAppView('call-demo');
+         setAppView('dashboard');
          collapseStrip(!animate);
          scheduleNavReady(!animate);
          lucideRefresh();
@@ -3135,36 +3188,49 @@ import '../styles/dashboard.css';
          const target = event.target;
          if (!(target instanceof Element)) return;
          const toggle = target.closest('#callsToggle');
-         if (toggle) {
-           setCallsOpen(!callsGroup?.classList.contains('is-open'));
-           return;
-         }
-         const button = target.closest<HTMLButtonElement>('[data-view]');
+          if (toggle) {
+            setCallsOpen(!callsGroup?.classList.contains('is-open'));
+            return;
+          }
+          const routeLink = target.closest('a[data-route]');
+          if (routeLink) {
+            if (isCompactShell()) setMobileNavExpanded(false);
+            return;
+          }
+          const button = target.closest<HTMLButtonElement>('[data-view]');
          if (!button) return;
          const view = button.dataset.view?.trim();
-         if (!view) return;
-         setAppView(view);
-       });
+          if (!view) return;
+          setAppView(view);
+          if (isCompactShell()) setMobileNavExpanded(false);
+        });
 
-       const loginName = document.querySelector('.login-name');
-       function isCompactShell(): boolean {
-         return matchMedia('(max-width: 1100px)').matches;
-       }
-       loginName?.addEventListener('click', () => {
-         if (!authPanel?.classList.contains('is-app') || !isCompactShell()) return;
-         const collapsed = !authPanel.classList.contains('is-rail-collapsed');
-         authPanel.classList.toggle('is-rail-collapsed', collapsed);
-         if (collapsed) appNav?.setAttribute('inert', '');
-         else if (authPanel.classList.contains('is-nav-ready')) appNav?.removeAttribute('inert');
-         notifyLayoutChange();
-       });
+        function isCompactShell(): boolean {
+          return matchMedia('(max-width: 1100px)').matches;
+        }
+        mobileNavToggle?.addEventListener('click', () => {
+          setMobileNavExpanded(authPanel?.classList.contains('is-rail-collapsed') ?? false);
+        });
+        matchMedia('(max-width: 1100px)').addEventListener('change', (event) => {
+          if (!authPanel?.classList.contains('is-app')) return;
+          authPanel.classList.toggle('is-rail-collapsed', event.matches);
+          syncMobileNavToggle();
+          notifyLayoutChange();
+        });
+
+        function preloadAnalytics(): void {
+          void fetch('/analytics', { cache: 'force-cache', credentials: 'same-origin' }).catch(() => undefined);
+        }
 
        function showApp(token: string, conversationId: string, animate = true): void {
+         analyticsHandoffPending = true;
+         preloadAnalytics();
          setFaceEmotion('happy');
          revealApp(animate);
-         mountSessionPanel();
-         bootLiveMonitor(apiUrl, token, conversationId, true);
-         if (!dashboardStarted) { dashboardStarted = true; bootDashboard(apiUrl, token); }
+         if (!dashboardStarted) {
+           dashboardStarted = true;
+           dashboardCleanup = bootDashboard(apiUrl, token);
+         }
        }
 
        async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {
@@ -3248,7 +3314,13 @@ import '../styles/dashboard.css';
           });
       });
 
-      void restoreSession().catch(() => {
+       document.addEventListener('astro:before-swap', () => {
+         window.__kogniaPageLeaving = true;
+         dashboardCleanup?.();
+         dashboardCleanup = null;
+       });
+
+       void restoreSession().catch(() => {
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
         resetAppShell();

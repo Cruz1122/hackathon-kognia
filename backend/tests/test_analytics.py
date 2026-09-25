@@ -74,6 +74,12 @@ class FakeRepository:
     async def get_conversion_trend(self, *args) -> list:
         return []
 
+    async def get_recovery_trend(self, *args) -> list:
+        return []
+
+    async def get_metric_trend(self, *args) -> list:
+        return []
+
     async def get_lost_reasons(self, *args) -> list:
         return [{"reason": "price", "count": 6, "percentage": 100.0}]
 
@@ -81,6 +87,12 @@ class FakeRepository:
         return {"total": 5, "resolved": 3, "resolution_rate": 60.0}
 
     async def get_product_conversion(self, *args) -> list:
+        return []
+
+    async def get_objection_categories(self, *args) -> list:
+        return []
+
+    async def get_objection_product_heatmap(self, *args) -> list:
         return []
 
 
@@ -103,6 +115,11 @@ async def test_dashboard_calculates_controlled_business_numbers() -> None:
     }
     assert response.lost_reasons[0].percentage == 100.0
     assert response.objections.resolution_rate == 60.0
+    assert response.comparison is not None
+    assert response.comparison.revenue_minor.absolute == 0
+    assert response.metric_trend == []
+    assert [item.value for item in response.funnel] == [10, 10, 4]
+    assert response.objection_product_heatmap == []
 
 
 @pytest.mark.asyncio

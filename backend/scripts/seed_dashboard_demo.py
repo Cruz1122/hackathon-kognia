@@ -1,6 +1,6 @@
 """Seed deterministic commercial data for the dashboard demo.
 
-Usage: python -m scripts.seed_dashboard_demo [--count 300]
+Usage: python -m scripts.seed_dashboard_demo [--count 600]
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from app.db.session import dispose_engine, get_session_factory
 
 
 PRODUCTS = ("Kognia Pro", "Kognia Teams", "Kognia Enterprise", "Kognia Insights")
-OBJECTIONS = ("precio", "implementación", "competencia", "funcionalidad", "tiempo")
+OBJECTIONS = ("precio", "implementación", "competencia", "funcionalidad", "tiempo", "presupuesto", "integración")
 LOST_REASONS = ("precio", "sin presupuesto", "competencia", "sin respuesta", "timing")
 FIRST_NAMES = ("Laura", "Andrés", "Camila", "Felipe", "Valentina", "Santiago", "Mariana", "Nicolás")
 LAST_NAMES = ("Gómez", "Rodríguez", "Martínez", "López", "Torres", "Ramírez", "Castro", "Vargas")
@@ -67,7 +67,7 @@ async def seed(count: int, slug: str) -> int:
         now = datetime.now(UTC).replace(hour=17, minute=0, second=0, microsecond=0)
         rows_to_add = []
         for index in range(existing, count):
-            created_at = now - timedelta(days=rng.randint(0, 44), hours=rng.randint(0, 8), minutes=rng.randint(0, 59))
+            created_at = now - timedelta(days=rng.randint(0, 89), hours=rng.randint(0, 8), minutes=rng.randint(0, 59))
             conversation_id = uuid.uuid4()
             customer_id = uuid.uuid4()
             call_id = uuid.uuid4()
@@ -89,10 +89,11 @@ async def seed(count: int, slug: str) -> int:
             message_one = Message(id=uuid.uuid4(), conversation_id=conversation_id, role=MessageRole.USER, content=user_text, channel=conversation.channel, created_at=created_at + timedelta(seconds=18))
             message_two = Message(id=uuid.uuid4(), conversation_id=conversation_id, role=MessageRole.ASSISTANT, content=assistant_text, channel=conversation.channel, created_at=created_at + timedelta(seconds=54))
             rows_to_add.extend((customer, conversation, call, opportunity, message_one, message_two, ProductInterest(id=uuid.uuid4(), organization_id=organization.id, conversation_id=conversation_id, product_id=product.id, created_at=created_at + timedelta(minutes=1))))
-            if rng.random() < .67:
-                category = rng.choice(OBJECTIONS)
-                resolved = rng.random() < (.72 if status == OpportunityStatus.WON else .46)
-                rows_to_add.append(Objection(id=uuid.uuid4(), organization_id=organization.id, conversation_id=conversation_id, category=category, resolved=resolved, source="enrichment", created_at=created_at + timedelta(minutes=2), resolved_at=created_at + timedelta(minutes=4) if resolved else None))
+            if rng.random() < .82:
+                objection_count = 1 + int(rng.random() < .34)
+                for offset, category in enumerate(rng.sample(OBJECTIONS, k=objection_count)):
+                    resolved = rng.random() < (.72 if status == OpportunityStatus.WON else .46)
+                    rows_to_add.append(Objection(id=uuid.uuid4(), organization_id=organization.id, conversation_id=conversation_id, category=category, resolved=resolved, source="enrichment", created_at=created_at + timedelta(minutes=2 + offset), resolved_at=created_at + timedelta(minutes=4 + offset) if resolved else None))
 
         session.add_all(rows_to_add)
         await session.execute(update(Organization).where(Organization.id == organization.id).values(analytics_version=Organization.analytics_version + 1))
@@ -113,7 +114,7 @@ if __name__ == "__main__":
     load_dotenv(Path.cwd() / ".env", override=False)
     load_dotenv(Path.cwd() / "backend" / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--count", type=int, default=300)
+    parser.add_argument("--count", type=int, default=600)
     parser.add_argument("--slug", default="demo-kognia")
     args = parser.parse_args()
     if args.count < 1:

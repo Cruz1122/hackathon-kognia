@@ -11,16 +11,21 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
 }
 
+function isNearLiveEdge(container: HTMLElement): boolean {
+  return container.scrollHeight - container.scrollTop - container.clientHeight <= 120;
+}
+
 type RealtimeEnvelope = {
   type?: unknown;
   payload?: unknown;
 };
 
-export function bootEventsMonitor(apiUrl: string): void {
+export function bootEventsMonitor(apiUrl: string): () => void {
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector('#conversationEmpty');
   const hubChip = document.querySelector('#hubChipText');
-  if (!conversation) return;
+  if (!conversation) return () => undefined;
+  const scrollOwner = document.getElementById('appContent') ?? (conversation instanceof HTMLElement ? conversation : null);
   bindDetailClicks(conversation);
   mountSessionPanel();
 
@@ -28,7 +33,7 @@ export function bootEventsMonitor(apiUrl: string): void {
   const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
   if (!token) {
     if (hubChip) hubChip.textContent = 'Demo local';
-    return;
+    return () => undefined;
   }
 
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/events`;
@@ -38,19 +43,21 @@ export function bootEventsMonitor(apiUrl: string): void {
   let customerBubble: HTMLElement | null = null;
   let customerShown = '';
   let live = false;
+  let disposed = false;
 
   function setEmpty(hidden: boolean): void {
     if (conversationEmpty instanceof HTMLElement) conversationEmpty.hidden = hidden;
   }
 
   function appendRow(kind: string, html: string): HTMLElement {
+    const followLive = !scrollOwner || isNearLiveEdge(scrollOwner);
     setEmpty(true);
     const row = document.createElement('div');
     row.className = `${kind} visible enter`;
     row.innerHTML = html;
     conversation.append(row);
     lucideRefresh();
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (followLive) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     window.setTimeout(() => row.classList.remove('enter'), 900);
     return row;
   }
@@ -131,6 +138,7 @@ export function bootEventsMonitor(apiUrl: string): void {
   }
 
   function handleEnvelope(envelope: RealtimeEnvelope): void {
+    if (disposed) return;
     const type = String(envelope.type ?? '');
     const eventConversation = typeof (envelope as { conversation_id?: unknown }).conversation_id === 'string'
       ? String((envelope as { conversation_id?: unknown }).conversation_id)
@@ -153,15 +161,17 @@ export function bootEventsMonitor(apiUrl: string): void {
       ensureAgent().append(node);
     } else if (type === 'tool.started') {
       enterLiveFeed();
-      const id = `hub-tool-${Date.now()}`;
-      pendingTools.set(String(payload.tool ?? 'tool'), id);
+      const toolCallId = String(payload.tool_call_id ?? payload.id ?? `${String(payload.tool ?? 'tool')}-${Date.now()}`);
+      const id = `hub-tool-${toolCallId}`;
+      pendingTools.set(toolCallId, id);
       const detail = toolDetailFromEvent(payload);
       appendRow(
         'tool-row',
         `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status loading">${escapeHtml(String(payload.status ?? 'Ejecutando'))}</div></div>${toolCallBusyMarkup()}</button>`,
       );
     } else if (type === 'tool.completed') {
-      const id = pendingTools.get(String(payload.tool ?? 'tool'));
+      const toolCallId = String(payload.tool_call_id ?? payload.id ?? payload.tool ?? 'tool');
+      const id = pendingTools.get(toolCallId);
       const tool = id ? document.getElementById(id) : null;
       if (tool && id) {
         tool.classList.add('done');
@@ -210,11 +220,16 @@ export function bootEventsMonitor(apiUrl: string): void {
 
   const socket = new WebSocket(socketUrl);
   socket.addEventListener('open', () => {
+    if (disposed) {
+      socket.close();
+      return;
+    }
     socket.send(JSON.stringify({ type: 'auth', token }));
     enterLiveFeed();
     if (hubChip) hubChip.textContent = 'Esperando eventos';
   });
   socket.addEventListener('message', (event) => {
+    if (disposed) return;
     if (typeof event.data !== 'string') {
       return;
     }
@@ -227,10 +242,22 @@ export function bootEventsMonitor(apiUrl: string): void {
     }
   });
   socket.addEventListener('close', (event) => {
+    if (disposed) return;
     if (event.code === 4401) {
       if (hubChip) hubChip.textContent = 'Sesión inválida';
       return;
     }
     if (hubChip) hubChip.textContent = 'Hub desconectado';
   });
+
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    pendingTools.clear();
+    pendingRetrievalId = null;
+    agentBubble = null;
+    customerBubble = null;
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+    if (document.body.dataset.hubLive === '1') delete document.body.dataset.hubLive;
+  };
 }

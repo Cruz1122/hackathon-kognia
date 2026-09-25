@@ -1,0 +1,112 @@
+---
+import { ClientRouter } from 'astro:transitions';
+import AppNav from '../components/navigation/AppNav.astro';
+import '../styles/app-shell.css';
+import '../styles/dashboard.css';
+import '../styles/detail-panel.css';
+import '../styles/toast.css';
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'Kognia — Analíticas' } = Astro.props;
+const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
+const activeRoute = Astro.url.pathname.startsWith('/calls/demo') ? 'calls-demo' : 'analytics';
+const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathname.startsWith('/calls/demo');
+---
+
+<!doctype html>
+<html lang="es" transition:animate="none">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <ClientRouter fallback="swap" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script src="https://unpkg.com/lucide@latest" is:inline></script>
+  </head>
+  <body data-api-url={apiUrl}>
+    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel']}>
+      <aside class="app-sidebar" aria-label="Demo" transition:persist transition:name="app-sidebar">
+        <div class="app-mobile-topbar">
+          <div class="app-sidebar__brand">
+            <div class="app-sidebar__face" aria-hidden="true">
+              <svg viewBox="0 0 512 512" focusable="false">
+                <circle cx="256" cy="256" r="216" fill="#f7c974" />
+                <path d="M 161 209 C 161 209 161 209 161 209" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" />
+                <path d="M 351 209 C 351 209 351 209 351 209" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" />
+                <path d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" />
+              </svg>
+            </div>
+            <span>Demo</span>
+          </div>
+          <button class="mobile-nav-toggle" type="button" hidden aria-controls="appNav" aria-expanded="false" aria-label="Expandir navegación">
+            <i data-lucide="chevron-down" aria-hidden="true"></i>
+          </button>
+        </div>
+        <AppNav mode="route" active={activeRoute} />
+      </aside>
+      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="slide">
+        <slot />
+      </main>
+      {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">
+        <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+        <div class="detail-panel__session" id="sessionPanel">
+          <p class="detail-kicker">Cliente</p>
+          <h2 class="detail-title">Estado de la llamada</h2>
+          <div class="detail-sheet">
+            <section class="detail-group">
+              <dl class="detail-fields">
+                <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
+                <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
+                <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
+              </dl>
+            </section>
+          </div>
+        </div>
+        <div class="detail-panel__body" hidden></div>
+      </aside>}
+    </div>
+    <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+    <script>
+      import { installSessionGuard } from '../features/auth/session-guard';
+
+      const sidebar = document.querySelector<HTMLElement>('.app-sidebar');
+      const mobileNavToggle = document.querySelector<HTMLButtonElement>('.mobile-nav-toggle');
+
+      function setMobileNavExpanded(expanded: boolean): void {
+        if (!sidebar || !mobileNavToggle) return;
+        const isMobile = matchMedia('(max-width: 767px)').matches;
+        mobileNavToggle.hidden = !isMobile;
+        sidebar.classList.toggle('is-nav-expanded', expanded);
+        mobileNavToggle.setAttribute('aria-expanded', String(expanded));
+        mobileNavToggle.setAttribute('aria-label', expanded ? 'Contraer navegación' : 'Expandir navegación');
+        const nav = document.getElementById('appNav');
+        if (expanded || !matchMedia('(max-width: 767px)').matches) nav?.removeAttribute('inert');
+        else nav?.setAttribute('inert', '');
+      }
+
+      setMobileNavExpanded(false);
+      mobileNavToggle?.addEventListener('click', () => {
+        setMobileNavExpanded(!sidebar?.classList.contains('is-nav-expanded'));
+      });
+      document.getElementById('appNav')?.addEventListener('click', (event) => {
+        if (!matchMedia('(max-width: 767px)').matches) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest('a[data-route]')) setMobileNavExpanded(false);
+      });
+      matchMedia('(max-width: 767px)').addEventListener('change', (event) => {
+        mobileNavToggle?.toggleAttribute('hidden', !event.matches);
+        setMobileNavExpanded(event.matches ? false : true);
+      });
+
+      const stopSessionGuard = installSessionGuard(document.body.dataset.apiUrl ?? '');
+      document.addEventListener('astro:before-swap', stopSessionGuard, { once: true });
+    </script>
+  </body>
+</html>

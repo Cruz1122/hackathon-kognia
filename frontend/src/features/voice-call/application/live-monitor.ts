@@ -1,6 +1,7 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
+import { redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 
@@ -30,6 +31,10 @@ function formatTime(seconds: number): string {
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
+}
+
+function isNearLiveEdge(container: HTMLElement): boolean {
+  return container.scrollHeight - container.scrollTop - container.clientHeight <= 120;
 }
 
 async function waitForMonitor(timeoutMs = 4000): Promise<CallMonitorAudio> {
@@ -64,13 +69,14 @@ function setControl(button: HTMLButtonElement, icon: string, caption: string | n
   button.append(node);
 }
 
-export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?: string, autoStart = false): void {
+export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?: string, autoStart = false): () => void {
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector('#conversationEmpty');
   if (!conversation) {
-    return;
+    return () => undefined;
   }
-  if (conversation instanceof HTMLElement && conversation.dataset.liveBooted === '1') return;
+  const scrollOwner = document.getElementById('appContent') ?? (conversation instanceof HTMLElement ? conversation : null);
+  if (conversation instanceof HTMLElement && conversation.dataset.liveBooted === '1') return () => undefined;
   if (conversation instanceof HTMLElement) conversation.dataset.liveBooted = '1';
   bindDetailClicks(conversation);
   mountSessionPanel();
@@ -79,7 +85,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const callBtn = stealButton('startBtn');
   const pauseBtn = stealButton('playBtn');
   if (!callBtn || !restartBtn || !pauseBtn) {
-    return;
+    return () => undefined;
   }
 
   setControl(restartBtn, 'rotate-ccw', 'Reiniciar', 'Reiniciar llamada');
@@ -114,6 +120,35 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   let bargeHits = 0;
   let bargeArmedAt = 0;
   let noiseFloor = 0.08;
+  let reconnectTimer = 0;
+  let connectionHideTimer = 0;
+  let reconnectAttempts = 0;
+  let disposed = false;
+
+  function setConnectionStatus(state: 'connecting' | 'reconnecting' | 'connected' | 'error' | 'hidden', message = ''): void {
+    const root = document.getElementById('callConnectionStatus');
+    const text = document.getElementById('callConnectionStatusText');
+    if (!(root instanceof HTMLElement) || !(text instanceof HTMLElement)) return;
+    window.clearTimeout(connectionHideTimer);
+    root.classList.toggle('is-connected', state === 'connected');
+    root.classList.toggle('is-error', state === 'error');
+    root.hidden = state === 'hidden';
+    if (message) text.textContent = message;
+  }
+
+  function scheduleReconnect(): void {
+    if (disposed || closing || !live || paused || reconnectTimer) return;
+    reconnectAttempts += 1;
+    const delay = Math.min(8000, 700 * 2 ** Math.min(reconnectAttempts - 1, 4));
+    setConnectionStatus('reconnecting', `Reconectando… ${Math.ceil(delay / 1000)}s`);
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = 0;
+      if (!disposed && live && !paused) {
+        setConnectionStatus('connecting', 'Conectando de nuevo…');
+        bindSocket();
+      }
+    }, delay);
+  }
 
   function stamp(): string {
     return formatTime((performance.now() - startedAt) / 1000);
@@ -132,13 +167,14 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   }
 
   function appendRow(kind: string, html: string): HTMLElement {
+    const followLive = !scrollOwner || isNearLiveEdge(scrollOwner);
     setEmpty(true);
     const row = document.createElement('div');
     row.className = `${kind} visible enter`;
     row.innerHTML = html;
     conversation.append(row);
     lucideRefresh();
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (followLive) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     window.setTimeout(() => row.classList.remove('enter'), 900);
     return row;
   }
@@ -365,6 +401,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (type === 'call.connected') {
       if (connected) return;
       connected = true;
+      reconnectAttempts = 0;
+      setConnectionStatus('connected', 'Llamada conectada');
+      connectionHideTimer = window.setTimeout(() => setConnectionStatus('hidden'), 1400);
       note('Llamada conectada', 'phone');
       if (live && !paused && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
     } else if (type === 'wave.level') {
@@ -377,11 +416,13 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     } else if (type === 'agent.token') {
       appendToken(String(data.text ?? ''));
     } else if (type === 'tool.started') {
-      const id = `tool-${String(data.tool ?? 'tool')}-${Date.now()}`;
+      const toolCallId = String(data.tool_call_id ?? data.id ?? `${String(data.tool ?? 'tool')}-${Date.now()}`);
+      const id = `tool-${toolCallId}`;
       addTool(id, data);
-      pendingTools.set(String(data.tool ?? 'tool'), id);
+      pendingTools.set(toolCallId, id);
     } else if (type === 'tool.completed') {
-      const id = pendingTools.get(String(data.tool ?? 'tool'));
+      const toolCallId = String(data.tool_call_id ?? data.id ?? data.tool ?? 'tool');
+      const id = pendingTools.get(toolCallId);
       if (id) completeTool(id, data);
     } else if (type === 'rag.started') {
       const id = `rag-${Date.now()}`;
@@ -431,6 +472,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   }
 
   function bindSocket(): void {
+    if (disposed || !live || paused) return;
     const current = new WebSocket(socketUrl);
     socket = current;
     connected = false;
@@ -447,6 +489,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       }
       current.send(JSON.stringify({ type: 'auth', token: authToken }));
       current.send(JSON.stringify({ type: 'conversation.attach', conversation_id: attachedConversationId }));
+      setConnectionStatus('connecting', 'Autenticando llamada…');
     });
     current.addEventListener('message', (event) => {
       if (socket !== current || !live) return;
@@ -474,19 +517,27 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     });
     current.addEventListener('error', () => {
       if (socket !== current) return;
-      showTransportError('No se pudo abrir el canal de la llamada.');
+      setConnectionStatus('reconnecting', 'Reintentando conexión…');
     });
     current.addEventListener('close', (event) => {
       if (socket !== current) return;
       connected = false;
       if (closing || !live) return;
-      void hangup(false);
+      socket = null;
+      capture.stopPcmStream();
+      capture.cancelRecording();
+      pcm.cancel();
+      pcmReady = false;
+      unhookTtsWave();
       if (event.code === 4401) {
-        showTransportError('La sesión de la llamada no es válida. Inicia sesión de nuevo.');
+        setConnectionStatus('error', 'Sesión inválida. Volviendo al inicio…');
+        void hangup(false);
+        redirectToLogin();
       } else if (event.code === 4403) {
+        void hangup(false);
         showTransportError('Esta cuenta no puede adjuntar la conversación.');
       } else {
-        note('La llamada se desconectó', 'unplug');
+        scheduleReconnect();
       }
     });
   }
@@ -509,6 +560,8 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     processing = false;
     pcmReady = false;
     closing = false;
+    reconnectAttempts = 0;
+    setConnectionStatus('connecting', 'Conectando llamada…');
     startedAt = performance.now();
     patchSession({ status: 'En vivo' });
     syncControls();
@@ -547,12 +600,15 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     pcm.cancel();
     unhookTtsWave();
     waveApi?.setPlaying?.(false);
+    setConnectionStatus('hidden');
     syncControls();
   }
 
   async function hangup(notify = true): Promise<void> {
     if (!live && !socket) return;
     closing = true;
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = 0;
     live = false;
     paused = false;
     processing = false;
@@ -569,6 +625,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (current && current.readyState === WebSocket.OPEN) current.close();
     finishAgent();
     syncControls();
+    if (notify) setConnectionStatus('hidden');
     if (notify) {
       patchSession({ status: 'Finalizada' });
       appendRow(
@@ -614,4 +671,11 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       note(message, 'phone-off');
     });
   }
+
+  return () => {
+    disposed = true;
+    window.clearTimeout(reconnectTimer);
+    window.clearTimeout(connectionHideTimer);
+    void hangup(false);
+  };
 }

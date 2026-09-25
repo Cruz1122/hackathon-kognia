@@ -1,25 +1,13 @@
 ---
-const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
-import '../styles/toast.css';
-import '../styles/detail-panel.css';
+import AppLayout from '../layouts/AppLayout.astro';
 ---
-<html lang="es">
-  <head>
-
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Monitoreo de llamadas — Demo</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/lucide@latest" is:inline></script>
-  <style is:inline>
+<style is:inline>
     :root {
       --ui-graphite: #414141;
       --ui-amber: #f7c974;
       --ui-cream: #faeccf;
       --ui-paper: #f8f8f8;
-      --ui-control: #e8e8e8;
+       --ui-control: var(--ui-cream);
       --font-ui: "Urbanist", sans-serif;
       --radius-full: 9999px;
       --radius-min: 14px;
@@ -41,7 +29,9 @@ import '../styles/detail-panel.css';
 
     button { font: inherit; color: inherit; }
 
-    .page {
+     .app-main:has(.monitoring-page) { overflow: auto; }
+
+     .page {
       width: min(1080px, calc(100% - 32px));
       margin: 0 auto;
       padding: 32px 0 84px;
@@ -741,8 +731,7 @@ import '../styles/detail-panel.css';
     }
   </style>
 
-  </head>
-  <body data-api-url={apiUrl}>
+<AppLayout title="Kognia — Monitoreo">
 
   <svg width="0" height="0" aria-hidden="true" style="position:absolute">
     <defs>
@@ -758,7 +747,7 @@ import '../styles/detail-panel.css';
     </defs>
   </svg>
 
-  <main class="page">
+  <div class="page monitoring-page">
     <div class="app-content" id="appContent">
       <header class="topline">
         <div>
@@ -844,14 +833,7 @@ import '../styles/detail-panel.css';
     <section class="state-view" id="errorState" hidden aria-label="Error de monitoreo">
       <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
     </section>
-  </main>
-
-  <aside class="detail-panel" id="detailPanel" aria-label="Detalle">
-    <button class="detail-panel__close" type="button" data-detail-close="true" aria-label="Cerrar detalle">
-      <i data-lucide="x" aria-hidden="true"></i>
-    </button>
-    <div class="detail-panel__body"></div>
-  </aside>
+  </div>
 
   <nav class="demo-switcher" aria-label="Cambiar estado de la demo">
     <button type="button" class="active" data-mode="live">En vivo</button>
@@ -859,6 +841,8 @@ import '../styles/detail-panel.css';
     <button type="button" data-mode="empty">Vacío</button>
     <button type="button" data-mode="error">Error</button>
   </nav>
+
+</AppLayout>
 
   <script is:inline>
     const DEMO_DURATION = 36;
@@ -873,10 +857,12 @@ import '../styles/detail-panel.css';
     let previousTimelineTime = 0;
     let seeking = false;
     let sampleAccumulator = 0;
-    let externalAnalyser = null;
-    let externalSampleRate = 16000;
-    let analyserBins = null;
-    let callEnded = false;
+     let externalAnalyser = null;
+     let externalSampleRate = 16000;
+     let analyserBins = null;
+     let callEnded = false;
+     let animationFrame = 0;
+     let disposed = false;
     let waveDpr = 1;
     let waveWidth = 1;
     let waveHeight = 1;
@@ -1200,6 +1186,7 @@ import '../styles/detail-panel.css';
 
     function showItem(item, animate) {
       if (item.classList.contains('visible')) return;
+      const followLive = appContent && appContent.scrollHeight - appContent.scrollTop - appContent.clientHeight <= 120;
       item.classList.add('visible');
       if (animate) {
         item.classList.remove('enter');
@@ -1209,7 +1196,7 @@ import '../styles/detail-panel.css';
       }
       const message = item.querySelector('.message[data-text]');
       if (message) animate ? animateMessage(message) : renderMessageInstant(message);
-      if (animate && mode === 'live' && !seeking) setTimeout(() => item.scrollIntoView({ behavior: 'smooth', block: 'center' }), 180);
+      if (animate && mode === 'live' && !seeking && followLive) setTimeout(() => item.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 180);
     }
 
     function hideItem(item) {
@@ -1443,8 +1430,9 @@ import '../styles/detail-panel.css';
 
     document.querySelectorAll('.demo-switcher button').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
 
-    function tick(now) {
-      const dt = Math.min(.05, (now - last) / 1000);
+     function tick(now) {
+       if (disposed) return;
+       const dt = Math.min(.05, (now - last) / 1000);
       last = now;
 
       if (mode === 'live' && hubLive()) {
@@ -1492,21 +1480,57 @@ import '../styles/detail-panel.css';
         renderPlayer();
       }
 
-      requestAnimationFrame(tick);
-    }
+       animationFrame = requestAnimationFrame(tick);
+     }
 
-    new ResizeObserver(() => renderWave()).observe(waveCanvas);
-    seedRecordedWaveform();
-    lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
-    setMode('live');
-    requestAnimationFrame(tick);
-  </script>
+     const waveObserver = new ResizeObserver(() => renderWave());
+     waveObserver.observe(waveCanvas);
+     function disposeMonitoringWave() {
+       if (disposed) return;
+       disposed = true;
+       window.cancelAnimationFrame(animationFrame);
+       waveObserver.disconnect();
+       tokenTimers.forEach((timers) => timers.forEach(clearTimeout));
+       tokenTimers.clear();
+       if (window.callMonitorAudio) window.callMonitorAudio = null;
+     }
+     window.addEventListener('monitoring:dispose', disposeMonitoringWave, { once: true });
+     seedRecordedWaveform();
+     lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+     setMode('live');
+     animationFrame = requestAnimationFrame(tick);
+   </script>
 
-  <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
   <script>
     import { bootEventsMonitor } from '../features/voice-call/application/events-monitor';
-    bootEventsMonitor(document.body.dataset.apiUrl ?? '');
-  </script>
+    import { checkSession, redirectToLogin } from '../features/auth/session-guard';
+    let cleanup: (() => void) | null = null;
+    let mountedRoot: HTMLElement | null = null;
+    let pendingRoot: HTMLElement | null = null;
 
-  </body>
-</html>
+    async function mountMonitoring(): Promise<void> {
+      const root = document.querySelector<HTMLElement>('.monitoring-page');
+      if (!root || mountedRoot === root || pendingRoot === root) return;
+      pendingRoot = root;
+      if ((await checkSession(document.body.dataset.apiUrl ?? '')) === 'invalid') {
+        redirectToLogin();
+        return;
+      }
+      cleanup?.();
+      cleanup = bootEventsMonitor(document.body.dataset.apiUrl ?? '');
+      mountedRoot = root;
+      pendingRoot = null;
+    }
+
+    function unmountMonitoring(): void {
+      window.dispatchEvent(new Event('monitoring:dispose'));
+      cleanup?.();
+      cleanup = null;
+      mountedRoot = null;
+      pendingRoot = null;
+    }
+
+    document.addEventListener('astro:before-swap', unmountMonitoring);
+    document.addEventListener('astro:page-load', mountMonitoring);
+    void mountMonitoring();
+  </script>
