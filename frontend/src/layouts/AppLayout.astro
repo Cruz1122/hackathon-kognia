@@ -95,6 +95,11 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
       mobileNavToggle?.addEventListener('click', () => {
         setMobileNavExpanded(!sidebar?.classList.contains('is-nav-expanded'));
       });
+      document.getElementById('appNav')?.addEventListener('click', (event) => {
+        if (!matchMedia('(max-width: 767px)').matches) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest('a[data-route]')) setMobileNavExpanded(false);
+      });
       matchMedia('(max-width: 767px)').addEventListener('change', (event) => {
         mobileNavToggle?.toggleAttribute('hidden', !event.matches);
         setMobileNavExpanded(event.matches ? false : true);

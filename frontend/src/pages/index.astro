@@ -35,7 +35,7 @@ import '../styles/dashboard.css';
     @property --left-rail {
       syntax: '<length-percentage>';
       inherits: false;
-      initial-value: 56%;
+      initial-value: 50%;
     }
 
     @property --right-rail {
@@ -69,7 +69,7 @@ import '../styles/dashboard.css';
     .auth-panel {
       position: relative;
       display: grid;
-      --left-rail: 56%;
+      --left-rail: 50%;
       --right-rail: 0%;
       grid-template-columns: minmax(0, var(--left-rail)) minmax(0, 1fr) minmax(0, var(--right-rail));
       width: 100%;
@@ -1464,6 +1464,15 @@ import '../styles/dashboard.css';
         grid-template-columns: 1fr;
         min-height: 100dvh;
       }
+      .auth-panel:not(.is-app) {
+        --mobile-login-top-height: clamp(211px, 34svh, 292px);
+        display: block;
+        width: 100%;
+        height: auto;
+        min-height: 100svh;
+        overflow: clip;
+        transition: none;
+      }
       .login-left {
         min-height: 38dvh;
         overflow: visible;
@@ -1479,6 +1488,7 @@ import '../styles/dashboard.css';
         transform-origin: 50% 100%;
         --material-enter-from: scaleY(.16);
       }
+      .auth-panel:not(.is-app) .login-material { transition: none; }
       .auth-panel.is-app .login-material {
         width: 200%;
         height: 0;
@@ -1487,9 +1497,20 @@ import '../styles/dashboard.css';
         bottom: 0;
       }
       .login-brand { width: 100%; }
-      .login-face-wrap { width: 150px; }
-      .login-name { width: auto; font-size: 2.5rem; }
-      .login-right { min-height: 62dvh; padding: 0; }
+      .auth-panel:not(.is-app) .login-left {
+        width: 100%;
+        min-height: var(--mobile-login-top-height);
+        justify-content: flex-start;
+        padding: clamp(24px, 5vh, 42px) 24px 18px;
+        transition: none;
+      }
+      .auth-panel:not(.is-app) .login-face-wrap { width: min(40vw, 160px); }
+      .auth-panel:not(.is-app) .login-name { width: auto; margin-top: 14px; font-size: clamp(2rem, 9vw, 2.5rem); }
+      .auth-panel:not(.is-app) .login-right { display: flex; width: 100%; height: auto; min-height: calc(100svh - var(--mobile-login-top-height)); align-items: center; justify-content: center; padding: 64px 20px; overflow: visible; }
+      .auth-panel:not(.is-app) .login-form-content { position: relative; inset: auto; width: min(100%, 430px); transform: none; }
+      .auth-panel:not(.is-app) .detail-panel { display: none; }
+      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-left { display: none; }
+      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-right { min-height: 100svh; }
       .auth-copy { margin-bottom: 34px; }
       .auth-panel.is-app .login-left {
         min-height: 0;
@@ -3155,16 +3176,22 @@ import '../styles/dashboard.css';
          const target = event.target;
          if (!(target instanceof Element)) return;
          const toggle = target.closest('#callsToggle');
-         if (toggle) {
-           setCallsOpen(!callsGroup?.classList.contains('is-open'));
-           return;
-         }
-         const button = target.closest<HTMLButtonElement>('[data-view]');
+          if (toggle) {
+            setCallsOpen(!callsGroup?.classList.contains('is-open'));
+            return;
+          }
+          const routeLink = target.closest('a[data-route]');
+          if (routeLink) {
+            if (isCompactShell()) setMobileNavExpanded(false);
+            return;
+          }
+          const button = target.closest<HTMLButtonElement>('[data-view]');
          if (!button) return;
          const view = button.dataset.view?.trim();
-         if (!view) return;
-         setAppView(view);
-       });
+          if (!view) return;
+          setAppView(view);
+          if (isCompactShell()) setMobileNavExpanded(false);
+        });
 
         function isCompactShell(): boolean {
           return matchMedia('(max-width: 1100px)').matches;
