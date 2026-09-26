@@ -132,6 +132,14 @@ jobs:
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
+          REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
+          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          # La cadena de `production` (gpt-5.6-luna) no está verificada; `test`
+          # usa gpt-4o-mini + fallbacks y es la que funciona en la demo.
+          LLM_ENV: ${{ vars.APP_ENV || 'test' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -140,6 +148,8 @@ jobs:
           test -n "$POSTGRES_DB"
           test -n "$POSTGRES_USER"
           test -n "$JWT_SECRET_KEY"
+          test -n "$BACKEND_APP_NAME"
+          test -n "$RESOURCE_GROUP"
 
           database_host="${{ vars.AZURE_DATABASE_APP_NAME }}"
           test -n "$database_host"
@@ -156,35 +166,85 @@ jobs:
           PY
           )"
 
+          # Chroma: ingress HTTP interno. El cliente Chroma debe usar el FQDN
+          # interno y el puerto 80; el targetPort 8000 solo aplica dentro del
+          # contenedor (el ingress HTTP de ACA escucha en 80/443).
+          chroma_args=()
+          if [[ -n "${CHROMA_APP_NAME:-}" ]] && az containerapp show \
+            --name "$CHROMA_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            chroma_host="$(az containerapp show \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn -o tsv)"
+            test -n "$chroma_host"
+
+            az containerapp ingress update \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --allow-insecure true >/dev/null
+
+            chroma_args=(
+              "CHROMA_HOST=$chroma_host"
+              "CHROMA_PORT=80"
+              "CHROMA_SSL=false"
+              "CHROMA_RAG_COLLECTION=rag_documents"
+            )
+          else
+            printf '%s\n' 'Chroma no está desplegado; se omite su configuración.' >&2
+          fi
+
+          redis_args=()
+          if [[ -n "${REDIS_APP_NAME:-}" ]] && az containerapp show \
+            --name "$REDIS_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            redis_args=("REDIS_URL=redis://${REDIS_APP_NAME}:6379/0")
+          else
+            printf '%s\n' 'Redis no está desplegado; se omite su configuración.' >&2
+          fi
+
           secret_args=(
             "database-url=$database_url"
             "jwt-secret-key=$JWT_SECRET_KEY"
           )
           env_args=(
-            "APP_ENV=production"
+            "APP_ENV=${LLM_ENV:-test}"
             "DATABASE_URL=secretref:database-url"
             "JWT_SECRET_KEY=secretref:jwt-secret-key"
             "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15"
           )
+          env_args+=("${chroma_args[@]}")
+          env_args+=("${redis_args[@]}")
 
-          if [[ -n "$OPENAI_API_KEY" ]]; then
+          if [[ -n "${OPENAI_API_KEY:-}" ]]; then
             secret_args+=("openai-api-key=$OPENAI_API_KEY")
             env_args+=("OPENAI_API_KEY=secretref:openai-api-key")
           fi
 
-          if [[ -n "$GEMINI_API_KEY" ]]; then
+          if [[ -n "${GEMINI_API_KEY:-}" ]]; then
             secret_args+=("gemini-api-key=$GEMINI_API_KEY")
             env_args+=("GEMINI_API_KEY=secretref:gemini-api-key")
           fi
 
+          if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+            secret_args+=("openrouter-api-key=$OPENROUTER_API_KEY")
+            env_args+=("OPENROUTER_API_KEY=secretref:openrouter-api-key")
+          fi
+
+          if [[ -n "${GROQ_API_KEY:-}" ]]; then
+            secret_args+=("groq-api-key=$GROQ_API_KEY")
+            env_args+=("GROQ_API_KEY=secretref:groq-api-key")
+          fi
+
           az containerapp secret set \
-            --name "${{ vars.AZURE_BACKEND_APP_NAME }}" \
+            --name "$BACKEND_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --secrets "${secret_args[@]}"
 
           az containerapp update \
-            --name "${{ vars.AZURE_BACKEND_APP_NAME }}" \
+            --name "$BACKEND_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
+            --min-replicas 1 \
             --set-env-vars "${env_args[@]}"
 
       - name: Bootstrap demo admin
