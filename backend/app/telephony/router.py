@@ -52,10 +52,37 @@ def _owns(user: User, organization_id: uuid.UUID | None) -> bool:
 
 
 @router.get("/calls")
-async def list_calls(user: User = Depends(get_current_user)) -> dict[str, Any]:
+async def list_calls(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     if user.organization_id is None:
         raise HTTPException(status_code=404, detail="not found")
-    return {"calls": [session.public_view() for session in registry.list_for(user.organization_id)]}
+    live_ids = {item.call_id for item in registry.list_for(user.organization_id)}
+    rows = list(
+        (
+            await session.scalars(
+                select(Call)
+                .where(Call.organization_id == user.organization_id, Call.telnyx_call_control_id.is_not(None))
+                .order_by(Call.started_at.desc())
+                .limit(20)
+            )
+        ).all()
+    )
+    recent = [
+        {
+            "id": str(row.id),
+            "lifecycle": row.lifecycle_state,
+            "started_at": row.started_at.isoformat(),
+            "recording_offset_ms": row.recording_offset_ms,
+        }
+        for row in rows
+        if row.id not in live_ids
+    ]
+    return {
+        "calls": [item.public_view() for item in registry.list_for(user.organization_id)],
+        "recent": recent,
+    }
 
 
 @router.get("/calls/{call_id}")

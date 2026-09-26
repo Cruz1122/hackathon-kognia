@@ -46,6 +46,7 @@ class CallSession:
     token_expires_at: float = 0.0
     last_voice_at: float = 0.0
     first_voice_at: float = 0.0
+    utterance_offset_ms: int | None = None
     agent_segment_open: bool = False
     playback_spans: list[tuple[int, int, str]] = field(default_factory=list)
 

@@ -1,0 +1,42 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import CallDemoContent from '../../components/calls/CallDemoContent.astro';
+import '../../styles/call-demo.css';
+---
+
+<AppLayout title="Kognia — Llamada">
+  <CallDemoContent />
+</AppLayout>
+
+<script>
+  import { bootCallReplay } from '../../features/voice-call/application/call-replay';
+  import { accessTokenKey, checkSession, redirectToLogin } from '../../features/auth/session-guard';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+  let mountedId = '';
+
+  async function mountSavedCall(): Promise<void> {
+    const root = document.querySelector<HTMLElement>('.call-demo-page');
+    const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
+    const callId = new URLSearchParams(window.location.search).get('id') ?? '';
+    if (!root || !callId || mountedId === callId) return;
+    if ((await checkSession(apiUrl)) === 'invalid' || !token) {
+      redirectToLogin();
+      return;
+    }
+    cleanup?.();
+    cleanup = bootCallReplay(apiUrl, token, callId);
+    mountedId = callId;
+  }
+
+  function unmountSavedCall(): void {
+    cleanup?.();
+    cleanup = null;
+    mountedId = '';
+  }
+
+  document.addEventListener('astro:before-swap', unmountSavedCall);
+  document.addEventListener('astro:page-load', () => { void mountSavedCall(); });
+  void mountSavedCall();
+</script>

@@ -7,6 +7,11 @@ import wave
 CANONICAL_RATE = 16000
 
 
+def timeline_ms(origin_ms: int, samples: int, sample_rate: int = CANONICAL_RATE) -> int:
+    """Map a PCM sample index onto the call clock that starts with the recording."""
+    return max(0, origin_ms) + (max(0, samples) * 1000) // sample_rate
+
+
 def resolve_byte_order(media_format: dict) -> str:
     """Use an explicit endian field when Telnyx sends one.
 

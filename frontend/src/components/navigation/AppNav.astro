@@ -1,12 +1,12 @@
 ---
 interface Props {
   mode?: 'legacy' | 'route';
-  active?: 'analytics' | 'calls-demo' | 'calls-monitor';
+  active?: 'analytics' | 'calls-demo' | 'calls-saved';
 }
 
 const { mode = 'route', active = 'analytics' } = Astro.props;
 const isLegacy = mode === 'legacy';
-const callsOpen = !isLegacy;
+const callsOpen = true;
 ---
 
 <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden={isLegacy ? 'true' : undefined} inert={isLegacy ? true : undefined}>
@@ -29,27 +29,14 @@ const callsOpen = !isLegacy;
       <i data-lucide="phone" aria-hidden="true"></i>
       <span>Llamadas</span>
     </button>
-    <div class="app-nav__children" id="callsChildren" inert={isLegacy ? true : undefined} aria-hidden={isLegacy ? 'true' : undefined}>
+    <div class="app-nav__children" id="callsChildren">
       <div class="app-nav__children-inner">
         {isLegacy ? (
           <>
-            <a class="app-nav__item app-nav__call is-active" href="../calls/demo" data-route="calls-demo" aria-current="page">
-              <span>Llamada Demo</span>
-            </a>
-            <button class="app-nav__item app-nav__call" type="button" data-view="call-1">
-              <span>Llamada 1</span>
-            </button>
-            <button class="app-nav__item app-nav__call" type="button" data-view="call-2">
-              <span>Llamada 2</span>
-            </button>
+            <div id="pstnCallList"></div>
           </>
         ) : (
-          <a class:list={['app-nav__item', 'app-nav__call', active === 'calls-demo' && 'is-active']} href="../calls/demo" data-route="calls-demo" aria-current={active === 'calls-demo' ? 'page' : undefined}>
-            <span>Llamada Demo</span>
-          </a>
-          <a class:list={['app-nav__item', 'app-nav__call', active === 'calls-monitor' && 'is-active']} href="../calls/monitor" data-route="calls-monitor" aria-current={active === 'calls-monitor' ? 'page' : undefined}>
-            <span>Monitor PSTN</span>
-          </a>
+          <div id="pstnCallList"></div>
         )}
       </div>
     </div>

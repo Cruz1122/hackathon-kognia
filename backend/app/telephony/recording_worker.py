@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from .db.models import Recording
-from .db.session import get_session_factory
-from .platform.queue import Job
+from ..db.models import Recording
+from ..db.session import get_session_factory
+from ..platform.queue import Job
 from .recording import RecordingRecord, download_recording, persist_recording
 
 logger = logging.getLogger("hackathon.telnyx.recording")
@@ -17,6 +17,9 @@ async def process_recording_job(job: Job) -> None:
         row = await session.get(Recording, job.recording_id)
         if row is None:
             logger.warning("Recording row missing")
+            return
+        if row.status == "READY" and row.sha256:
+            logger.info("Recording already stored")
             return
         record = RecordingRecord(
             id=row.id,

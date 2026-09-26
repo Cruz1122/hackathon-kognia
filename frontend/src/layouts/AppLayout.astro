@@ -14,12 +14,12 @@ interface Props {
 const { title = 'Kognia — Analíticas' } = Astro.props;
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 const path = Astro.url.pathname;
-const activeRoute = path.startsWith('/calls/monitor') || path.startsWith('/calls/replay')
-  ? 'calls-monitor'
+const activeRoute = path.startsWith('/calls/saved')
+  ? 'calls-saved'
   : path.startsWith('/calls/demo')
     ? 'calls-demo'
     : 'analytics';
-const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathname.startsWith('/calls/demo');
+const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved');
 ---
 
 <!doctype html>
@@ -74,6 +74,7 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
     <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
     <script>
       import { installSessionGuard } from '../features/auth/session-guard';
+      import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
 
       const sidebar = document.querySelector<HTMLElement>('.app-sidebar');
       const mobileNavToggle = document.querySelector<HTMLButtonElement>('.mobile-nav-toggle');
@@ -106,6 +107,10 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
 
       const stopSessionGuard = installSessionGuard(document.body.dataset.apiUrl ?? '');
       document.addEventListener('astro:before-swap', stopSessionGuard, { once: true });
+
+      const apiUrl = document.body.dataset.apiUrl ?? '';
+      void fillCallNav(apiUrl);
+      document.addEventListener('astro:page-load', () => { void fillCallNav(apiUrl); });
     </script>
   </body>
 </html>

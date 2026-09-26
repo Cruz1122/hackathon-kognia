@@ -23,6 +23,7 @@ class CallTimelineService:
         *,
         provider_occurred_at: str | None = None,
         persist: bool = True,
+        at_offset_ms: int | None = None,
     ) -> dict[str, Any]:
         event = {
             "call_id": str(session.call_id),
@@ -30,7 +31,7 @@ class CallTimelineService:
             "seq": session.next_sequence(),
             "type": event_type,
             "occurred_at": datetime.now(UTC).isoformat(),
-            "offset_ms": session.offset_ms(),
+            "offset_ms": session.offset_ms() if at_offset_ms is None else max(0, at_offset_ms),
             "provider_occurred_at": provider_occurred_at,
             "payload": payload or {},
         }

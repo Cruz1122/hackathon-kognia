@@ -8,7 +8,7 @@ from typing import Any
 
 from ..agent.tools.contracts import ToolContext
 from ..features.agent.service import stream_agent
-from .audio import CANONICAL_RATE, pcm16le_to_wire, resample_pcm16le
+from .audio import CANONICAL_RATE, pcm16le_to_wire, resample_pcm16le, timeline_ms
 from .frames import CHANNEL_AGENT, encode_audio_frame
 from .live_audio import live_audio_hub
 from .marks import MarkTracker
@@ -53,9 +53,6 @@ async def run_agent_turn(
     session.history.append({"role": "user", "content": transcript})
     if spoken:
         session.history.append({"role": "assistant", "content": spoken})
-        timeline.record(session, "transcript.final", {"speaker": "agent", "text": spoken})
-        session.agent_state = "speaking"
-        timeline.record(session, "agent.state", {"state": "speaking"})
         await _speak(session, voice, spoken)
     session.agent_state = "listening"
     timeline.record(session, "agent.state", {"state": "listening"})
@@ -98,19 +95,35 @@ async def _speak(session: CallSession, voice: PiperTTSProvider, text: str) -> No
             asyncio.run_coroutine_threadsafe(chunks.put(None), loop).result()
 
     producer = asyncio.create_task(asyncio.to_thread(produce))
+    announced = False
     try:
         while True:
             chunk = await chunks.get()
             if chunk is None or session.closed:
                 break
+            if not announced:
+                announced = True
+                at = _agent_heard_ms(session)
+                timeline.record(session, "transcript.final", {"speaker": "agent", "text": text}, at_offset_ms=at)
+                session.agent_state = "speaking"
+                timeline.record(session, "agent.state", {"state": "speaking"}, at_offset_ms=at)
             canonical = resample_pcm16le(chunk, source_rate, CANONICAL_RATE)
             await emit_agent_audio(session, canonical)
+        if text.strip() and not announced and not session.closed:
+            timeline.record(session, "transcript.final", {"speaker": "agent", "text": text})
     except asyncio.CancelledError:
         await _cancel_playback(session)
         raise
     finally:
         session.agent_segment_open = False
         producer.cancel()
+
+
+def _agent_heard_ms(session: CallSession) -> int:
+    customer_samples = len(session.customer_pcm) // 2
+    agent_samples = len(session.agent_pcm) // 2
+    start = max(customer_samples, agent_samples) if not session.agent_segment_open else agent_samples
+    return timeline_ms(session.recording_offset_ms, start)
 
 
 async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:

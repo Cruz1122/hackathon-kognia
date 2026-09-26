@@ -1591,7 +1591,7 @@ import '../styles/dashboard.css';
 
   <main class="page">
     <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
-      <section class="login-left" aria-label="Demo">
+      <section class="login-left app-sidebar" aria-label="Demo" transition:name="app-sidebar" transition:persist>
         <div class="login-material" aria-hidden="true">
           <svg class="login-left-svg login-left-svg--y" viewBox="0 0 600 2400" preserveAspectRatio="none">
             <g>
@@ -2493,6 +2493,7 @@ import '../styles/dashboard.css';
        <script>
         import { bootDashboard } from '../features/dashboard/dashboard';
         import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
+        import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
@@ -2707,7 +2708,7 @@ import '../styles/dashboard.css';
          const isCall = view === 'call-demo' || view === 'call-1' || view === 'call-2';
          authPanel.dataset.view = view;
          authPanel.classList.toggle('is-empty-view', empty);
-         if (!isCall) setCallsOpen(false);
+         setCallsOpen(true);
          callsToggle?.classList.toggle('is-active', isCall);
          appNav?.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
            const active = button.dataset.view === view;
@@ -2813,6 +2814,7 @@ import '../styles/dashboard.css';
           analyticsHandoffPending = true;
           setFaceEmotion('happy');
           revealApp(animate);
+          void fillCallNav(apiUrl);
           if (!dashboardStarted) {
             dashboardStartPending = true;
             dashboardStartTimer = window.setTimeout(() => startDashboard(token), animate ? 420 : 0);

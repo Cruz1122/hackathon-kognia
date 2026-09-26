@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
-from .audio import mixed_call_wav, pcm16le_rms, resolve_byte_order, wire_to_pcm16le
+from .audio import mixed_call_wav, pcm16le_rms, resolve_byte_order, timeline_ms, wire_to_pcm16le
 from .bridge import run_agent_turn
 from .frames import CHANNEL_CUSTOMER, encode_audio_frame
 from .live_audio import live_audio_hub
@@ -65,6 +65,7 @@ class TelephonyRuntime:
         self.stt_factory: type[SherpaSTTProvider] = SherpaSTTProvider
         self.agent: Any = None
         self._pending_recordings: dict[str, str] = {}
+        self._background: set[asyncio.Task[None]] = set()
 
     def api(self) -> TelnyxApi:
         return TelnyxApi(load_settings(), self.transport)
@@ -151,7 +152,6 @@ class TelephonyRuntime:
         await api.streaming_start(control_id, media_url)
         session.lifecycle_state = "ACTIVE"
         timeline.record(session, "lifecycle", {"state": "ACTIVE"}, provider_occurred_at=occurred_at)
-        session.recording_offset_ms = session.last_offset_ms
         try:
             await api.record_start(control_id)
             self._ensure_recording(session, None, "RECORDING")
@@ -231,6 +231,25 @@ class TelephonyRuntime:
         except Exception:
             logger.exception("Telnyx call persistence failed")
 
+    async def _persist_audio_origin(self, session: CallSession) -> None:
+        if session.organization_id is None:
+            return
+        try:
+            from sqlalchemy import update
+
+            from ..db.models import Call
+            from ..db.session import get_session_factory
+
+            async with get_session_factory()() as db:
+                await db.execute(
+                    update(Call)
+                    .where(Call.id == session.call_id)
+                    .values(recording_offset_ms=session.recording_offset_ms)
+                )
+                await db.commit()
+        except Exception:
+            logger.exception("Could not store recording offset")
+
     def _ensure_recording(self, session: CallSession, download_url: str | None, status: str) -> RecordingRecord | None:
         if session.organization_id is None:
             return None
@@ -276,6 +295,7 @@ class TelephonyRuntime:
             session.stt.close()
             session.stt = None
         self.write_capture(session)
+        await self._store_heard_recording(session)
         session.lifecycle_state = "ENDED"
         timeline.record(session, "lifecycle", {"state": "ENDED"}, provider_occurred_at=occurred_at)
         registry.end(session)
@@ -321,6 +341,35 @@ class TelephonyRuntime:
             encoding="utf-8",
         )
         return target
+
+    async def _store_heard_recording(self, session: CallSession) -> None:
+        if session.organization_id is None or (not session.customer_pcm and not session.agent_pcm):
+            return
+        record = self._ensure_recording(session, None, "READY")
+        if record is None:
+            return
+        import hashlib
+        import wave
+
+        from .audio import waveform_levels
+        from .recording import persist_recording, recording_path
+
+        payload = mixed_call_wav(bytes(session.customer_pcm), bytes(session.agent_pcm))
+        path = recording_path(record.id)
+        path.write_bytes(payload)
+        with wave.open(str(path), "rb") as wav_file:
+            frames = wav_file.getnframes()
+            rate = wav_file.getframerate() or 16000
+        record.path = path
+        record.status = "READY"
+        record.sha256 = hashlib.sha256(payload).hexdigest()
+        record.size_bytes = len(payload)
+        record.channels = 1
+        record.duration_ms = int(frames / rate * 1000)
+        record.download_url = None
+        record.error = None
+        record.waveform = waveform_levels(bytes(session.customer_pcm))
+        await persist_recording(record)
 
     async def handle_media(self, websocket: WebSocket, call_id: str, token: str) -> None:
         await websocket.accept()
@@ -397,6 +446,12 @@ class TelephonyRuntime:
             self.write_capture(session)
 
     async def _on_customer_pcm(self, session: CallSession, pcm: bytes) -> None:
+        if not session.customer_pcm:
+            session.recording_offset_ms = session.offset_ms()
+            task = asyncio.create_task(self._persist_audio_origin(session))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+        sample_start = len(session.customer_pcm) // 2
         session.customer_pcm.extend(pcm)
         if session.organization_id is not None:
             live_audio_hub.publish(
@@ -422,8 +477,10 @@ class TelephonyRuntime:
             session.last_voice_at = now
             if session.first_voice_at <= 0:
                 session.first_voice_at = now
+                session.utterance_offset_ms = timeline_ms(session.recording_offset_ms, sample_start)
         text, endpoint = await session.stt.feed(pcm)
-        if text:
+        if text and session.utterance_offset_ms is None:
+            session.utterance_offset_ms = timeline_ms(session.recording_offset_ms, sample_start)
             timeline.record(session, "transcript.partial", {"speaker": "customer", "text": text}, persist=False)
         if utterance_ready(
             last_voice_at=session.last_voice_at,
@@ -434,11 +491,18 @@ class TelephonyRuntime:
             final = (await session.stt.finish()).strip() or text.strip()
             session.last_voice_at = 0.0
             session.first_voice_at = 0.0
+            started_at = session.utterance_offset_ms
+            session.utterance_offset_ms = None
             session.stt.close()
             session.stt = self.stt_factory().clone() if self.enable_voice else None
             if usable_transcript(final):
                 logger.info("Telnyx turn started")
-                timeline.record(session, "transcript.final", {"speaker": "customer", "text": final})
+                timeline.record(
+                    session,
+                    "transcript.final",
+                    {"speaker": "customer", "text": final},
+                    at_offset_ms=started_at,
+                )
                 await self._start_turn(session, final)
 
     async def _barge_in(self, session: CallSession) -> None:
