@@ -70,6 +70,7 @@ from .platform.rag.extraction import RagExtractionError
 from .analytics.router import router as analytics_router
 from .platform.queue import enqueue_enrichment
 from .commercial.router import router as commercial_router
+from .telephony.router import router as telnyx_router
 
 
 logger = logging.getLogger("hackathon.voice")
@@ -176,9 +177,16 @@ async def lifespan(_app: FastAPI):
     except Exception:
         logger.exception("E5 embeddings failed to load during backend startup")
     await seed_demo_knowledge()
+    from .telephony.runtime import start_telephony, stop_telephony
+
+    await start_telephony()
     try:
         yield
     finally:
+        try:
+            await stop_telephony()
+        except Exception:
+            logger.exception("Telnyx shutdown failed")
         try:
             try:
                 await close_redis()
@@ -204,6 +212,7 @@ app.add_middleware(
 )
 app.include_router(analytics_router)
 app.include_router(commercial_router)
+app.include_router(telnyx_router)
 
 
 def _health_status() -> dict[str, str]:

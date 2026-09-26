@@ -23,3 +23,7 @@ frontend/.env
 .idea/
 
 artifacts/stt-eval/
+var/recordings/
+
+# Astro
+.astro/

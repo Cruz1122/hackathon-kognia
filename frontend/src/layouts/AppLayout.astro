@@ -1,6 +1,7 @@
 ---
 import { ClientRouter } from 'astro:transitions';
 import AppNav from '../components/navigation/AppNav.astro';
+import InteractiveMascotFace from '../components/mascot/InteractiveMascotFace.astro';
 import '../styles/app-shell.css';
 import '../styles/dashboard.css';
 import '../styles/detail-panel.css';
@@ -12,8 +13,9 @@ interface Props {
 
 const { title = 'Kognia — Analíticas' } = Astro.props;
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
-const activeRoute = Astro.url.pathname.startsWith('/calls/demo') ? 'calls-demo' : 'analytics';
-const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathname.startsWith('/calls/demo');
+const path = Astro.url.pathname;
+const activeRoute = path === '/calls' || path.startsWith('/calls/') ? 'calls' : 'analytics';
+const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved');
 ---
 
 <!doctype html>
@@ -33,14 +35,7 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
       <aside class="app-sidebar" aria-label="Demo" transition:persist transition:name="app-sidebar">
         <div class="app-mobile-topbar">
           <div class="app-sidebar__brand">
-            <div class="app-sidebar__face" aria-hidden="true">
-              <svg viewBox="0 0 512 512" focusable="false">
-                <circle cx="256" cy="256" r="216" fill="#f7c974" />
-                <path d="M 161 209 C 161 209 161 209 161 209" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" />
-                <path d="M 351 209 C 351 209 351 209 351 209" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" />
-                <path d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" />
-              </svg>
-            </div>
+            <InteractiveMascotFace class="app-sidebar__face" label="Cambiar expresión de Demo" />
             <span>Demo</span>
           </div>
           <button class="mobile-nav-toggle" type="button" hidden aria-controls="appNav" aria-expanded="false" aria-label="Expandir navegación">
@@ -75,6 +70,7 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
     <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
     <script>
       import { installSessionGuard } from '../features/auth/session-guard';
+      import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
 
       const sidebar = document.querySelector<HTMLElement>('.app-sidebar');
       const mobileNavToggle = document.querySelector<HTMLButtonElement>('.mobile-nav-toggle');
@@ -107,6 +103,52 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
 
       const stopSessionGuard = installSessionGuard(document.body.dataset.apiUrl ?? '');
       document.addEventListener('astro:before-swap', stopSessionGuard, { once: true });
+
+      const apiUrl = document.body.dataset.apiUrl ?? '';
+
+      function paintIcons(): void {
+        const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+        lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+      }
+
+      function syncNavActive(): void {
+        const calls = window.location.pathname === '/calls' || window.location.pathname.startsWith('/calls/');
+        document.querySelectorAll<HTMLElement>('#appNav [data-route], #appNav [data-view="dashboard"]').forEach((item) => {
+          const isCalls = item.dataset.route === 'calls';
+          const isDashboard = item.dataset.route === 'analytics' || item.dataset.view === 'dashboard';
+          const active = (calls && isCalls) || (!calls && isDashboard);
+          item.classList.toggle('is-active', active);
+          if (active) item.setAttribute('aria-current', 'page');
+          else item.removeAttribute('aria-current');
+        });
+      }
+
+      const navWatch = window as Window & { __kogniaNavSync?: boolean };
+      if (!navWatch.__kogniaNavSync) {
+        navWatch.__kogniaNavSync = true;
+        document.getElementById('appNav')?.addEventListener('click', (event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const dashboard = target.closest('[data-view="dashboard"]');
+          if (!dashboard || !window.location.pathname.startsWith('/calls')) return;
+          event.preventDefault();
+          const link = document.createElement('a');
+          link.href = '/analytics';
+          link.dataset.route = 'analytics';
+          document.body.append(link);
+          link.click();
+          link.remove();
+        });
+      }
+
+      syncNavActive();
+      paintIcons();
+      void fillCallNav(apiUrl);
+      document.addEventListener('astro:page-load', () => {
+        syncNavActive();
+        paintIcons();
+        void fillCallNav(apiUrl);
+      });
     </script>
   </body>
 </html>

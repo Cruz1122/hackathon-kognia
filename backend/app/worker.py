@@ -14,7 +14,12 @@ logger = logging.getLogger("hackathon.worker")
 
 async def handle_job(job: object) -> None:
     from .enrichment.service import enrich_conversation
+    from .platform.queue import Job
+    from .telephony.recording_worker import process_recording_job
 
+    if isinstance(job, Job) and job.type == "download_recording":
+        await process_recording_job(job)
+        return
     await enrich_conversation(get_session_factory(), job)  # type: ignore[arg-type]
 
 

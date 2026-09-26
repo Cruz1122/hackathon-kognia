@@ -1,0 +1,1255 @@
+---
+export interface DropdownOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+interface Props {
+  options: DropdownOption[];
+  value?: string;
+  label?: string;
+  name?: string;
+  id?: string;
+  ariaLabel?: string;
+  maxHeight?: number;
+}
+
+const {
+  options,
+  value: initialValue,
+  label = "Seleccionar agente",
+  name,
+  id,
+  ariaLabel = label,
+  maxHeight = 316,
+} = Astro.props;
+
+if (!options?.length) {
+  throw new Error("GooeyDropdown necesita al menos una opción.");
+}
+
+const selectedIndex = Math.max(
+  0,
+  options.findIndex((option) => option.value === initialValue),
+);
+
+const selectedOption = options[selectedIndex];
+
+const uid =
+  id ??
+  `gooey-dropdown-${Math.random().toString(36).slice(2, 10)}`;
+
+const listboxId = `${uid}-listbox`;
+const filterId = `${uid}-goo`;
+---
+
+<div
+  class="gooey-dropdown"
+  id={uid}
+  data-gooey-dropdown
+  data-open="false"
+  data-placement="bottom"
+  data-selected-index={selectedIndex}
+  style={`--panel-limit:${maxHeight}px`}
+>
+  <svg
+    class="gooey-dropdown__svg"
+    width="0"
+    height="0"
+    aria-hidden="true"
+  >
+    <defs>
+      <filter
+        id={filterId}
+        x="-35%"
+        y="-35%"
+        width="170%"
+        height="170%"
+        color-interpolation-filters="sRGB"
+      >
+        <feGaussianBlur
+          in="SourceGraphic"
+          stdDeviation="7"
+          result="blur"
+        />
+
+        <feColorMatrix
+          in="blur"
+          type="matrix"
+          values="
+            1 0 0 0 0
+            0 1 0 0 0
+            0 0 1 0 0
+            0 0 0 22 -10
+          "
+          result="goo"
+        />
+
+        <feComposite
+          in="SourceGraphic"
+          in2="goo"
+          operator="atop"
+        />
+      </filter>
+    </defs>
+  </svg>
+
+  {
+    name && (
+      <input
+        type="hidden"
+        name={name}
+        value={selectedOption.value}
+        data-dropdown-input
+      />
+    )
+  }
+
+  <button
+    class="gooey-dropdown__trigger"
+    type="button"
+    aria-haspopup="listbox"
+    aria-expanded="false"
+    aria-controls={listboxId}
+    data-dropdown-trigger
+  >
+    <span class="gooey-dropdown__label-wrap">
+      <span class="gooey-dropdown__eyebrow">
+        {label}
+      </span>
+
+      <span
+        class="gooey-dropdown__value"
+        data-dropdown-value
+      >
+        {selectedOption.label}
+      </span>
+    </span>
+
+    <svg
+      class="gooey-dropdown__chevron"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="m6 9 6 6 6-6"
+        stroke="currentColor"
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+
+    <span
+      class="gooey-dropdown__pulse"
+      data-dropdown-pulse
+      aria-hidden="true"
+    ></span>
+  </button>
+
+  <div class="gooey-dropdown__panel" data-dropdown-panel>
+    <div class="gooey-dropdown__scroll" data-dropdown-scroll>
+      <div
+        class="gooey-dropdown__goo"
+        aria-hidden="true"
+        style={`filter:url(#${filterId}); -webkit-filter:url(#${filterId});`}
+      >
+        <div
+          class="gooey-dropdown__selection-mass"
+          data-selection-mass
+        ></div>
+      </div>
+
+      <ul
+        class="gooey-dropdown__options"
+        id={listboxId}
+        role="listbox"
+        aria-label={ariaLabel}
+        data-dropdown-listbox
+      >
+        {
+          options.map((option, index) => (
+            <li role="presentation">
+              <button
+                type="button"
+                class="gooey-dropdown__option"
+                role="option"
+                aria-selected={index === selectedIndex ? "true" : "false"}
+                aria-disabled={option.disabled ? "true" : undefined}
+                disabled={option.disabled}
+                data-dropdown-option
+                data-index={index}
+                data-value={option.value}
+                tabindex={index === selectedIndex ? "0" : "-1"}
+              >
+                <svg
+                  class="gooey-dropdown__option-check"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="m5 12.5 4 4L19 7"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+
+                <span class="gooey-dropdown__option-text">
+                  {option.label}
+                </span>
+              </button>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+</div>
+
+<style>
+  .gooey-dropdown {
+    --ui-graphite: #414141;
+    --ui-paper: #f8f8f8;
+
+    --ease-out: cubic-bezier(.2, .82, .2, 1);
+    --ease-pop: cubic-bezier(.16, 1, .3, 1);
+
+    --trigger-radius: 9999px;
+    --panel-radius: 20px;
+    --panel-max-height: var(--panel-limit, 316px);
+
+    position: relative;
+    z-index: 2;
+
+    width: min(100%, 360px);
+
+    color: var(--ui-graphite);
+    font-family: "Urbanist", sans-serif;
+
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .gooey-dropdown,
+  .gooey-dropdown * {
+    box-sizing: border-box;
+  }
+
+  .gooey-dropdown__svg {
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .gooey-dropdown__trigger {
+    position: relative;
+
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    width: 100%;
+    min-height: 54px;
+
+    padding: 0 14px 0 18px;
+
+    border: 1px solid rgba(65, 65, 65, .10);
+    border-radius: var(--trigger-radius);
+
+    background: var(--ui-paper);
+    color: var(--ui-graphite);
+
+    font: inherit;
+
+    cursor: pointer;
+    outline: none;
+
+    box-shadow:
+      0 8px 24px rgba(65, 65, 65, .08);
+
+    transform: translateZ(0);
+
+    transition:
+      transform 160ms var(--ease-out),
+      box-shadow 180ms var(--ease-out),
+      background-color 160ms ease;
+
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  .gooey-dropdown__trigger:hover {
+    transform: translateY(-1px);
+
+    box-shadow:
+      0 12px 30px rgba(65, 65, 65, .10);
+  }
+
+  .gooey-dropdown__trigger:active {
+    transform: scale(.988);
+  }
+
+  .gooey-dropdown__trigger:focus-visible {
+    box-shadow:
+      0 0 0 3px rgba(65, 65, 65, .12),
+      0 10px 28px rgba(65, 65, 65, .09);
+  }
+
+  .gooey-dropdown__label-wrap {
+    min-width: 0;
+    flex: 1;
+    text-align: left;
+  }
+
+  .gooey-dropdown__eyebrow {
+    display: block;
+
+    margin-bottom: 4px;
+
+    color: rgba(65, 65, 65, .58);
+
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.15;
+  }
+
+  .gooey-dropdown__value {
+    display: block;
+
+    overflow: hidden;
+
+    padding-block: 1px;
+
+    color: var(--ui-graphite);
+
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .gooey-dropdown__chevron {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+
+    transition:
+      transform 220ms var(--ease-pop);
+  }
+
+  .gooey-dropdown[data-open="true"]
+    .gooey-dropdown__chevron {
+    transform: rotate(180deg);
+  }
+
+  .gooey-dropdown__panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+
+    width: 100%;
+
+    overflow: hidden;
+
+    border: 1px solid rgba(65, 65, 65, .10);
+    border-radius: var(--panel-radius);
+
+    background: var(--ui-paper);
+
+    box-shadow:
+      0 14px 34px rgba(65, 65, 65, .10);
+
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+
+    transform:
+      translateY(-7px)
+      scale(.985);
+
+    transform-origin: top center;
+
+    transition:
+      opacity 130ms ease,
+      transform 190ms var(--ease-pop),
+      visibility 0s linear 190ms;
+
+    will-change: transform, opacity;
+
+    contain: layout style;
+  }
+
+  .gooey-dropdown[data-placement="top"]
+    .gooey-dropdown__panel {
+    top: auto;
+    bottom: calc(100% + 8px);
+
+    transform:
+      translateY(7px)
+      scale(.985);
+
+    transform-origin: bottom center;
+  }
+
+  .gooey-dropdown[data-open="true"]
+    .gooey-dropdown__panel {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+
+    transform:
+      translateY(0)
+      scale(1);
+
+    transition:
+      opacity 130ms ease,
+      transform 190ms var(--ease-pop),
+      visibility 0s;
+  }
+
+  .gooey-dropdown__scroll {
+    position: relative;
+
+    max-height: var(--panel-max-height);
+
+    padding: 7px 6px 7px 7px;
+
+    overflow-y: auto;
+    overscroll-behavior: contain;
+
+    scroll-padding-block: 7px;
+
+    scrollbar-width: thin;
+    scrollbar-color:
+      rgba(65, 65, 65, .14)
+      transparent;
+
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .gooey-dropdown__scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .gooey-dropdown__scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .gooey-dropdown__scroll::-webkit-scrollbar-thumb {
+    border: 1px solid transparent;
+    border-radius: 9999px;
+
+    background:
+      rgba(65, 65, 65, .14);
+
+    background-clip: padding-box;
+  }
+
+  .gooey-dropdown__goo {
+    position: absolute;
+    inset: 7px;
+
+    z-index: 0;
+
+    pointer-events: none;
+  }
+
+  .gooey-dropdown__selection-mass {
+    position: absolute;
+    top: 0;
+    left: 0;
+
+    width: 100%;
+    height: 46px;
+
+    border-radius: 11px;
+
+    background:
+      rgba(65, 65, 65, .05);
+
+    opacity: 0;
+
+    transform:
+      translate3d(0, 0, 0)
+      scale(.985);
+
+    transform-origin: center;
+
+    transition:
+      transform 190ms var(--ease-pop),
+      opacity 100ms ease;
+
+    will-change:
+      transform,
+      height,
+      opacity;
+  }
+
+  .gooey-dropdown__selection-mass.is-visible {
+    opacity: 1;
+
+    transform:
+      translate3d(
+        0,
+        var(--mass-y, 0px),
+        0
+      )
+      scale(1);
+  }
+
+  .gooey-dropdown__options {
+    position: relative;
+
+    z-index: 1;
+
+    margin: 0;
+    padding: 0;
+
+    list-style: none;
+  }
+
+  .gooey-dropdown__options > li + li {
+    margin-top: 4px;
+  }
+
+  .gooey-dropdown__option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    width: 100%;
+    min-height: 46px;
+
+    padding: 0 13px;
+
+    border: 0;
+    border-radius: 11px;
+
+    background: transparent;
+    color: var(--ui-graphite);
+
+    font-family: "Urbanist", sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.25;
+
+    text-align: left;
+
+    cursor: pointer;
+    outline: none;
+
+    transform: translateZ(0);
+
+    transition:
+      transform 120ms var(--ease-out),
+      background-color 120ms ease;
+
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .gooey-dropdown__option:hover:not(:disabled) {
+    background:
+      rgba(65, 65, 65, .035);
+
+    transform: translateX(1px);
+  }
+
+  .gooey-dropdown__option:active:not(:disabled) {
+    transform: scale(.99);
+  }
+
+  .gooey-dropdown__option:focus-visible {
+    box-shadow:
+      inset 0 0 0 2px
+      rgba(65, 65, 65, .16);
+  }
+
+  .gooey-dropdown__option[aria-selected="true"] {
+    font-weight: 800;
+  }
+
+  .gooey-dropdown__option:disabled {
+    opacity: .38;
+    cursor: default;
+  }
+
+  .gooey-dropdown__option-check {
+    width: 18px;
+    height: 18px;
+
+    flex: 0 0 auto;
+
+    opacity: 0;
+
+    transform:
+      scale(.72)
+      rotate(-12deg);
+
+    transition:
+      opacity 120ms ease,
+      transform 180ms var(--ease-pop);
+  }
+
+  .gooey-dropdown__option[aria-selected="true"]
+    .gooey-dropdown__option-check {
+    opacity: 1;
+
+    transform:
+      scale(1)
+      rotate(0deg);
+  }
+
+  .gooey-dropdown__option-text {
+    min-width: 0;
+
+    overflow: hidden;
+
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .gooey-dropdown__pulse {
+    position: absolute;
+
+    top: 50%;
+    right: 15px;
+
+    width: 7px;
+    height: 7px;
+
+    margin-top: -3.5px;
+
+    border-radius: 50%;
+
+    background:
+      rgba(65, 65, 65, .34);
+
+    opacity: 0;
+
+    transform: scale(.5);
+
+    pointer-events: none;
+  }
+
+  .gooey-dropdown__pulse.is-active {
+    animation:
+      selected-pulse
+      320ms
+      var(--ease-pop);
+  }
+
+  @keyframes selected-pulse {
+    0% {
+      opacity: 0;
+      transform: scale(.5);
+    }
+
+    40% {
+      opacity: 1;
+      transform: scale(1.25);
+    }
+
+    100% {
+      opacity: 0;
+      transform: scale(.85);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gooey-dropdown *,
+    .gooey-dropdown *::before,
+    .gooey-dropdown *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+    }
+  }
+</style>
+
+<script>
+  function initializeDropdown(root: HTMLElement): void {
+    if (root.dataset.initialized === "true") return;
+
+    root.dataset.initialized = "true";
+
+    const trigger =
+      root.querySelector<HTMLButtonElement>("[data-dropdown-trigger]");
+
+    const valueElement =
+      root.querySelector<HTMLElement>("[data-dropdown-value]");
+
+    const listbox =
+      root.querySelector<HTMLElement>("[data-dropdown-listbox]");
+
+    const scroll =
+      root.querySelector<HTMLElement>("[data-dropdown-scroll]");
+
+    const mass =
+      root.querySelector<HTMLElement>("[data-selection-mass]");
+
+    const pulse =
+      root.querySelector<HTMLElement>("[data-dropdown-pulse]");
+
+    const hiddenInput =
+      root.querySelector<HTMLInputElement>("[data-dropdown-input]");
+
+    const options = Array.from(
+      root.querySelectorAll<HTMLButtonElement>("[data-dropdown-option]"),
+    );
+
+    if (
+      !trigger ||
+      !valueElement ||
+      !listbox ||
+      !scroll ||
+      !mass ||
+      !pulse ||
+      options.length === 0
+    ) {
+      return;
+    }
+
+    let selectedIndex =
+      Number(root.dataset.selectedIndex ?? 0);
+
+    let activeIndex = selectedIndex;
+    let open = false;
+
+    const PANEL_GAP = 8;
+    const VIEWPORT_GUTTER = 12;
+
+    const getPanelLimit = () => {
+      const value = getComputedStyle(root)
+        .getPropertyValue("--panel-limit");
+
+      return Number.parseFloat(value) || 316;
+    };
+
+    const optionAt = (index: number) =>
+      options[
+        Math.max(
+          0,
+          Math.min(index, options.length - 1),
+        )
+      ];
+
+    const isEnabled = (index: number) => {
+      const option = optionAt(index);
+
+      return (
+        option &&
+        option.getAttribute("aria-disabled") !== "true" &&
+        !option.disabled
+      );
+    };
+
+    const nextEnabled = (start: number, direction: number) => {
+      let index = start;
+
+      for (let i = 0; i < options.length; i++) {
+        index =
+          (index + direction + options.length) %
+          options.length;
+
+        if (isEnabled(index)) {
+          return index;
+        }
+      }
+
+      return start;
+    };
+
+    const positionPanel = () => {
+      const rect =
+        trigger.getBoundingClientRect();
+
+      const viewportHeight =
+        window.visualViewport?.height ??
+        window.innerHeight;
+
+      const maxHeight = getPanelLimit();
+
+      const below = Math.max(
+        0,
+        viewportHeight -
+          rect.bottom -
+          PANEL_GAP -
+          VIEWPORT_GUTTER,
+      );
+
+      const above = Math.max(
+        0,
+        rect.top -
+          PANEL_GAP -
+          VIEWPORT_GUTTER,
+      );
+
+      const preferredMinimum =
+        Math.min(maxHeight, 180);
+
+      const placement =
+        below >= preferredMinimum ||
+        below >= above
+          ? "bottom"
+          : "top";
+
+      const available =
+        placement === "bottom"
+          ? below
+          : above;
+
+      root.dataset.placement = placement;
+
+      root.style.setProperty(
+        "--panel-max-height",
+        `${Math.max(
+          0,
+          Math.min(maxHeight, available),
+        )}px`,
+      );
+    };
+
+    const syncMass = (
+      index: number,
+      immediate = false,
+    ) => {
+      const option = optionAt(index);
+
+      if (!option) return;
+
+      if (immediate) {
+        mass.style.transition = "none";
+      }
+
+      mass.style.height =
+        `${option.offsetHeight}px`;
+
+      mass.style.setProperty(
+        "--mass-y",
+        `${option.offsetTop}px`,
+      );
+
+      mass.classList.add("is-visible");
+
+      if (immediate) {
+        requestAnimationFrame(() => {
+          mass.style.transition = "";
+        });
+      }
+    };
+
+    const setActive = (
+      index: number,
+      {
+        focus = true,
+        reveal = true,
+      } = {},
+    ) => {
+      if (!isEnabled(index)) return;
+
+      activeIndex = index;
+
+      options.forEach((option, optionIndex) => {
+        option.tabIndex =
+          optionIndex === activeIndex
+            ? 0
+            : -1;
+      });
+
+      const option = optionAt(activeIndex);
+
+      if (reveal) {
+        option.scrollIntoView({
+          block: "nearest",
+        });
+      }
+
+      if (focus) {
+        option.focus({
+          preventScroll: true,
+        });
+      }
+
+      syncMass(activeIndex);
+    };
+
+    const setOpen = (
+      nextOpen: boolean,
+      focusOption = true,
+    ) => {
+      open = nextOpen;
+
+      if (open) {
+        positionPanel();
+      }
+
+      root.dataset.open = String(open);
+
+      trigger.setAttribute(
+        "aria-expanded",
+        String(open),
+      );
+
+      if (!open) {
+        trigger.focus({
+          preventScroll: true,
+        });
+
+        return;
+      }
+
+      activeIndex = selectedIndex;
+
+      requestAnimationFrame(() => {
+        syncMass(activeIndex, true);
+
+        if (!focusOption) return;
+
+        const option =
+          optionAt(activeIndex);
+
+        option.scrollIntoView({
+          block: "nearest",
+        });
+
+        option.focus({
+          preventScroll: true,
+        });
+      });
+    };
+
+    const commit = (index: number, notify: boolean) => {
+      if (!isEnabled(index)) return;
+
+      const wasOpen = open;
+      selectedIndex = index;
+      activeIndex = index;
+
+      root.dataset.selectedIndex =
+        String(index);
+
+      options.forEach((option, optionIndex) => {
+        const isSelected =
+          optionIndex === selectedIndex;
+
+        option.setAttribute(
+          "aria-selected",
+          String(isSelected),
+        );
+
+        option.tabIndex =
+          isSelected ? 0 : -1;
+      });
+
+      const selected =
+        optionAt(selectedIndex);
+
+      valueElement.textContent =
+        selected.textContent?.trim() ?? "";
+
+      if (hiddenInput) {
+        hiddenInput.value =
+          selected.dataset.value ?? "";
+      }
+
+      syncMass(selectedIndex);
+
+      if (!notify) return;
+
+      pulse.classList.remove(
+        "is-active",
+      );
+
+      void pulse.offsetWidth;
+
+      pulse.classList.add(
+        "is-active",
+      );
+
+      root.dispatchEvent(
+        new CustomEvent(
+          "gooey-change",
+          {
+            bubbles: true,
+            detail: {
+              value:
+                selected.dataset.value,
+              label:
+                selected.textContent?.trim() ?? "",
+              index: selectedIndex,
+            },
+          },
+        ),
+      );
+
+      window.setTimeout(() => {
+        if (wasOpen) setOpen(false);
+      }, 90);
+    };
+
+    const select = (index: number) => commit(index, true);
+
+    root.addEventListener(
+      "gooey-set",
+      (event) => {
+        const value = (event as CustomEvent<{ value?: string }>).detail?.value;
+        const index = options.findIndex(
+          (option) => option.dataset.value === value,
+        );
+
+        if (index >= 0) commit(index, false);
+      },
+    );
+
+    trigger.addEventListener(
+      "click",
+      () => setOpen(!open),
+    );
+
+    trigger.addEventListener(
+      "keydown",
+      (event) => {
+        if (
+          event.key !== "ArrowDown" &&
+          event.key !== "ArrowUp"
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+
+        if (!open) {
+          setOpen(true, false);
+        }
+
+        const direction =
+          event.key === "ArrowDown"
+            ? 1
+            : -1;
+
+        requestAnimationFrame(() => {
+          const target =
+            isEnabled(selectedIndex)
+              ? selectedIndex
+              : nextEnabled(
+                  selectedIndex,
+                  direction,
+                );
+
+          setActive(target);
+        });
+      },
+    );
+
+    listbox.addEventListener(
+      "click",
+      (event) => {
+        const option = (event.target as Element | null)?.closest<HTMLButtonElement>(
+          "[data-dropdown-option]",
+        );
+
+        if (!option || option.disabled) {
+          return;
+        }
+
+        select(
+          Number(option.dataset.index),
+        );
+      },
+    );
+
+    listbox.addEventListener(
+      "pointermove",
+      (event) => {
+        const option = (event.target as Element | null)?.closest<HTMLButtonElement>(
+          "[data-dropdown-option]",
+        );
+
+        if (!option || option.disabled) {
+          return;
+        }
+
+        const index =
+          Number(option.dataset.index);
+
+        if (index === activeIndex) {
+          return;
+        }
+
+        setActive(index, {
+          focus: false,
+          reveal: false,
+        });
+      },
+      { passive: true },
+    );
+
+    listbox.addEventListener(
+      "keydown",
+      (event) => {
+        switch (event.key) {
+          case "ArrowDown": {
+            event.preventDefault();
+
+            setActive(
+              nextEnabled(
+                activeIndex,
+                1,
+              ),
+            );
+
+            break;
+          }
+
+          case "ArrowUp": {
+            event.preventDefault();
+
+            setActive(
+              nextEnabled(
+                activeIndex,
+                -1,
+              ),
+            );
+
+            break;
+          }
+
+          case "Home": {
+            event.preventDefault();
+
+            const firstEnabled =
+              options.findIndex(
+                (_, index) =>
+                  isEnabled(index),
+              );
+
+            if (firstEnabled >= 0) {
+              setActive(firstEnabled);
+            }
+
+            break;
+          }
+
+          case "End": {
+            event.preventDefault();
+
+            let lastEnabled =
+              options.length - 1;
+
+            while (
+              lastEnabled >= 0 &&
+              !isEnabled(lastEnabled)
+            ) {
+              lastEnabled--;
+            }
+
+            if (lastEnabled >= 0) {
+              setActive(lastEnabled);
+            }
+
+            break;
+          }
+
+          case "Enter":
+          case " ": {
+            event.preventDefault();
+            select(activeIndex);
+            break;
+          }
+
+          case "Escape": {
+            event.preventDefault();
+            setOpen(false);
+            break;
+          }
+
+          case "Tab": {
+            open = false;
+            root.dataset.open = "false";
+
+            trigger.setAttribute(
+              "aria-expanded",
+              "false",
+            );
+
+            break;
+          }
+        }
+      },
+    );
+
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (
+          open &&
+          event.target instanceof Node &&
+          !root.contains(event.target)
+        ) {
+          open = false;
+
+          root.dataset.open =
+            "false";
+
+          trigger.setAttribute(
+            "aria-expanded",
+            "false",
+          );
+        }
+      },
+      { passive: true },
+    );
+
+    const reposition = () => {
+      if (!open) return;
+
+      requestAnimationFrame(() => {
+        positionPanel();
+        syncMass(activeIndex, true);
+      });
+    };
+
+    window.addEventListener(
+      "resize",
+      reposition,
+      { passive: true },
+    );
+
+    window.visualViewport?.addEventListener(
+      "resize",
+      reposition,
+      { passive: true },
+    );
+
+    scroll.addEventListener(
+      "scroll",
+      () => {
+        if (open) {
+          syncMass(activeIndex, true);
+        }
+      },
+      { passive: true },
+    );
+  }
+
+  document
+    .querySelectorAll<HTMLElement>("[data-gooey-dropdown]")
+    .forEach(initializeDropdown);
+
+  document.addEventListener(
+    "astro:page-load",
+    () => {
+      document
+        .querySelectorAll<HTMLElement>(
+          "[data-gooey-dropdown]",
+        )
+        .forEach(initializeDropdown);
+    },
+  );
+</script>

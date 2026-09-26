@@ -1,0 +1,107 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import GooeyDropdown from '../../components/ui/GooeyDropdown.astro';
+import '../../styles/calls.css';
+
+const statusOptions = [
+  { value: 'all', label: 'Todas' },
+  { value: 'live', label: 'En vivo' },
+  { value: 'ended', label: 'Finalizadas' },
+  { value: 'failed', label: 'Fallidas' },
+];
+---
+
+<AppLayout title="Kognia — Llamadas">
+  <section class="section-view section-view--dashboard analytics-dashboard" aria-label="Llamadas">
+    <div class="dashboard-page calls-page">
+      <header class="dashboard-topline">
+        <div class="dashboard-heading"><h2>Llamadas</h2></div>
+        <div class="dashboard-filters" aria-label="Buscar y filtrar llamadas">
+          <label class="calls-search">
+            <span class="sr-only">Buscar</span>
+            <i class="calls-search__icon" data-lucide="search" aria-hidden="true"></i>
+            <input id="callsSearch" type="search" placeholder="Buscar cliente o teléfono" autocomplete="off" />
+          </label>
+          <GooeyDropdown
+            id="callsStatus"
+            name="status"
+            label="Estado"
+            ariaLabel="Filtrar por estado"
+            options={statusOptions}
+          />
+        </div>
+      </header>
+      <div class="dashboard-state" id="callsLoading" role="status"><p>Cargando llamadas…</p></div>
+      <div class="dashboard-state" id="callsError" hidden role="alert">
+        <div><p>No pudimos cargar las llamadas.</p><button id="callsRetry" type="button">Reintentar</button></div>
+      </div>
+      <div class="calls-board" id="callsBoard" hidden>
+        <div class="calls-table-card">
+          <div class="calls-table-scroll" id="callsTable">
+            <table class="calls-table">
+              <colgroup>
+                <col class="calls-col-name" />
+                <col class="calls-col-phone" />
+                <col class="calls-col-start" />
+                <col class="calls-col-duration" />
+                <col class="calls-col-status" />
+                <col class="calls-col-view" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col"><button type="button" data-sort="name">Cliente</button></th>
+                  <th scope="col"><button type="button" data-sort="phone">Teléfono</button></th>
+                  <th scope="col"><button type="button" data-sort="started">Inicio</button></th>
+                  <th scope="col"><button type="button" data-sort="duration">Duración</button></th>
+                  <th scope="col"><button type="button" data-sort="status">Estado</button></th>
+                  <th scope="col"><span class="calls-view-label">Ver</span></th>
+                </tr>
+              </thead>
+              <tbody id="callsTableBody"></tbody>
+            </table>
+          </div>
+          <p class="calls-empty" id="callsEmpty" hidden>Aún no hay llamadas.</p>
+        </div>
+        <nav class="calls-pager" id="callsPager" aria-label="Paginación" hidden>
+          <div class="calls-pager__controls" id="callsPagerControls"></div>
+        </nav>
+      </div>
+    </div>
+  </section>
+</AppLayout>
+
+<script>
+  import { bootCallsList } from '../../features/calls/list';
+  import { accessTokenKey, checkSession, conversationIdKey, redirectToLogin } from '../../features/auth/session-guard';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+  let mounted = false;
+
+  async function mountCalls(): Promise<void> {
+    if (mounted) return;
+    const token = sessionStorage.getItem(accessTokenKey)?.trim();
+    const conversationId = sessionStorage.getItem(conversationIdKey)?.trim();
+    if (!token || !conversationId) {
+      window.location.replace('/');
+      return;
+    }
+    if (await checkSession(apiUrl) === 'invalid') {
+      redirectToLogin();
+      return;
+    }
+    cleanup?.();
+    cleanup = bootCallsList(apiUrl, token);
+    mounted = true;
+  }
+
+  function unmountCalls(): void {
+    cleanup?.();
+    cleanup = null;
+    mounted = false;
+  }
+
+  document.addEventListener('astro:before-swap', unmountCalls);
+  document.addEventListener('astro:page-load', () => { void mountCalls(); });
+  void mountCalls();
+</script>
