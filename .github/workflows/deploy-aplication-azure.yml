@@ -262,6 +262,7 @@ jobs:
           DEMO_ADMIN_PASSWORD: ${{ secrets.DEMO_ADMIN_PASSWORD }}
           DEMO_ORG_NAME: ${{ vars.DEMO_ORG_NAME }}
           DEMO_ORG_SLUG: ${{ vars.DEMO_ORG_SLUG }}
+          APP_ENV: ${{ vars.APP_ENV || 'test' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -273,7 +274,13 @@ jobs:
 
           test -n "$CONTAINER_ENVIRONMENT"
           test -n "$DATABASE_APP_NAME"
+          test -n "$POSTGRES_DB"
+          test -n "$POSTGRES_USER"
           test -n "$POSTGRES_PASSWORD"
+          test -n "$DOCKERHUB_USERNAME"
+          test -n "$DOCKERHUB_TOKEN"
+          test -n "$RESOURCE_GROUP"
+          test -n "$APP_ENV"
 
           job_name="${JOB_NAME:-hackathon-kognia-bootstrap}"
           image="docker.io/${DOCKERHUB_USERNAME}/hackathon-kognia-api:latest"
@@ -297,7 +304,7 @@ jobs:
             "demo-admin-password=$DEMO_ADMIN_PASSWORD"
           )
           env_args=(
-            "APP_ENV=production"
+            "APP_ENV=$APP_ENV"
             "DATABASE_URL=secretref:database-url"
             "DEMO_ADMIN_EMAIL=$DEMO_ADMIN_EMAIL"
             "DEMO_ADMIN_PASSWORD=secretref:demo-admin-password"
@@ -358,6 +365,14 @@ jobs:
                 ;;
               Failed|Degraded)
                 printf '%s\n' "Bootstrap del admin de demo falló ($execution_name)." >&2
+                printf '%s\n' '--- logs de la ejecución del job ---' >&2
+                az containerapp job logs show \
+                  --name "$job_name" \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --execution "$execution_name" \
+                  --container "$job_name" \
+                  --tail 200 >&2 || true
+                printf '%s\n' '--- fin de logs ---' >&2
                 exit 1
                 ;;
             esac
@@ -366,6 +381,14 @@ jobs:
           done
 
           printf '%s\n' "Bootstrap sin confirmar tras 300s ($execution_name)." >&2
+          printf '%s\n' '--- logs de la ejecución del job ---' >&2
+          az containerapp job logs show \
+            --name "$job_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --execution "$execution_name" \
+            --container "$job_name" \
+            --tail 200 >&2 || true
+          printf '%s\n' '--- fin de logs ---' >&2
           exit 1
 
       - name: Get backend URL
