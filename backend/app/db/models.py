@@ -5,13 +5,15 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
     ForeignKeyConstraint,
-    BigInteger,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -269,6 +271,12 @@ class Call(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[CallStatus] = mapped_column(String(16), nullable=False, default=CallStatus.ACTIVE, server_default="active")
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telnyx_call_control_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    call_leg_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    call_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lifecycle_state: Mapped[str] = mapped_column(String(32), nullable=False, default="active", server_default="active")
+    recording_offset_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    next_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False)
 
     organization: Mapped[Organization] = relationship(back_populates="calls", lazy="selectin", overlaps="calls")
@@ -284,6 +292,78 @@ class Call(Base):
         ),
         Index("ix_calls_organization_started_at", "organization_id", "started_at"),
         Index("ix_calls_conversation_id", "conversation_id"),
+        Index("ix_calls_telnyx_call_control_id", "telnyx_call_control_id"),
+    )
+
+
+class CallEvent(Base):
+    __tablename__ = "call_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("calls.id", ondelete="CASCADE"), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False)
+    offset_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("call_id", "seq", name="uq_call_events_call_seq"),
+        CheckConstraint("seq > 0", name="ck_call_events_seq_positive"),
+        CheckConstraint("offset_ms >= 0", name="ck_call_events_offset_non_negative"),
+        Index("ix_call_events_organization_call", "organization_id", "call_id"),
+    )
+
+
+class TranscriptSegment(Base):
+    __tablename__ = "transcript_segments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("calls.id", ondelete="CASCADE"), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    speaker: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    offset_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_final: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("speaker IN ('customer', 'agent')", name="ck_transcript_segments_speaker"),
+        Index("ix_transcript_segments_call_offset", "call_id", "offset_ms"),
+    )
+
+
+class Recording(Base):
+    __tablename__ = "recordings"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("calls.id", ondelete="CASCADE"), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RECORDING", server_default="RECORDING")
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    waveform: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    download_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('RECORDING', 'PROCESSING', 'DOWNLOADING', 'READY', 'ERROR')",
+            name="ck_recordings_status",
+        ),
+        Index("ix_recordings_call_id", "call_id"),
     )
 
 

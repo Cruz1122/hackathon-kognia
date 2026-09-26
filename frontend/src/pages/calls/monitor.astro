@@ -1,0 +1,105 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+---
+
+<AppLayout title="Kognia — Monitor PSTN">
+  <section class="pstn-page">
+    <svg class="pstn-filter" aria-hidden="true">
+      <filter id="pstn-goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -10" result="goo" />
+      </filter>
+    </svg>
+    <header class="pstn-head">
+      <p class="pstn-kicker">Telefonía</p>
+      <h1>Monitor en vivo</h1>
+    </header>
+    <div class="pstn-layout">
+      <div class="pstn-card">
+        <h2>Llamadas activas</h2>
+        <div data-call-list></div>
+      </div>
+      <div class="pstn-card" data-call-detail hidden>
+        <div class="pstn-meta">
+          <span data-caller>Cliente</span>
+          <span data-duration>00:00</span>
+          <span data-lifecycle>RINGING</span>
+          <span data-agent>listening</span>
+        </div>
+        <h2>Transcript</h2>
+        <div data-transcript></div>
+        <h2>Tools</h2>
+        <div data-tools></div>
+        <h2>RAG</h2>
+        <div data-rag></div>
+        <a data-replay href="/calls/replay">Abrir replay</a>
+      </div>
+    </div>
+  </section>
+</AppLayout>
+
+<style>
+  .pstn-page {
+    width: min(1080px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 32px 0 84px;
+    color: #414141;
+    font-family: "Urbanist", sans-serif;
+  }
+  .pstn-filter { position: absolute; width: 0; height: 0; }
+  .pstn-kicker {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  h1 { margin: 0; font-size: clamp(28px, 4vw, 42px); line-height: 1; }
+  .pstn-layout { display: grid; grid-template-columns: 280px 1fr; gap: 18px; margin-top: 22px; }
+  .pstn-card {
+    background: #faeccf;
+    border-radius: min(32px, 50%);
+    padding: 22px;
+    min-height: 240px;
+  }
+  .pstn-card h2 { margin: 18px 0 8px; font-size: 16px; }
+  .pstn-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pstn-meta span, .call-row, [data-replay] {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 999px;
+    background: #f8f8f8;
+    color: #414141;
+    font: inherit;
+    text-decoration: none;
+  }
+  .call-row { width: 100%; margin-top: 8px; cursor: pointer; }
+  @media (max-width: 800px) {
+    .pstn-layout { grid-template-columns: 1fr; }
+  }
+</style>
+
+<script>
+  import { bootCallMonitor } from '../../features/calls/monitor';
+  import { accessTokenKey, checkSession, redirectToLogin } from '../../features/auth/session-guard';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+
+  async function mount(): Promise<void> {
+    const root = document.querySelector<HTMLElement>('.pstn-page');
+    if (!root) return;
+    if ((await checkSession(apiUrl)) === 'invalid' || !sessionStorage.getItem(accessTokenKey)) {
+      redirectToLogin();
+      return;
+    }
+    cleanup?.();
+    cleanup = bootCallMonitor(root, apiUrl);
+  }
+
+  void mount();
+  document.addEventListener('astro:page-load', () => { void mount(); });
+</script>

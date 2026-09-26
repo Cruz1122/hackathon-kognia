@@ -82,6 +82,10 @@ services:
       AGENT_TOOL_MODULES: app.domains.demo_booking.tools,app.domains.business_analytics.tools
       REDIS_URL: redis://redis:6379/0
       ANALYTICS_CACHE_TTL_SECONDS: ${ANALYTICS_CACHE_TTL_SECONDS:-60}
+      TELNYX_ENABLED: ${TELNYX_ENABLED:-true}
+      TELNYX_WEBHOOK_HOST: ${TELNYX_WEBHOOK_HOST:-corner-gorged-calamari.ngrok-free.dev}
+      TELNYX_RECORDINGS_DIR: /var/lib/kognia/recordings
+      TELNYX_CAPTURE_DIR: /tmp/telnyx-captures
     ports:
       - "127.0.0.1:18474:18474"
     restart: unless-stopped
@@ -91,6 +95,8 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+    volumes:
+      - ./var/recordings:/var/lib/kognia/recordings
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,6 +121,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ANALYTICS_CACHE_TTL_SECONDS: ${ANALYTICS_CACHE_TTL_SECONDS:-60}
       AGENT_TOOL_MODULES: app.domains.demo_booking.tools,app.domains.business_analytics.tools
+      TELNYX_RECORDINGS_DIR: /var/lib/kognia/recordings
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
     healthcheck:
@@ -122,6 +129,8 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    volumes:
+      - ./var/recordings:/var/lib/kognia/recordings
     depends_on:
       postgres:
         condition: service_healthy

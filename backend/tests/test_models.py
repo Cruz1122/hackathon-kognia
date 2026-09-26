@@ -29,6 +29,7 @@ def test_models_create_expected_tables_foreign_keys_and_indexes() -> None:
         inspector = inspect(engine)
         assert set(inspector.get_table_names()) == {
             "calls",
+            "call_events",
             "conversations",
             "customers",
             "messages",
@@ -37,6 +38,8 @@ def test_models_create_expected_tables_foreign_keys_and_indexes() -> None:
             "opportunities",
             "product_interests",
             "products",
+            "recordings",
+            "transcript_segments",
             "users",
         }
         assert {

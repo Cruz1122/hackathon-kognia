@@ -25,6 +25,7 @@ class Job:
     conversation_id: uuid.UUID
     raw: str | None = field(default=None, compare=False, repr=False)
     attempts: int = field(default=0, compare=True)
+    recording_id: uuid.UUID | None = None
 
     def to_json(self) -> str:
         if self.raw is not None:
@@ -36,22 +37,31 @@ class Job:
         }
         if self.attempts:
             payload["attempts"] = self.attempts
+        if self.recording_id is not None:
+            payload["recording_id"] = str(self.recording_id)
         return json.dumps(payload, separators=(",", ":"))
 
 
 def parse_job(raw: str | bytes) -> Job:
     payload: Any = json.loads(raw)
-    if not isinstance(payload, dict) or payload.get("type") != "enrich_conversation":
+    if not isinstance(payload, dict):
+        raise ValueError("Unsupported job")
+    kind = payload.get("type")
+    if kind not in {"enrich_conversation", "download_recording"}:
         raise ValueError("Unsupported job")
     attempts = payload.get("attempts", 0)
     if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
         raise ValueError("Invalid job attempts")
+    recording_id = None
+    if kind == "download_recording":
+        recording_id = uuid.UUID(str(payload["recording_id"]))
     return Job(
-        type="enrich_conversation",
+        type=kind,
         organization_id=uuid.UUID(str(payload["organization_id"])),
         conversation_id=uuid.UUID(str(payload["conversation_id"])),
         raw=raw.decode() if isinstance(raw, bytes) else raw,
         attempts=attempts,
+        recording_id=recording_id,
     )
 
 
@@ -60,6 +70,26 @@ async def enqueue_enrichment(organization_id: uuid.UUID, conversation_id: uuid.U
         await redis_push(
             JOB_QUEUE_KEY,
             Job("enrich_conversation", organization_id, conversation_id).to_json(),
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def enqueue_recording(
+    organization_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    recording_id: uuid.UUID,
+) -> bool:
+    try:
+        await redis_push(
+            JOB_QUEUE_KEY,
+            Job(
+                "download_recording",
+                organization_id,
+                conversation_id,
+                recording_id=recording_id,
+            ).to_json(),
         )
         return True
     except Exception:
@@ -103,6 +133,7 @@ async def requeue_job(job: Job) -> bool:
             job.organization_id,
             job.conversation_id,
             attempts=job.attempts + 1,
+            recording_id=job.recording_id,
         )
         return await redis_move_back(
             PROCESSING_QUEUE_KEY,
@@ -138,6 +169,7 @@ __all__ = [
     "acknowledge_job",
     "dequeue_job",
     "enqueue_enrichment",
+    "enqueue_recording",
     "parse_job",
     "recover_inflight_jobs",
     "requeue_job",

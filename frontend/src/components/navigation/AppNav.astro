@@ -1,7 +1,7 @@
 ---
 interface Props {
   mode?: 'legacy' | 'route';
-  active?: 'analytics' | 'calls-demo';
+  active?: 'analytics' | 'calls-demo' | 'calls-monitor';
 }
 
 const { mode = 'route', active = 'analytics' } = Astro.props;
@@ -46,6 +46,9 @@ const callsOpen = !isLegacy;
         ) : (
           <a class:list={['app-nav__item', 'app-nav__call', active === 'calls-demo' && 'is-active']} href="../calls/demo" data-route="calls-demo" aria-current={active === 'calls-demo' ? 'page' : undefined}>
             <span>Llamada Demo</span>
+          </a>
+          <a class:list={['app-nav__item', 'app-nav__call', active === 'calls-monitor' && 'is-active']} href="../calls/monitor" data-route="calls-monitor" aria-current={active === 'calls-monitor' ? 'page' : undefined}>
+            <span>Monitor PSTN</span>
           </a>
         )}
       </div>

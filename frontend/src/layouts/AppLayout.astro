@@ -13,7 +13,12 @@ interface Props {
 
 const { title = 'Kognia — Analíticas' } = Astro.props;
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
-const activeRoute = Astro.url.pathname.startsWith('/calls/demo') ? 'calls-demo' : 'analytics';
+const path = Astro.url.pathname;
+const activeRoute = path.startsWith('/calls/monitor') || path.startsWith('/calls/replay')
+  ? 'calls-monitor'
+  : path.startsWith('/calls/demo')
+    ? 'calls-demo'
+    : 'analytics';
 const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathname.startsWith('/calls/demo');
 ---
 

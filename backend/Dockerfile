@@ -78,10 +78,14 @@ RUN apt-get update \
 COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 COPY --from=builder --chown=appuser:appuser /build/models /app/backend/models
 COPY --chown=appuser:appuser app /app/backend/app
+COPY --chown=appuser:appuser vendor /app/backend/vendor
 COPY --chown=appuser:appuser scripts/seed_dashboard_demo.py /app/backend/scripts/seed_dashboard_demo.py
 COPY --chown=appuser:appuser scripts/bootstrap-demo-admin.sh /app/backend/scripts/bootstrap-demo-admin.sh
 COPY --chown=appuser:appuser alembic.ini /app/backend/alembic.ini
 COPY --chown=appuser:appuser migrations /app/backend/migrations
+RUN pip install --no-cache-dir "pynacl==1.5.0" \
+    && mkdir -p /var/lib/kognia/recordings /tmp/telnyx-captures \
+    && chown -R appuser:appuser /var/lib/kognia /tmp/telnyx-captures
 
 USER appuser
 
