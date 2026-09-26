@@ -426,19 +426,12 @@ jobs:
           printf '%s\n' '--- fin de logs ---' >&2
           exit 1
 
-  # Frontend-only deployments do not wait for the skipped backend job. When
-  # both components changed, frontend deployment waits for backend deployment
-  # so the final CORS update remains ordered and safe.
+  # Backend and frontend deployments depend only on their own builds, so they
+  # run in parallel when both components changed.
   deploy-frontend:
     name: Deploy frontend
-    needs: [detect-affected-components, build-frontend, deploy-backend]
-    if: >-
-      always() &&
-      !cancelled() &&
-      needs.detect-affected-components.outputs.frontend == 'true' &&
-      needs.build-frontend.result == 'success' &&
-      (needs.detect-affected-components.outputs.backend != 'true' ||
-       needs.deploy-backend.result == 'success')
+    needs: [detect-affected-components, build-frontend]
+    if: needs.detect-affected-components.outputs.frontend == 'true' && needs.build-frontend.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
@@ -460,6 +453,27 @@ jobs:
           targetPort: 80
           ingress: external
           disableTelemetry: true
+
+  # CORS updates the backend environment, so run it after both deployments
+  # when both components changed. For frontend-only changes, the skipped
+  # backend deployment is explicitly allowed and the existing backend is
+  # updated after the frontend becomes available.
+  configure-backend-cors:
+    name: Configure backend CORS
+    needs: [detect-affected-components, deploy-backend, deploy-frontend]
+    if: >-
+      always() &&
+      !cancelled() &&
+      needs.detect-affected-components.outputs.frontend == 'true' &&
+      needs.deploy-frontend.result == 'success' &&
+      (needs.detect-affected-components.outputs.backend != 'true' ||
+       needs.deploy-backend.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Link backend CORS to frontend
         shell: bash
