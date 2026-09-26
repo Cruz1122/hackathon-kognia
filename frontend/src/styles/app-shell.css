@@ -92,6 +92,8 @@ button, input { font: inherit; }
   .app-sidebar .app-nav__group { width: 100%; }
   .app-sidebar .app-nav__item, .app-sidebar .app-nav__label { font-size: .95rem; padding: 11px 12px; }
   .app-main { height: auto; min-height: 0; overflow: visible; }
+  .app-main > .section-view,
+  .analytics-dashboard { height: auto; min-height: 0; overflow: visible; }
   .app-detail-panel { grid-column: 1; min-height: 36dvh; }
 }
 

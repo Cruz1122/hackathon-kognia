@@ -1,6 +1,14 @@
 ---
 import AppLayout from '../../layouts/AppLayout.astro';
+import GooeyDropdown from '../../components/ui/GooeyDropdown.astro';
 import '../../styles/calls.css';
+
+const statusOptions = [
+  { value: 'all', label: 'Todas' },
+  { value: 'live', label: 'En vivo' },
+  { value: 'ended', label: 'Finalizadas' },
+  { value: 'failed', label: 'Fallidas' },
+];
 ---
 
 <AppLayout title="Kognia — Llamadas">
@@ -14,13 +22,13 @@ import '../../styles/calls.css';
             <i class="calls-search__icon" data-lucide="search" aria-hidden="true"></i>
             <input id="callsSearch" type="search" placeholder="Buscar cliente o teléfono" autocomplete="off" />
           </label>
-          <label class="sr-only" for="callsStatus">Estado</label>
-          <select id="callsStatus">
-            <option value="all">Todas</option>
-            <option value="live">En vivo</option>
-            <option value="ended">Finalizadas</option>
-            <option value="failed">Fallidas</option>
-          </select>
+          <GooeyDropdown
+            id="callsStatus"
+            name="status"
+            label="Estado"
+            ariaLabel="Filtrar por estado"
+            options={statusOptions}
+          />
         </div>
       </header>
       <div class="dashboard-state" id="callsLoading" role="status"><p>Cargando llamadas…</p></div>

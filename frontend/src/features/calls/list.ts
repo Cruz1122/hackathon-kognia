@@ -20,7 +20,7 @@ type SortDir = 'asc' | 'desc';
 
 export function bootCallsList(apiUrl: string, token: string): () => void {
   const search = document.querySelector<HTMLInputElement>('#callsSearch');
-  const status = document.querySelector<HTMLSelectElement>('#callsStatus');
+  const status = document.querySelector<HTMLElement>('#callsStatus');
   const body = document.querySelector<HTMLTableSectionElement>('#callsTableBody');
   const empty = document.querySelector<HTMLElement>('#callsEmpty');
   const table = document.querySelector<HTMLElement>('#callsTable');
@@ -37,7 +37,8 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
   const params = new URLSearchParams(window.location.search);
   search.value = params.get('q') ?? '';
   const requestedStatus = params.get('status');
-  status.value = requestedStatus === 'live' || requestedStatus === 'ended' || requestedStatus === 'failed' ? requestedStatus : 'all';
+  const initialStatus = requestedStatus === 'live' || requestedStatus === 'ended' || requestedStatus === 'failed' ? requestedStatus : 'all';
+  applyStatus(status, initialStatus);
   let page = Math.max(1, Number(params.get('page')) || 1);
   let sortKey = parseSortKey(params.get('sort'));
   let sortDir = params.get('dir') === 'asc' || params.get('dir') === 'desc' ? params.get('dir') as SortDir : 'desc';
@@ -54,7 +55,8 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
     const next = new URLSearchParams();
     const query = search.value.trim();
     if (query) next.set('q', query);
-    if (status.value !== 'all') next.set('status', status.value);
+    const currentStatus = statusValue(status);
+    if (currentStatus !== 'all') next.set('status', currentStatus);
     if (sortKey !== 'started' || sortDir !== 'desc') {
       next.set('sort', sortKey);
       next.set('dir', sortDir);
@@ -70,9 +72,10 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
     return calls.filter((call) => {
       const live = liveIds.has(call.id);
       const failed = call.status === 'failed' || call.lifecycle === 'failed';
-      if (status.value === 'live' && !live) return false;
-      if (status.value === 'ended' && (live || failed)) return false;
-      if (status.value === 'failed' && !failed) return false;
+      const currentStatus = statusValue(status);
+      if (currentStatus === 'live' && !live) return false;
+      if (currentStatus === 'ended' && (live || failed)) return false;
+      if (currentStatus === 'failed' && !failed) return false;
       if (!query) return true;
       const haystack = [call.customer_name, call.caller, call.id].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(query);
@@ -136,7 +139,7 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
     paint();
   };
   search.addEventListener('input', onFilter);
-  status.addEventListener('change', onFilter);
+  status.addEventListener('gooey-change', onFilter);
   sortButtons.forEach((button) => {
     button.addEventListener('click', () => {
       const key = parseSortKey(button.dataset.sort ?? null);
@@ -161,6 +164,28 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
     disposed = true;
     window.clearInterval(timer);
   };
+}
+
+function statusValue(root: HTMLElement): string {
+  return root.querySelector<HTMLInputElement>('[data-dropdown-input]')?.value || 'all';
+}
+
+function applyStatus(root: HTMLElement, value: string): void {
+  const input = root.querySelector<HTMLInputElement>('[data-dropdown-input]');
+  const options = [...root.querySelectorAll<HTMLButtonElement>('[data-dropdown-option]')];
+  const selected = options.find((option) => option.dataset.value === value);
+  if (!input || !selected) return;
+  input.value = value;
+  root.dataset.selectedIndex = selected.dataset.index ?? '0';
+  const label = root.querySelector<HTMLElement>('[data-dropdown-value]');
+  const text = selected.querySelector('.gooey-dropdown__option-text')?.textContent?.trim();
+  if (label && text) label.textContent = text;
+  options.forEach((option) => {
+    const active = option === selected;
+    option.setAttribute('aria-selected', String(active));
+    option.tabIndex = active ? 0 : -1;
+  });
+  root.dispatchEvent(new CustomEvent('gooey-set', { detail: { value } }));
 }
 
 function sortCalls(calls: ListedCall[]): ListedCall[] {

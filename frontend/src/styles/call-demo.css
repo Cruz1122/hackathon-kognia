@@ -128,6 +128,11 @@
   .app-main:has(.call-demo-page) { overflow: visible; }
 }
 
+@media (max-width: 767px) {
+  .call-demo-page,
+  .call-demo-page > .app-content { height: auto; overflow: visible; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .call-demo-page *, .call-demo-page *::before, .call-demo-page *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
