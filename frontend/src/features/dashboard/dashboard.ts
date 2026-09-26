@@ -80,6 +80,9 @@ function setDelta(id: string, metric: MetricDelta | undefined, formatter: (value
 function setInsight(id: string, text: string): void { setText(id, text); }
 
 const charts = new Map<string, ECharts>();
+let chartMountFrame = 0;
+let chartMountGeneration = 0;
+
 function escapeHtml(value: unknown): string { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char)); }
 function tooltip(trigger: 'axis' | 'item' = 'item'): EChartsOption['tooltip'] {
   return {
@@ -115,6 +118,21 @@ function mount(id: string, option: EChartsOption): void {
   const host = element(id); if (!host) return;
   charts.get(id)?.dispose(); charts.delete(id);
   const chart = echarts.init(host, undefined, { renderer: 'canvas' }); chart.setOption(option); charts.set(id, chart);
+}
+
+function mountGradually(entries: Array<[string, EChartsOption]>): void {
+  window.cancelAnimationFrame(chartMountFrame);
+  const generation = ++chartMountGeneration;
+  let index = 0;
+
+  const mountNext = (): void => {
+    if (generation !== chartMountGeneration || index >= entries.length) return;
+    const [id, option] = entries[index++];
+    mount(id, option);
+    chartMountFrame = window.requestAnimationFrame(mountNext);
+  };
+
+  chartMountFrame = window.requestAnimationFrame(mountNext);
 }
 
 function lineOption(points: Array<{ date: string; value: number }>, label: string, color = C.amber): EChartsOption {
@@ -236,20 +254,31 @@ function renderDashboard(payload: DashboardPayload): void {
   buildInsights(payload);
   const hasData = summary.conversations > 0 || summary.opportunities > 0 || payload.lost_reasons.length > 0 || payload.products.length > 0 || payload.objections.total > 0;
   show('dashboardData', hasData); show('dashboardEmpty', !hasData); show('dashboardLoading', false); show('dashboardError', false);
-  if (!hasData) { charts.forEach((chart) => chart.dispose()); charts.clear(); return; }
-  mount('dashboardConversionChart', lineOption(payload.conversion_trend.map((point) => ({ date: point.date, value: point.conversion_rate })), 'Conversión'));
-  mount('dashboardRecoveryChart', recoveryOption(summary));
-  mount('dashboardLossesChart', horizontalBarOption(payload.lost_reasons.map((item) => ({ label: item.reason, value: item.count })), 'Pérdidas'));
-  mount('dashboardObjectionsChart', objectionOption(payload.objection_categories));
-  mount('dashboardProductsChart', productsOption(payload.products));
-  const trend = payload.metric_trend;
-  mount('dashboardRevenueSparkline', sparklineOption(trend.map((point) => point.revenue_minor), C.amber));
-  mount('dashboardWonSparkline', sparklineOption(trend.map((point) => point.won), C.graphite));
-  mount('dashboardConversionSparkline', sparklineOption(trend.map((point) => point.opportunities ? point.won * 100 / point.opportunities : 0), C.graphite));
-  mount('dashboardRecoveredRevenueSparkline', sparklineOption(trend.map((point) => point.recovered_revenue_minor), C.amber));
-  mount('dashboardFunnelChart', funnelOption(payload.funnel));
-  mount('dashboardObjectionProductChart', objectionProductHeatmapOption(payload.objection_product_heatmap));
-  requestAnimationFrame(() => charts.forEach((chart) => chart.resize()));
+  if (!hasData) {
+    window.cancelAnimationFrame(chartMountFrame);
+    chartMountGeneration++;
+    charts.forEach((chart) => chart.dispose());
+    charts.clear();
+    return;
+  }
+   mountGradually([
+     ['dashboardConversionChart', lineOption(payload.conversion_trend.map((point) => ({ date: point.date, value: point.conversion_rate })), 'Conversión')],
+     ['dashboardRecoveryChart', recoveryOption(summary)],
+     ['dashboardLossesChart', horizontalBarOption(payload.lost_reasons.map((item) => ({ label: item.reason, value: item.count })), 'Pérdidas')],
+     ['dashboardObjectionsChart', objectionOption(payload.objection_categories)],
+     ['dashboardProductsChart', productsOption(payload.products)],
+     ['dashboardRevenueSparkline', sparklineOption(payload.metric_trend.map((point) => point.revenue_minor), C.amber)],
+     ['dashboardWonSparkline', sparklineOption(payload.metric_trend.map((point) => point.won), C.graphite)],
+     ['dashboardConversionSparkline', sparklineOption(payload.metric_trend.map((point) => point.opportunities ? point.won * 100 / point.opportunities : 0), C.graphite)],
+     ['dashboardRecoveredRevenueSparkline', sparklineOption(payload.metric_trend.map((point) => point.recovered_revenue_minor), C.amber)],
+     ['dashboardFunnelChart', funnelOption(payload.funnel)],
+     ['dashboardObjectionProductChart', objectionProductHeatmapOption(payload.objection_product_heatmap)],
+   ]);
+   /*
+     The charts are intentionally mounted one per frame. ECharts initialization
+     is the expensive part of this view; spreading it avoids a main-thread spike
+     while the login wipe is still moving.
+   */
 }
 
 export function bootDashboard(apiUrl: string, token: string): () => void {
@@ -289,9 +318,11 @@ export function bootDashboard(apiUrl: string, token: string): () => void {
   window.addEventListener('resize', resizeCharts, { passive: true });
   window.addEventListener('orientationchange', resizeCharts, { passive: true });
   void load();
-  return () => {
-    disposed = true;
-    requestId++;
+   return () => {
+     disposed = true;
+     window.cancelAnimationFrame(chartMountFrame);
+     chartMountGeneration++;
+     requestId++;
     activeController?.abort();
     activeController = null;
     resizeObserver?.disconnect();
