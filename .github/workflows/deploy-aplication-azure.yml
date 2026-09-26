@@ -33,14 +33,13 @@ jobs:
               - 'backend/**'
               - 'backend/Dockerfile'
             pipeline:
-              - '.github/workflows/**'
+              - '.github/workflows/deploy-aplication-azure.yml'
 
   build-frontend:
     needs: [changes, deploy-backend]
     if: >-
       always() &&
-        (needs.changes.outputs.frontend == 'true' ||
-         needs.changes.outputs.pipeline == 'true') &&
+      needs.changes.outputs.frontend == 'true' &&
       needs.deploy-backend.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -58,6 +57,8 @@ jobs:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             PUBLIC_API_URL=${{ needs.deploy-backend.outputs.backend-url }}
           tags: |
@@ -66,9 +67,7 @@ jobs:
 
   build-backend:
     needs: changes
-    if: >-
-      needs.changes.outputs.backend == 'true' ||
-      needs.changes.outputs.pipeline == 'true'
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -85,6 +84,9 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
+          # Reutiliza capas (torch, modelos Sherpa/Piper/E5) entre builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
@@ -96,8 +98,7 @@ jobs:
        (needs.changes.outputs.backend == 'true' ||
         needs.changes.outputs.frontend == 'true' ||
         needs.changes.outputs.pipeline == 'true') &&
-       ((needs.changes.outputs.backend != 'true' &&
-         needs.changes.outputs.pipeline != 'true') ||
+       (needs.changes.outputs.backend != 'true' ||
         needs.build-backend.result == 'success')
     runs-on: ubuntu-latest
     outputs:
@@ -247,7 +248,7 @@ jobs:
             --min-replicas 1 \
             --set-env-vars "${env_args[@]}"
 
-      - name: Bootstrap demo admin
+      - name: Migrate database and bootstrap demo admin
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           CONTAINER_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
@@ -266,11 +267,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          if [[ -z "${DEMO_ADMIN_EMAIL:-}" || -z "${DEMO_ADMIN_PASSWORD:-}" ]]; then
-            printf '%s\n' 'DEMO_ADMIN_* sin configurar; se omite el bootstrap del admin de demo.'
-            exit 0
-          fi
 
           test -n "$CONTAINER_ENVIRONMENT"
           test -n "$DATABASE_APP_NAME"
@@ -299,18 +295,23 @@ jobs:
           PY
           )"
 
-          secret_args=(
-            "database-url=$database_url"
-            "demo-admin-password=$DEMO_ADMIN_PASSWORD"
-          )
+          # Las migraciones se ejecutan siempre; el admin de demo es opcional.
+          secret_args=("database-url=$database_url")
           env_args=(
             "APP_ENV=$APP_ENV"
             "DATABASE_URL=secretref:database-url"
-            "DEMO_ADMIN_EMAIL=$DEMO_ADMIN_EMAIL"
-            "DEMO_ADMIN_PASSWORD=secretref:demo-admin-password"
             "DEMO_ORG_NAME=$demo_org_name"
             "DEMO_ORG_SLUG=$demo_org_slug"
           )
+          if [[ -n "${DEMO_ADMIN_EMAIL:-}" && -n "${DEMO_ADMIN_PASSWORD:-}" ]]; then
+            secret_args+=("demo-admin-password=$DEMO_ADMIN_PASSWORD")
+            env_args+=(
+              "DEMO_ADMIN_EMAIL=$DEMO_ADMIN_EMAIL"
+              "DEMO_ADMIN_PASSWORD=secretref:demo-admin-password"
+            )
+          else
+            printf '%s\n' 'DEMO_ADMIN_* sin configurar; se ejecutarán solo las migraciones.' >&2
+          fi
 
           if az containerapp job show -n "$job_name" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
             az containerapp job secret set \
@@ -360,11 +361,11 @@ jobs:
 
             case "$status" in
               Succeeded)
-                printf '%s\n' "Bootstrap del admin de demo completado ($execution_name)."
+                printf '%s\n' "Base de datos lista: migración + admin de demo ($execution_name)."
                 exit 0
                 ;;
               Failed|Degraded)
-                printf '%s\n' "Bootstrap del admin de demo falló ($execution_name)." >&2
+                printf '%s\n' "La migración/bootstrap de la base de datos falló ($execution_name)." >&2
                 printf '%s\n' '--- logs de la ejecución del job ---' >&2
                 az containerapp job logs show \
                   --name "$job_name" \
@@ -380,7 +381,7 @@ jobs:
             sleep 5
           done
 
-          printf '%s\n' "Bootstrap sin confirmar tras 300s ($execution_name)." >&2
+          printf '%s\n' "Migración/bootstrap sin confirmar tras 300s ($execution_name)." >&2
           printf '%s\n' '--- logs de la ejecución del job ---' >&2
           az containerapp job logs show \
             --name "$job_name" \
