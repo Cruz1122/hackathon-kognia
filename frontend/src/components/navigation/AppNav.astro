@@ -1,12 +1,11 @@
 ---
 interface Props {
   mode?: 'legacy' | 'route';
-  active?: 'analytics' | 'calls-demo' | 'calls-saved';
+  active?: 'analytics' | 'calls';
 }
 
 const { mode = 'route', active = 'analytics' } = Astro.props;
 const isLegacy = mode === 'legacy';
-const callsOpen = true;
 ---
 
 <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden={isLegacy ? 'true' : undefined} inert={isLegacy ? true : undefined}>
@@ -24,23 +23,10 @@ const callsOpen = true;
     </a>
   )}
 
-  <div class:list={['app-nav__group', callsOpen && 'is-open']} id="callsGroup">
-    <button class="app-nav__label" type="button" id="callsToggle" aria-expanded={callsOpen} aria-controls="callsChildren">
-      <i data-lucide="phone" aria-hidden="true"></i>
-      <span>Llamadas</span>
-    </button>
-    <div class="app-nav__children" id="callsChildren">
-      <div class="app-nav__children-inner">
-        {isLegacy ? (
-          <>
-            <div id="pstnCallList"></div>
-          </>
-        ) : (
-          <div id="pstnCallList"></div>
-        )}
-      </div>
-    </div>
-  </div>
+  <a class:list={['app-nav__item', !isLegacy && active === 'calls' && 'is-active']} href="/calls" data-route="calls" aria-current={!isLegacy && active === 'calls' ? 'page' : undefined}>
+    <i data-lucide="phone" aria-hidden="true"></i>
+    <span>Llamadas</span>
+  </a>
 
   {isLegacy ? (
     <>

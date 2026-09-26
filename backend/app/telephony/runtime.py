@@ -201,11 +201,26 @@ class TelephonyRuntime:
         if session.organization_id is None or session.system_user_id is None:
             return
         try:
-            from ..db.models import Call, CallStatus
+            from sqlalchemy import select
+
+            from ..db.models import Call, CallStatus, Customer
             from ..db.queries import create_conversation
             from ..db.session import get_session_factory
 
             async with get_session_factory()() as db:
+                phone = session.caller.strip()
+                customer = None
+                if phone:
+                    customer = await db.scalar(
+                        select(Customer).where(
+                            Customer.organization_id == session.organization_id,
+                            Customer.phone == phone,
+                        )
+                    )
+                    if customer is None:
+                        customer = Customer(organization_id=session.organization_id, phone=phone)
+                        db.add(customer)
+                        await db.flush()
                 conversation = await create_conversation(
                     db,
                     organization_id=session.organization_id,
@@ -213,6 +228,8 @@ class TelephonyRuntime:
                     channel="pstn",
                     status="open",
                 )
+                if customer is not None:
+                    conversation.customer_id = customer.id
                 db.add(
                     Call(
                         id=session.call_id,

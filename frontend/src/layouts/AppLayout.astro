@@ -14,11 +14,7 @@ interface Props {
 const { title = 'Kognia — Analíticas' } = Astro.props;
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 const path = Astro.url.pathname;
-const activeRoute = path.startsWith('/calls/saved')
-  ? 'calls-saved'
-  : path.startsWith('/calls/demo')
-    ? 'calls-demo'
-    : 'analytics';
+const activeRoute = path === '/calls' || path.startsWith('/calls/') ? 'calls' : 'analytics';
 const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved');
 ---
 
@@ -109,8 +105,50 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
       document.addEventListener('astro:before-swap', stopSessionGuard, { once: true });
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
+
+      function paintIcons(): void {
+        const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+        lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+      }
+
+      function syncNavActive(): void {
+        const calls = window.location.pathname === '/calls' || window.location.pathname.startsWith('/calls/');
+        document.querySelectorAll<HTMLElement>('#appNav [data-route], #appNav [data-view="dashboard"]').forEach((item) => {
+          const isCalls = item.dataset.route === 'calls';
+          const isDashboard = item.dataset.route === 'analytics' || item.dataset.view === 'dashboard';
+          const active = (calls && isCalls) || (!calls && isDashboard);
+          item.classList.toggle('is-active', active);
+          if (active) item.setAttribute('aria-current', 'page');
+          else item.removeAttribute('aria-current');
+        });
+      }
+
+      const navWatch = window as Window & { __kogniaNavSync?: boolean };
+      if (!navWatch.__kogniaNavSync) {
+        navWatch.__kogniaNavSync = true;
+        document.getElementById('appNav')?.addEventListener('click', (event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const dashboard = target.closest('[data-view="dashboard"]');
+          if (!dashboard || !window.location.pathname.startsWith('/calls')) return;
+          event.preventDefault();
+          const link = document.createElement('a');
+          link.href = '/analytics';
+          link.dataset.route = 'analytics';
+          document.body.append(link);
+          link.click();
+          link.remove();
+        });
+      }
+
+      syncNavActive();
+      paintIcons();
       void fillCallNav(apiUrl);
-      document.addEventListener('astro:page-load', () => { void fillCallNav(apiUrl); });
+      document.addEventListener('astro:page-load', () => {
+        syncNavActive();
+        paintIcons();
+        void fillCallNav(apiUrl);
+      });
     </script>
   </body>
 </html>

@@ -9,7 +9,7 @@
 .dashboard-topline h2 { margin: 0; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.05em; line-height: 1; }
 .dashboard-heading { min-width: 0; }
 .dashboard-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: end; }
-.dashboard-filters input, .dashboard-filters button { height: 40px; border: 1px solid rgba(65,65,65,.14); border-radius: var(--radius-full); background: var(--ui-paper); color: var(--ui-graphite); font: inherit; font-size: 12px; font-weight: 700; padding: 0 13px; }
+.dashboard-filters input, .dashboard-filters button, .dashboard-filters select { height: 40px; border: 1px solid rgba(65,65,65,.14); border-radius: var(--radius-full); background-color: var(--ui-paper); color: var(--ui-graphite); font: inherit; font-size: 12px; font-weight: 700; padding: 0 13px; }
 .dashboard-filters button { cursor: pointer; background: #414141; color: #f8f8f8; padding-inline: 18px; }
 .dashboard-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .dashboard-kpi { display: flex; flex-direction: column; min-width: 0; min-height: 140px; padding: 25px 28px; border: 1px solid rgba(65,65,65,.1); border-radius: var(--radius-ui); background: var(--ui-paper); }

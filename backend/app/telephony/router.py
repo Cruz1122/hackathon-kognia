@@ -8,11 +8,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import get_current_user
 from ..auth.tokens import InvalidTokenError, authenticate_token
-from ..db.models import Call, CallEvent, Recording, User
+from ..db.models import Call, CallEvent, Conversation, Customer, Recording, User
 from ..db.session import get_db, get_session_factory
 from .live_audio import live_audio_hub, monitor_hub
 from .recording import public_recording, recording_store
@@ -51,6 +52,33 @@ def _owns(user: User, organization_id: uuid.UUID | None) -> bool:
     return user.organization_id is not None and organization_id == user.organization_id
 
 
+def _stored_call(row: Call) -> dict[str, Any]:
+    customer = row.conversation.customer if row.conversation is not None else None
+    ended = row.ended_at
+    duration_ms = int((ended - row.started_at).total_seconds() * 1000) if ended is not None else 0
+    return {
+        "id": str(row.id),
+        "lifecycle": row.lifecycle_state,
+        "status": str(row.status),
+        "started_at": row.started_at.isoformat(),
+        "ended_at": ended.isoformat() if ended is not None else None,
+        "duration_ms": max(duration_ms, 0),
+        "caller": customer.phone if customer is not None and customer.phone else "",
+        "customer_name": customer.name if customer is not None and customer.name else "",
+        "recording_offset_ms": row.recording_offset_ms,
+        "replayable": bool(row.telnyx_call_control_id),
+    }
+
+
+def _listed(row: Call) -> bool:
+    if row.telnyx_call_control_id:
+        return True
+    customer = row.conversation.customer if row.conversation is not None else None
+    if customer is None:
+        return False
+    return bool((customer.name or "").strip() or (customer.phone or "").strip())
+
+
 @router.get("/calls")
 async def list_calls(
     user: User = Depends(get_current_user),
@@ -58,31 +86,40 @@ async def list_calls(
 ) -> dict[str, Any]:
     if user.organization_id is None:
         raise HTTPException(status_code=404, detail="not found")
-    live_ids = {item.call_id for item in registry.list_for(user.organization_id)}
+    live_sessions = registry.list_for(user.organization_id)
+    live_ids = {item.call_id for item in live_sessions}
+    phones = {item.caller for item in live_sessions if item.caller}
+    named: dict[str, str] = {}
+    if phones:
+        customers = (
+            await session.scalars(
+                select(Customer).where(
+                    Customer.organization_id == user.organization_id,
+                    Customer.phone.in_(phones),
+                )
+            )
+        ).all()
+        named = {customer.phone: customer.name or "" for customer in customers if customer.phone}
     rows = list(
         (
             await session.scalars(
                 select(Call)
-                .where(Call.organization_id == user.organization_id, Call.telnyx_call_control_id.is_not(None))
+                .where(Call.organization_id == user.organization_id)
+                .options(joinedload(Call.conversation).joinedload(Conversation.customer))
                 .order_by(Call.started_at.desc())
-                .limit(20)
+                .limit(500)
             )
-        ).all()
+        ).unique().all()
     )
-    recent = [
-        {
-            "id": str(row.id),
-            "lifecycle": row.lifecycle_state,
-            "started_at": row.started_at.isoformat(),
-            "recording_offset_ms": row.recording_offset_ms,
-        }
-        for row in rows
-        if row.id not in live_ids
-    ]
-    return {
-        "calls": [item.public_view() for item in registry.list_for(user.organization_id)],
-        "recent": recent,
-    }
+    recent = [_stored_call(row) for row in rows if row.id not in live_ids and _listed(row)]
+    live = []
+    for item in live_sessions:
+        body = item.public_view()
+        body["customer_name"] = named.get(item.caller, "")
+        body["status"] = "active"
+        body["replayable"] = True
+        live.append(body)
+    return {"calls": live, "recent": recent}
 
 
 @router.get("/calls/{call_id}")
