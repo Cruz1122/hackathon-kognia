@@ -1,6 +1,6 @@
 import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup, toolCallBusyMarkup } from './retrieval-card';
-import { WAVE_BLEED, crestFromLevel, drawEventMark, eventMarkIcon, sampleSeries } from './wave-mark';
+import { eventMarkIcon, paintCallWave, resizeWave, type WaveMark } from './wave-mark';
 
 type TimelineEvent = {
   type: string;
@@ -176,17 +176,9 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
   const items: HTMLElement[] = [];
   const context = canvas.getContext('2d');
 
-  function waveBox(): { width: number; height: number; dpr: number } {
-    const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
-    return { width: Math.max(1, rect.width), height: Math.max(1, rect.height), dpr: Math.min(window.devicePixelRatio || 1, 2) };
-  }
-
   function resize(): void {
     if (!context) return;
-    const { width, height, dpr } = waveBox();
-    canvas.width = Math.round((width + WAVE_BLEED * 2) * dpr);
-    canvas.height = Math.round(height * dpr);
-    context.setTransform(dpr, 0, 0, dpr, WAVE_BLEED * dpr, 0);
+    resizeWave(canvas, context);
   }
 
   let playAnchor = 0;
@@ -211,147 +203,18 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
 
   function drawWave(progress: number): void {
     if (!context) return;
-    const { width, height, dpr } = waveBox();
-    const held = Math.min(1, Math.max(0, progress));
-    context.setTransform(dpr, 0, 0, dpr, WAVE_BLEED * dpr, 0);
-    context.clearRect(-WAVE_BLEED, 0, width + WAVE_BLEED * 2, height);
-    let pen = context;
-    const paintSeries = (series: number[], from: number, to: number, fillStyle: string | CanvasGradient, bursts: boolean) => {
-      if (to <= from) return;
-      const baseline = height - 1;
-      const span = Math.max(1, series.length - 1);
-      const start = Math.floor(from * span);
-      const end = Math.min(span, Math.ceil(to * span));
-      const levelAt = (index: number) => {
-        const prev = series[Math.max(0, index - 1)] ?? 0;
-        const value = series[index] ?? 0;
-        const next = series[Math.min(series.length - 1, index + 1)] ?? value;
-        return prev * 0.22 + value * 0.56 + next * 0.22;
-      };
-      const pointAt = (index: number) => ({
-        x: (index / span) * width,
-        y: baseline - (5 + Math.pow(Math.min(1, levelAt(index)), 1.25) * height * 0.5),
-      });
-      const curveThrough = (points: { x: number; y: number }[]) => {
-        if (points.length === 0) return;
-        pen.lineTo(points[0].x, points[0].y);
-        for (let index = 1; index < points.length - 1; index += 1) {
-          const current = points[index];
-          const next = points[index + 1];
-          if (!current || !next) continue;
-          pen.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
-        }
-        const last = points[points.length - 1];
-        if (last) pen.lineTo(last.x, last.y);
-      };
-      pen.beginPath();
-      if (!bursts) {
-        const points = [];
-        for (let index = start; index <= end; index += 1) points.push(pointAt(index));
-        pen.moveTo((start / span) * width, baseline);
-        curveThrough(points);
-        pen.lineTo((end / span) * width, baseline);
-        pen.closePath();
-        pen.fillStyle = fillStyle;
-        pen.fill();
-        return;
-      }
-      let open: { x: number; y: number }[] = [];
-      const closeBurst = (x: number) => {
-        curveThrough(open);
-        pen.lineTo(x, baseline);
-        pen.closePath();
-        open = [];
-      };
-      for (let index = start; index <= end; index += 1) {
-        const value = levelAt(index);
-        const x = (index / span) * width;
-        if (value < 0.05) {
-          if (open.length) closeBurst(x);
-          continue;
-        }
-        if (!open.length) pen.moveTo(x, baseline);
-        open.push(pointAt(index));
-      }
-      if (open.length) closeBurst((end / span) * width);
-      pen.fillStyle = fillStyle;
-      pen.fill();
-    };
-    const heard = customerPeaks.map((value, index) => Math.max(value, agentPeaks[index] ?? 0));
-    const baseline = height - 1;
-    const radius = 5;
-    const head = Math.min(width, Math.max(0, held * width));
-    const span = Math.max(1, heard.length - 1);
-    const levelAt = (series: number[], index: number) => {
-      const prev = series[Math.max(0, index - 1)] ?? 0;
-      const value = series[index] ?? 0;
-      const next = series[Math.min(series.length - 1, index + 1)] ?? value;
-      return prev * 0.22 + value * 0.56 + next * 0.22;
-    };
-    context.save();
-    context.beginPath();
-    context.rect(head, 0, Math.max(0, width - head), height);
-    context.clip();
-    paintSeries(heard, 0, 1, 'rgba(65,65,65,.14)', false);
-    context.restore();
-    context.save();
-    context.beginPath();
-    context.rect(0, 0, head, height);
-    context.clip();
-    paintSeries(heard, 0, 1, '#f7c974', false);
-    let runStart = -1;
-    const paintAgentRun = (runEnd: number) => {
-      if (runStart < 0) return;
-      const x0 = (runStart / span) * width;
-      const x1 = (runEnd / span) * width;
-      const runWidth = Math.max(1, x1 - x0);
-      const fade = Math.min(0.42, Math.max(0.12, 22 / runWidth));
-      const voice = context.createLinearGradient(x0, 0, x0 + runWidth, 0);
-      voice.addColorStop(0, '#f7c974');
-      voice.addColorStop(fade, '#faeccf');
-      voice.addColorStop(1 - fade, '#faeccf');
-      voice.addColorStop(1, '#f7c974');
-      context.save();
-      context.beginPath();
-      context.rect(x0, 0, runWidth, height);
-      context.clip();
-      paintSeries(heard, 0, 1, voice, false);
-      context.restore();
-      runStart = -1;
-    };
-    for (let index = 0; index <= span; index += 1) {
-      const agent = levelAt(agentPeaks, index);
-      const customer = levelAt(customerPeaks, index);
-      const agentSpeaking = agent >= 0.02 && agent >= customer;
-      if (agentSpeaking && runStart < 0) runStart = index;
-      if (!agentSpeaking && runStart >= 0) paintAgentRun(index);
-    }
-    if (runStart >= 0) paintAgentRun(span);
-    context.restore();
     const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const marks: WaveMark[] = [];
     if (duration > 0) {
       for (const item of items) {
         const icon = eventMarkIcon(item);
         if (!icon) continue;
         const ratio = (Number(item.dataset.at ?? 0) * 1000 - offsetMs) / (duration * 1000);
         if (ratio < 0 || ratio > 1) continue;
-        drawEventMark(context, ratio * width, baseline, width, icon);
+        marks.push({ ratio, icon });
       }
     }
-    const crest = crestFromLevel(sampleSeries(heard, head, width), baseline, height);
-    context.beginPath();
-    context.moveTo(head, Math.min(baseline, crest));
-    context.lineTo(head, baseline);
-    context.strokeStyle = '#414141';
-    context.lineWidth = 2;
-    context.lineCap = 'butt';
-    context.stroke();
-    const ballX = head;
-    const ballY = Math.min(height - radius, Math.max(radius, crest));
-    context.beginPath();
-    context.arc(ballX, ballY, radius, 0, Math.PI * 2);
-    context.fillStyle = '#414141';
-    context.fill();
+    paintCallWave(context, canvas, customerPeaks, agentPeaks, progress, marks);
   }
 
   function paint(timelineMs: number, animate: boolean): void {
@@ -436,7 +299,7 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
     const caption = playBtn.closest('.control-stack')?.querySelector('.control-caption');
     if (caption) caption.textContent = next ? 'Pausa' : 'Reanudar';
     lucideRefresh();
-    if (next) void audio.play();
+    if (next) void audio.play().catch(() => { if (!disposed) setPlaying(false); });
     else audio.pause();
   }
 
@@ -582,7 +445,20 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
     if (disposed) return;
     const bytes = await blob.arrayBuffer();
     if (disposed) return;
-    const decoded = await new AudioContext().decodeAudioData(bytes.slice(0));
+    let decoded: AudioBuffer | null = null;
+    for (let attempt = 0; attempt < 3 && !decoded; attempt += 1) {
+      const decodeContext = new AudioContext();
+      try {
+        await decodeContext.resume().catch(() => undefined);
+        decoded = await decodeContext.decodeAudioData(bytes.slice(0));
+      } catch (error) {
+        if (attempt === 2) throw error;
+        await new Promise((resolve) => window.setTimeout(resolve, 150));
+      } finally {
+        await decodeContext.close().catch(() => undefined);
+      }
+    }
+    if (!decoded || disposed) return;
     const wave = peaksFromBuffer(decoded);
     customerPeaks = wave.customer;
     agentPeaks = wave.agent;
@@ -592,7 +468,19 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
     if (endedItem) endedItem.dataset.at = String(offsetMs / 1000 + decoded.duration);
     if (conversationEmpty) conversationEmpty.innerHTML = emptyCopy;
     if (status) status.hidden = true;
+    await new Promise<void>((resolve) => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        resolve();
+        return;
+      }
+      const done = () => resolve();
+      audio.addEventListener('loadedmetadata', done, { once: true });
+      audio.addEventListener('error', done, { once: true });
+    });
+    if (disposed) return;
+    resize();
     paint(offsetMs, false);
+    drawWave(shownProgress());
     setPlaying(true);
   })().catch(() => {
     if (statusText) statusText.textContent = 'No se pudo cargar la llamada';

@@ -136,8 +136,9 @@ import '../styles/dashboard.css';
       align-items: stretch;
     }
 
-    /* Dos teselas idénticas: al desplazar una tesela completa, el último
-       fotograma es exactamente igual al primero y el loop no salta. */
+    /* Un solo trazo de dos periodos, con el empalme fuera del viewBox.
+       Al desplazar un periodo el último fotograma coincide con el primero
+       y no aparece la línea del corte. */
     .login-material {
       position: absolute;
       inset: -100% 0 auto auto;
@@ -1563,24 +1564,12 @@ import '../styles/dashboard.css';
       <section class="login-left app-sidebar" aria-label="Demo" transition:name="app-sidebar" transition:persist>
         <div class="login-material" aria-hidden="true">
           <svg class="login-left-svg login-left-svg--y" viewBox="0 0 600 2400" preserveAspectRatio="none">
-            <g>
-              <path class="amber-shape" d="M0 0 H600 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 H0 Z" />
-              <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
-            </g>
-            <g transform="translate(0 1200)">
-              <path class="amber-shape" d="M0 0 H600 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 H0 Z" />
-              <path class="graphite-shape" d="M0 0 H540 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 H0 Z" />
-            </g>
+            <path class="amber-shape" d="M0 -40 H600 V0 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 C600 1260 520 1340 500 1460 C480 1580 570 1700 510 1820 C450 1940 570 2060 500 2180 C480 2280 600 2360 600 2400 V2440 H0 Z" />
+            <path class="graphite-shape" d="M0 -40 H540 V0 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 C540 1260 468 1340 450 1460 C432 1580 513 1700 459 1820 C405 1940 513 2060 450 2180 C432 2280 540 2360 540 2400 V2440 H0 Z" />
           </svg>
           <svg class="login-left-svg login-left-svg--x" viewBox="0 0 2400 600" preserveAspectRatio="none">
-            <g>
-              <path class="amber-shape" d="M0 0 H1200 V600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 Z" />
-              <path class="graphite-shape" d="M0 0 H1200 V540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 Z" />
-            </g>
-            <g transform="translate(1200 0)">
-              <path class="amber-shape" d="M0 0 H1200 V600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 Z" />
-              <path class="graphite-shape" d="M0 0 H1200 V540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 Z" />
-            </g>
+            <path class="amber-shape" d="M-40 0 H2440 V600 H2400 C2340 600 2260 520 2140 500 C2020 480 1900 570 1780 510 C1660 450 1540 570 1420 500 C1340 480 1240 600 1200 600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 H-40 Z" />
+            <path class="graphite-shape" d="M-40 0 H2440 V540 H2400 C2340 540 2260 468 2140 450 C2020 432 1900 513 1780 459 C1660 405 1540 513 1420 450 C1340 432 1240 540 1200 540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 H-40 Z" />
           </svg>
         </div>
         <div class="login-sidebar">

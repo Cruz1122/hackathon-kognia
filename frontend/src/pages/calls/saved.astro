@@ -14,7 +14,7 @@ import '../../styles/call-demo.css';
   import { accessTokenKey, checkSession, redirectToLogin } from '../../features/auth/session-guard';
 
   const apiUrl = document.body.dataset.apiUrl ?? '';
-  let cleanup: (() => void) | null = null;
+  let cleanup: (() => void | Promise<void>) | null = null;
   let mountedId = '';
 
   function clearConversation(): void {
@@ -29,8 +29,11 @@ import '../../styles/call-demo.css';
       if (new URLSearchParams(window.location.search).get('id') !== callId) return;
       const recording = await fetch(`${apiUrl}/calls/${callId}/recording`, { headers });
       if (recording.ok && new URLSearchParams(window.location.search).get('id') === callId) {
-        cleanup?.();
+        const release = cleanup;
+        cleanup = null;
+        await release?.();
         clearConversation();
+        if (new URLSearchParams(window.location.search).get('id') !== callId) return;
         cleanup = bootCallReplay(apiUrl, token, callId);
         return;
       }

@@ -32,6 +32,10 @@
 .call-connection-status.is-error { background: var(--ui-graphite); color: var(--ui-paper); }
 @keyframes connection-pulse { 0%, 100% { transform: scale(.76); opacity: .55; } 50% { transform: scale(1); opacity: 1; } }
 .player { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 24px; width: 100%; margin-inline: auto; padding: 6px 10px 2px; color: var(--ui-graphite); }
+.player.is-live-listen { grid-template-columns: 1fr; justify-items: end; }
+.player.is-live-listen .monitor,
+.player.is-live-listen .timecode,
+.player.is-live-listen .control-stack:not(:last-child) { display: none; }
 .monitor { position: relative; z-index: 3; min-width: 0; height: 72px; overflow: visible; cursor: pointer; user-select: none; touch-action: none; outline: none; --progress: 100%; }
 .monitor:focus-visible { box-shadow: 0 0 0 3px rgba(247,201,116,.58); border-radius: var(--radius-ui); }
 .wave-window { position: absolute; inset: 0; z-index: 1; overflow: visible; pointer-events: none; }
