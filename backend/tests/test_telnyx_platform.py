@@ -377,7 +377,7 @@ async def test_replay_range_and_tenant_isolation(telnyx_key: SigningKey, tmp_pat
     ]
     record = RecordingRecord(id=uuid.uuid4(), call_id=session.call_id, organization_id=organization_id, status="READY")
     record.path = tmp_path / f"{record.id}.wav"
-    record.path.write_bytes(wav_bytes(b"\x00\x00" * 40))
+    record.path.write_bytes(wav_bytes(b"\x00\x00" * 40, channels=2))
     recording_store._by_call[session.call_id] = record
     user = User(id=uuid.uuid4(), organization_id=organization_id, email="admin@test", password_hash="x", role=UserRole.ADMIN)
     stranger = User(id=uuid.uuid4(), organization_id=other_id, email="other@test", password_hash="x", role=UserRole.ADMIN)

@@ -10,49 +10,80 @@ permissions:
 
 jobs:
 
-  changes:
+  detect-affected-components:
+    name: Detect affected components
     runs-on: ubuntu-latest
 
     outputs:
+      # dorny/paths-filter exposes these values as the strings 'true'/'false'.
+      # Only component paths are deployable; workflow-only changes intentionally
+      # leave both outputs false.
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
-      pipeline: ${{ steps.filter.outputs.pipeline }}
 
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-      - uses: dorny/paths-filter@v4
+      - name: Detect changed component paths
+        uses: dorny/paths-filter@v4
         id: filter
         with:
           base: ${{ github.ref }}
           filters: |
+            # Changes under frontend/** rebuild and deploy the frontend only.
             frontend:
               - 'frontend/**'
               - 'frontend/Dockerfile'
+            # Changes under backend/** rebuild and deploy the backend only.
             backend:
               - 'backend/**'
               - 'backend/Dockerfile'
-            pipeline:
-              - '.github/workflows/deploy-aplication-azure.yml'
 
+  # Both image builds depend only on detection, so frontend and backend builds
+  # run in parallel when both component outputs are 'true'.
   build-frontend:
-    needs: [changes, deploy-backend]
-    if: >-
-      always() &&
-      needs.changes.outputs.frontend == 'true' &&
-      needs.deploy-backend.result == 'success'
+    name: Build frontend image
+    needs: detect-affected-components
+    if: needs.detect-affected-components.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-      - uses: docker/login-action@v4
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Resolve backend URL
+        id: backend-url
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+
+          fqdn="$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$fqdn"
+          echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - uses: docker/setup-buildx-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-      - uses: docker/build-push-action@v7
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
@@ -60,26 +91,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            PUBLIC_API_URL=${{ needs.deploy-backend.outputs.backend-url }}
+            PUBLIC_API_URL=${{ steps.backend-url.outputs.url }}
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
 
   build-backend:
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    name: Build backend image
+    needs: detect-affected-components
+    if: needs.detect-affected-components.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-      - uses: docker/login-action@v4
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - uses: docker/setup-buildx-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-      - uses: docker/build-push-action@v7
+      - name: Build and push backend image
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -91,18 +127,16 @@ jobs:
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
 
+  # The backend is deployed only when its image was rebuilt successfully.
   deploy-backend:
-    needs: [changes, build-backend]
+    name: Deploy backend
+    needs: [detect-affected-components, build-backend]
     if: >-
       always() &&
-       (needs.changes.outputs.backend == 'true' ||
-        needs.changes.outputs.frontend == 'true' ||
-        needs.changes.outputs.pipeline == 'true') &&
-       (needs.changes.outputs.backend != 'true' ||
-        needs.build-backend.result == 'success')
+       !cancelled() &&
+       needs.detect-affected-components.outputs.backend == 'true' &&
+       needs.build-backend.result == 'success'
     runs-on: ubuntu-latest
-    outputs:
-      backend-url: ${{ steps.backend-url.outputs.url }}
     steps:
       - name: Azure login
         uses: azure/login@v3
@@ -392,27 +426,19 @@ jobs:
           printf '%s\n' '--- fin de logs ---' >&2
           exit 1
 
-      - name: Get backend URL
-        id: backend-url
-        shell: bash
-        env:
-          APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
-          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-        run: |
-          fqdn="$(az containerapp show \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query properties.configuration.ingress.fqdn \
-            --output tsv)"
-          test -n "$fqdn"
-          echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
-
+  # Frontend-only deployments do not wait for the skipped backend job. When
+  # both components changed, frontend deployment waits for backend deployment
+  # so the final CORS update remains ordered and safe.
   deploy-frontend:
-    needs: [build-frontend, deploy-backend]
+    name: Deploy frontend
+    needs: [detect-affected-components, build-frontend, deploy-backend]
     if: >-
       always() &&
+      !cancelled() &&
+      needs.detect-affected-components.outputs.frontend == 'true' &&
       needs.build-frontend.result == 'success' &&
-      needs.deploy-backend.result == 'success'
+      (needs.detect-affected-components.outputs.backend != 'true' ||
+       needs.deploy-backend.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
