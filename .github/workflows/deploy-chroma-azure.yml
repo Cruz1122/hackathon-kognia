@@ -58,7 +58,8 @@ jobs:
               --resource-group "$RESOURCE_GROUP" \
               --type internal \
               --target-port 8000 \
-              --transport http
+              --transport http \
+              --allow-insecure true
           else
             az containerapp create \
               --name "$CHROMA_APP_NAME" \
@@ -70,8 +71,16 @@ jobs:
               --ingress internal \
               --target-port 8000 \
               --transport http \
+              --allow-insecure true \
               --env-vars IS_PERSISTENT=TRUE
           fi
+
+          # El ingress HTTP interno debe servir en claro para que el backend use
+          # http://<fqdn>:80 (el targetPort 8000 es interno del contenedor).
+          az containerapp ingress update \
+            --name "$CHROMA_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --allow-insecure true >/dev/null
 
       - name: Wait for Chroma Container App
         shell: bash
@@ -111,12 +120,18 @@ jobs:
             exit 0
           fi
 
+          chroma_host="$(az containerapp show \
+            --name "$CHROMA_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+          test -n "$chroma_host"
+
           az containerapp update \
             --name "$BACKEND_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --set-env-vars \
-              CHROMA_HOST="$CHROMA_APP_NAME" \
-              CHROMA_PORT=8000 \
+              CHROMA_HOST="$chroma_host" \
+              CHROMA_PORT=80 \
               CHROMA_SSL=false \
               CHROMA_RAG_COLLECTION="$CHROMA_COLLECTION"
 
@@ -137,11 +152,17 @@ jobs:
             exit 0
           fi
 
+          chroma_host="$(az containerapp show \
+            --name "$CHROMA_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+          test -n "$chroma_host"
+
           az containerapp update \
             --name "$WORKER_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --set-env-vars \
-              CHROMA_HOST="$CHROMA_APP_NAME" \
-              CHROMA_PORT=8000 \
+              CHROMA_HOST="$chroma_host" \
+              CHROMA_PORT=80 \
               CHROMA_SSL=false \
               CHROMA_RAG_COLLECTION="$CHROMA_COLLECTION"

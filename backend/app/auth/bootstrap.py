@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import traceback
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -115,6 +116,7 @@ def main() -> int:
         return asyncio.run(_run_bootstrap(demo_only=demo_only))
     except Exception:
         print("Bootstrap failed.", file=sys.stderr)
+        traceback.print_exc()
         return 1
 
 

@@ -1,0 +1,211 @@
+15:29:42 [STATUS] Connecting to log stream...
+15:29:43 [STATUS] Connecting to log stream...
+15:29:43 [STDOUT] StartingGettingEvents: Connecting to the events collector...
+15:29:44 [STDOUT] 2026-09-25T20:29:44.06598  Connecting to the container 'hackathon-kognia-api'...
+15:29:44 [STDOUT] 2026-09-25T20:29:44.22304  Successfully Connected to container: 'hackathon-kognia-api' [Revision: 'hackathon-kognia-api--0000006', Replica: 'hackathon-kognia-api--0000006-6b4d7c987f-qw524']
+15:28:41 [STDERR] INFO:     Started server process [1]
+15:28:41 [STDERR] INFO:     Waiting for application startup.
+15:28:43 [STDERR] 2026-09-25 20:28:43.118541789 [W:onnxruntime:Default, telemetry.cc:800 operator()] Failed to persist telemetry device ID; using an in-memory identifier[m
+15:29:44 [STDOUT] ConnectedToEventsServer: Successfully connected to events server
+15:29:34 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:35 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:36 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:37 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:38 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:39 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:40 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:41 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:42 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:43 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:44 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:45 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:46 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:47 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:48 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:49 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:50 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:51 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:52 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:53 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:54 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:55 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:56 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:57 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:58 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:29:59 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:00 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:01 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:02 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:03 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:04 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:05 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:06 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:07 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:08 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:09 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:10 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:11 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:12 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:13 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:14 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:15 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:16 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:17 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:18 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:19 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:20 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:21 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:22 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:23 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:24 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:25 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:26 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:27 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:28 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:29 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:30 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:31 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:32 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:33 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:34 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:35 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:36 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:37 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:38 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:39 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:40 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:41 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:42 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:43 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:44 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:45 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:46 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:47 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:48 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:49 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:50 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:51 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:52 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:53 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:54 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:55 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:56 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:57 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:58 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:59 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:31:00 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:31:01 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:31:02 [STDERR] ProbeFailed: Probe of StartUp failed with status code: 1
+15:30:44 [STDOUT] 2026-09-25T20:30:44.37627  No logs since last 60 seconds
+15:31:03 [STDERR] Demo knowledge could not be seeded
+15:31:03 [STDERR] Traceback (most recent call last):
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+15:31:03 [STDERR] yield
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+15:31:03 [STDERR] resp = await self._pool.handle_async_request(req)
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+15:31:03 [STDERR] raise exc from None
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+15:31:03 [STDERR] response = await connection.handle_async_request(
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] pool_request.request
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] )
+15:31:03 [STDERR] ^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+15:31:03 [STDERR] raise exc
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+15:31:03 [STDERR] stream = await self._connect(request)
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+15:31:03 [STDERR] stream = await self._network_backend.connect_tcp(**kwargs)
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+15:31:03 [STDERR] return await self._backend.connect_tcp(
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] ...<5 lines>...
+15:31:03 [STDERR] )
+15:31:03 [STDERR] ^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+15:31:03 [STDERR] with map_exceptions(exc_map):
+15:31:03 [STDERR] ~~~~~~~~~~~~~~^^^^^^^^^
+15:31:03 [STDERR] File "/usr/local/lib/python3.13/contextlib.py", line 162, in __exit__
+15:31:03 [STDERR] self.gen.throw(value)
+15:31:03 [STDERR] ~~~~~~~~~~~~~~^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+15:31:03 [STDERR] raise to_exc(exc) from exc
+15:31:03 [STDERR] httpcore.ConnectError: All connection attempts failed
+15:31:03 [STDOUT] 2026-09-25T20:31:03.1554418Z stderr F
+15:31:03 [STDERR] The above exception was the direct cause of the following exception:
+15:31:03 [STDOUT] 2026-09-25T20:31:03.1554471Z stderr F
+15:31:03 [STDERR] Traceback (most recent call last):
+15:31:03 [STDERR] File "/app/backend/app/main.py", line 126, in seed_demo_knowledge
+15:31:03 [STDERR] active = await rag_store.get_active_document()
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/app/backend/app/platform/rag/chroma_store.py", line 56, in get_active_document
+15:31:03 [STDERR] collection = await self._get_collection()
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/app/backend/app/platform/rag/chroma_store.py", line 24, in _get_collection
+15:31:03 [STDERR] self._client = await chromadb.AsyncHttpClient(
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] ...<3 lines>...
+15:31:03 [STDERR] )
+15:31:03 [STDERR] ^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/chromadb/__init__.py", line 316, in AsyncHttpClient
+15:31:03 [STDERR] return await AsyncClientCreator.create(
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] tenant=tenant, database=database, settings=settings
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] )
+15:31:03 [STDERR] ^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/chromadb/api/async_client.py", line 75, in create
+15:31:03 [STDERR] user_identity = await self.get_user_identity()
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/chromadb/api/async_client.py", line 119, in get_user_identity
+15:31:03 [STDERR] return await self._server.get_user_identity()
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 134, in async_wrapper
+15:31:03 [STDERR] return await f(*args, **kwargs)
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/chromadb/api/async_fastapi.py", line 252, in get_user_identity
+15:31:03 [STDERR] return UserIdentity(**(await self._make_request("get", "/auth/identity")))
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/chromadb/api/async_fastapi.py", line 154, in _make_request
+15:31:03 [STDERR] response = await self._get_client().request(method, url, **cast(Any, kwargs))
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_client.py", line 1540, in request
+15:31:03 [STDERR] return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_client.py", line 1629, in send
+15:31:03 [STDERR] response = await self._send_handling_auth(
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] ...<4 lines>...
+15:31:03 [STDERR] )
+15:31:03 [STDERR] ^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+15:31:03 [STDERR] response = await self._send_handling_redirects(
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] ...<3 lines>...
+15:31:03 [STDERR] )
+15:31:03 [STDERR] ^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+15:31:03 [STDERR] response = await self._send_single_request(request)
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+15:31:03 [STDERR] response = await transport.handle_async_request(request)
+15:31:03 [STDERR] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+15:31:03 [STDERR] with map_httpcore_exceptions():
+15:31:03 [STDERR] ~~~~~~~~~~~~~~~~~~~~~~~^^
+15:31:03 [STDERR] File "/usr/local/lib/python3.13/contextlib.py", line 162, in __exit__
+15:31:03 [STDERR] self.gen.throw(value)
+15:31:03 [STDERR] ~~~~~~~~~~~~~~^^^^^^^
+15:31:03 [STDERR] File "/opt/venv/lib/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+15:31:03 [STDERR] raise mapped_exc(message) from exc
+15:31:03 [STDERR] httpx.ConnectError: All connection attempts failed
+15:31:03 [STDERR] INFO:     Application startup complete.
+15:31:03 [STDERR] INFO:     Uvicorn running on http://0.0.0.0:18474 (Press CTRL+C to quit)
+15:31:06 [STDOUT] INFO:     100.100.0.131:48328 - "GET /health/live HTTP/1.1" 200 OK
+15:32:02 [STDOUT] NoNewEvents: No events since last 60 seconds
+15:32:07 [STDOUT] 2026-09-25T20:32:07.45263  No logs since last 60 seconds

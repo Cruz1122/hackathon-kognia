@@ -33,14 +33,13 @@ jobs:
               - 'backend/**'
               - 'backend/Dockerfile'
             pipeline:
-              - '.github/workflows/**'
+              - '.github/workflows/deploy-aplication-azure.yml'
 
   build-frontend:
     needs: [changes, deploy-backend]
     if: >-
       always() &&
-        (needs.changes.outputs.frontend == 'true' ||
-         needs.changes.outputs.pipeline == 'true') &&
+      needs.changes.outputs.frontend == 'true' &&
       needs.deploy-backend.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -58,6 +57,8 @@ jobs:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             PUBLIC_API_URL=${{ needs.deploy-backend.outputs.backend-url }}
           tags: |
@@ -66,9 +67,7 @@ jobs:
 
   build-backend:
     needs: changes
-    if: >-
-      needs.changes.outputs.backend == 'true' ||
-      needs.changes.outputs.pipeline == 'true'
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -85,6 +84,9 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
+          # Reutiliza capas (torch, modelos Sherpa/Piper/E5) entre builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
@@ -96,8 +98,7 @@ jobs:
        (needs.changes.outputs.backend == 'true' ||
         needs.changes.outputs.frontend == 'true' ||
         needs.changes.outputs.pipeline == 'true') &&
-       ((needs.changes.outputs.backend != 'true' &&
-         needs.changes.outputs.pipeline != 'true') ||
+       (needs.changes.outputs.backend != 'true' ||
         needs.build-backend.result == 'success')
     runs-on: ubuntu-latest
     outputs:
@@ -132,6 +133,14 @@ jobs:
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
+          REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
+          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          # La cadena de `production` (gpt-5.6-luna) no está verificada; `test`
+          # usa gpt-4o-mini + fallbacks y es la que funciona en la demo.
+          LLM_ENV: ${{ vars.APP_ENV || 'test' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -140,6 +149,8 @@ jobs:
           test -n "$POSTGRES_DB"
           test -n "$POSTGRES_USER"
           test -n "$JWT_SECRET_KEY"
+          test -n "$BACKEND_APP_NAME"
+          test -n "$RESOURCE_GROUP"
 
           database_host="${{ vars.AZURE_DATABASE_APP_NAME }}"
           test -n "$database_host"
@@ -156,38 +167,88 @@ jobs:
           PY
           )"
 
+          # Chroma: ingress HTTP interno. El cliente Chroma debe usar el FQDN
+          # interno y el puerto 80; el targetPort 8000 solo aplica dentro del
+          # contenedor (el ingress HTTP de ACA escucha en 80/443).
+          chroma_args=()
+          if [[ -n "${CHROMA_APP_NAME:-}" ]] && az containerapp show \
+            --name "$CHROMA_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            chroma_host="$(az containerapp show \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn -o tsv)"
+            test -n "$chroma_host"
+
+            az containerapp ingress update \
+              --name "$CHROMA_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --allow-insecure true >/dev/null
+
+            chroma_args=(
+              "CHROMA_HOST=$chroma_host"
+              "CHROMA_PORT=80"
+              "CHROMA_SSL=false"
+              "CHROMA_RAG_COLLECTION=rag_documents"
+            )
+          else
+            printf '%s\n' 'Chroma no está desplegado; se omite su configuración.' >&2
+          fi
+
+          redis_args=()
+          if [[ -n "${REDIS_APP_NAME:-}" ]] && az containerapp show \
+            --name "$REDIS_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            redis_args=("REDIS_URL=redis://${REDIS_APP_NAME}:6379/0")
+          else
+            printf '%s\n' 'Redis no está desplegado; se omite su configuración.' >&2
+          fi
+
           secret_args=(
             "database-url=$database_url"
             "jwt-secret-key=$JWT_SECRET_KEY"
           )
           env_args=(
-            "APP_ENV=production"
+            "APP_ENV=${LLM_ENV:-test}"
             "DATABASE_URL=secretref:database-url"
             "JWT_SECRET_KEY=secretref:jwt-secret-key"
             "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15"
           )
+          env_args+=("${chroma_args[@]}")
+          env_args+=("${redis_args[@]}")
 
-          if [[ -n "$OPENAI_API_KEY" ]]; then
+          if [[ -n "${OPENAI_API_KEY:-}" ]]; then
             secret_args+=("openai-api-key=$OPENAI_API_KEY")
             env_args+=("OPENAI_API_KEY=secretref:openai-api-key")
           fi
 
-          if [[ -n "$GEMINI_API_KEY" ]]; then
+          if [[ -n "${GEMINI_API_KEY:-}" ]]; then
             secret_args+=("gemini-api-key=$GEMINI_API_KEY")
             env_args+=("GEMINI_API_KEY=secretref:gemini-api-key")
           fi
 
+          if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+            secret_args+=("openrouter-api-key=$OPENROUTER_API_KEY")
+            env_args+=("OPENROUTER_API_KEY=secretref:openrouter-api-key")
+          fi
+
+          if [[ -n "${GROQ_API_KEY:-}" ]]; then
+            secret_args+=("groq-api-key=$GROQ_API_KEY")
+            env_args+=("GROQ_API_KEY=secretref:groq-api-key")
+          fi
+
           az containerapp secret set \
-            --name "${{ vars.AZURE_BACKEND_APP_NAME }}" \
+            --name "$BACKEND_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --secrets "${secret_args[@]}"
 
           az containerapp update \
-            --name "${{ vars.AZURE_BACKEND_APP_NAME }}" \
+            --name "$BACKEND_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
+            --min-replicas 1 \
             --set-env-vars "${env_args[@]}"
 
-      - name: Bootstrap demo admin
+      - name: Migrate database and bootstrap demo admin
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           CONTAINER_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
@@ -202,18 +263,20 @@ jobs:
           DEMO_ADMIN_PASSWORD: ${{ secrets.DEMO_ADMIN_PASSWORD }}
           DEMO_ORG_NAME: ${{ vars.DEMO_ORG_NAME }}
           DEMO_ORG_SLUG: ${{ vars.DEMO_ORG_SLUG }}
+          APP_ENV: ${{ vars.APP_ENV || 'test' }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -z "${DEMO_ADMIN_EMAIL:-}" || -z "${DEMO_ADMIN_PASSWORD:-}" ]]; then
-            printf '%s\n' 'DEMO_ADMIN_* sin configurar; se omite el bootstrap del admin de demo.'
-            exit 0
-          fi
-
           test -n "$CONTAINER_ENVIRONMENT"
           test -n "$DATABASE_APP_NAME"
+          test -n "$POSTGRES_DB"
+          test -n "$POSTGRES_USER"
           test -n "$POSTGRES_PASSWORD"
+          test -n "$DOCKERHUB_USERNAME"
+          test -n "$DOCKERHUB_TOKEN"
+          test -n "$RESOURCE_GROUP"
+          test -n "$APP_ENV"
 
           job_name="${JOB_NAME:-hackathon-kognia-bootstrap}"
           image="docker.io/${DOCKERHUB_USERNAME}/hackathon-kognia-api:latest"
@@ -232,18 +295,23 @@ jobs:
           PY
           )"
 
-          secret_args=(
-            "database-url=$database_url"
-            "demo-admin-password=$DEMO_ADMIN_PASSWORD"
-          )
+          # Las migraciones se ejecutan siempre; el admin de demo es opcional.
+          secret_args=("database-url=$database_url")
           env_args=(
-            "APP_ENV=production"
+            "APP_ENV=$APP_ENV"
             "DATABASE_URL=secretref:database-url"
-            "DEMO_ADMIN_EMAIL=$DEMO_ADMIN_EMAIL"
-            "DEMO_ADMIN_PASSWORD=secretref:demo-admin-password"
             "DEMO_ORG_NAME=$demo_org_name"
             "DEMO_ORG_SLUG=$demo_org_slug"
           )
+          if [[ -n "${DEMO_ADMIN_EMAIL:-}" && -n "${DEMO_ADMIN_PASSWORD:-}" ]]; then
+            secret_args+=("demo-admin-password=$DEMO_ADMIN_PASSWORD")
+            env_args+=(
+              "DEMO_ADMIN_EMAIL=$DEMO_ADMIN_EMAIL"
+              "DEMO_ADMIN_PASSWORD=secretref:demo-admin-password"
+            )
+          else
+            printf '%s\n' 'DEMO_ADMIN_* sin configurar; se ejecutarán solo las migraciones.' >&2
+          fi
 
           if az containerapp job show -n "$job_name" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
             az containerapp job secret set \
@@ -293,11 +361,19 @@ jobs:
 
             case "$status" in
               Succeeded)
-                printf '%s\n' "Bootstrap del admin de demo completado ($execution_name)."
+                printf '%s\n' "Base de datos lista: migración + admin de demo ($execution_name)."
                 exit 0
                 ;;
               Failed|Degraded)
-                printf '%s\n' "Bootstrap del admin de demo falló ($execution_name)." >&2
+                printf '%s\n' "La migración/bootstrap de la base de datos falló ($execution_name)." >&2
+                printf '%s\n' '--- logs de la ejecución del job ---' >&2
+                az containerapp job logs show \
+                  --name "$job_name" \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --execution "$execution_name" \
+                  --container "$job_name" \
+                  --tail 200 >&2 || true
+                printf '%s\n' '--- fin de logs ---' >&2
                 exit 1
                 ;;
             esac
@@ -305,7 +381,15 @@ jobs:
             sleep 5
           done
 
-          printf '%s\n' "Bootstrap sin confirmar tras 300s ($execution_name)." >&2
+          printf '%s\n' "Migración/bootstrap sin confirmar tras 300s ($execution_name)." >&2
+          printf '%s\n' '--- logs de la ejecución del job ---' >&2
+          az containerapp job logs show \
+            --name "$job_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --execution "$execution_name" \
+            --container "$job_name" \
+            --tail 200 >&2 || true
+          printf '%s\n' '--- fin de logs ---' >&2
           exit 1
 
       - name: Get backend URL
