@@ -22,7 +22,7 @@ button, input { font: inherit; }
 .app-sidebar { display: flex; min-height: 100dvh; flex-direction: column; gap: 18px; padding: 28px 22px 32px; background: var(--ui-graphite); color: var(--ui-paper); }
 .app-mobile-topbar { display: flex; width: 100%; align-items: center; }
 .app-sidebar__brand { display: flex; align-items: center; gap: 12px; color: var(--ui-paper); font-size: 1.65rem; font-weight: 800; line-height: 1; }
-.app-sidebar__face { display: grid; width: 48px; aspect-ratio: 1; place-items: center; border-radius: 50%; }
+.app-sidebar__face { display: grid; width: 48px; flex: 0 0 48px; aspect-ratio: 1; place-items: center; border-radius: 50%; }
 .app-sidebar__face svg { display: block; width: 100%; height: 100%; }
 .mobile-nav-toggle { display: none; }
 .mobile-nav-toggle[hidden] { display: none !important; }

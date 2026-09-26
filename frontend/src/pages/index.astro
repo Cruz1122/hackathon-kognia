@@ -1486,17 +1486,30 @@ import '../styles/dashboard.css';
       .login-brand { width: 100%; }
       .auth-panel:not(.is-app) .login-left {
         width: 100%;
+        height: var(--mobile-login-top-height);
         min-height: var(--mobile-login-top-height);
         justify-content: flex-start;
         padding: clamp(24px, 5vh, 42px) 24px 18px;
-        transition: none;
+        overflow: hidden;
+        transition:
+          height 1.05s cubic-bezier(.32, .04, .18, 1),
+          min-height 1.05s cubic-bezier(.32, .04, .18, 1),
+          padding 1.05s cubic-bezier(.32, .04, .18, 1),
+          opacity .7s cubic-bezier(.32, .04, .18, 1),
+          transform 1.05s cubic-bezier(.32, .04, .18, 1);
       }
       .auth-panel:not(.is-app) .login-face-wrap { width: min(40vw, 160px); }
       .auth-panel:not(.is-app) .login-name { width: auto; margin-top: 14px; font-size: clamp(2rem, 9vw, 2.5rem); }
-      .auth-panel:not(.is-app) .login-right { display: flex; width: 100%; height: auto; min-height: calc(100svh - var(--mobile-login-top-height)); align-items: center; justify-content: center; padding: 64px 20px; overflow: visible; }
+      .auth-panel:not(.is-app) .login-right { display: flex; width: 100%; height: auto; min-height: calc(100svh - var(--mobile-login-top-height)); align-items: center; justify-content: center; padding: 64px 20px; overflow: visible; transition: min-height 1.05s cubic-bezier(.32, .04, .18, 1); }
       .auth-panel:not(.is-app) .login-form-content { position: relative; inset: auto; width: min(100%, 430px); transform: none; }
       .auth-panel:not(.is-app) .detail-panel { display: none; }
-      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-left { display: none; }
+      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-left {
+        height: 0;
+        min-height: 0;
+        padding-block: 0;
+        opacity: 0;
+        transform: translateY(-10px);
+      }
       .auth-panel:not(.is-app):has(.auth-field input:focus) .login-right { min-height: 100svh; }
       .auth-copy { margin-bottom: 34px; }
       .auth-panel.is-app .login-left {

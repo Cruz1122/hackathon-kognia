@@ -1,0 +1,269 @@
+---
+import {
+  AMBER,
+  DEFAULT_EMOTIONS,
+  GRAPHITE,
+  mouthPath,
+  roundedRectPath,
+  rotationTransform,
+} from './mascot-core';
+
+interface Props {
+  emotion?: keyof typeof DEFAULT_EMOTIONS;
+  class?: string;
+  id?: string;
+  ariaLabel?: string;
+}
+
+const {
+  emotion = 'default-happy',
+  class: className,
+  id = `mascot-${crypto.randomUUID()}`,
+  ariaLabel = 'Mascota emocional interactiva',
+} = Astro.props;
+const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['default-happy'].state;
+---
+
+<div
+  id={id}
+  class={className}
+  data-mascot-face
+  data-emotion={emotion}
+  data-emotions={JSON.stringify(DEFAULT_EMOTIONS)}
+>
+  <svg viewBox="-180 -180 360 360" width="100%" height="100%" role="img" aria-label={ariaLabel}>
+    <path
+      data-face
+      d={roundedRectPath(initialState.faceX, initialState.faceY, initialState.faceWidth, initialState.faceHeight, initialState.faceRadius)}
+      transform={rotationTransform(initialState.faceRotation, initialState.faceX, initialState.faceY)}
+      fill={AMBER}
+    />
+    <g data-features>
+      <g data-eyes>
+        <path data-left-eye d={roundedRectPath(initialState.leftEyeX, initialState.leftEyeY, initialState.leftEyeWidth, initialState.leftEyeHeight, initialState.leftEyeRadius)} transform={rotationTransform(initialState.leftEyeRotation, initialState.leftEyeX, initialState.leftEyeY)} fill={GRAPHITE} />
+        <path data-right-eye d={roundedRectPath(initialState.rightEyeX, initialState.rightEyeY, initialState.rightEyeWidth, initialState.rightEyeHeight, initialState.rightEyeRadius)} transform={rotationTransform(initialState.rightEyeRotation, initialState.rightEyeX, initialState.rightEyeY)} fill={GRAPHITE} />
+      </g>
+      <path data-mouth d={mouthPath(initialState)} transform={rotationTransform(initialState.mouthRotation, initialState.mouthX, initialState.mouthY)} fill="none" stroke={GRAPHITE} stroke-width={initialState.mouthStroke} stroke-linecap="round" />
+    </g>
+  </svg>
+</div>
+
+<script>
+  import {
+    clamp,
+    easeInOutCubic,
+    interpolateFaceState,
+    lerp,
+    mouthPath,
+    roundedRectPath,
+    rotationTransform,
+    type EmotionMap,
+    type FaceState,
+  } from './mascot-core';
+
+  interface MascotElement extends HTMLElement {
+    setEmotion?: (emotion: string) => void;
+    getEmotion?: () => string;
+    blink?: () => void;
+  }
+
+  interface EyePose {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    radius: number;
+    rotation: number;
+  }
+
+  function initializeMascots(): void {
+    document.querySelectorAll<MascotElement>('[data-mascot-face]:not([data-mascot-ready])').forEach((root) => {
+      root.dataset.mascotReady = 'true';
+      const emotions = JSON.parse(root.dataset.emotions ?? '{}') as EmotionMap;
+      let selectedEmotion = root.dataset.emotion && emotions[root.dataset.emotion] ? root.dataset.emotion : 'default-happy';
+      let displayState = { ...emotions[selectedEmotion].state };
+      let transitionFrom = { ...displayState };
+      let transitionTo = { ...displayState };
+      let transitionStartedAt = 0;
+      let transitionActive = false;
+      let targetX = 0;
+      let targetY = 0;
+      let trackingX = 0;
+      let trackingY = 0;
+      let mirrored = false;
+      let mirrorProgress = 0;
+      let mirrorFrom = 0;
+      let mirrorTo = 0;
+      let mirrorStartedAt = 0;
+      let mirrorDuration = 520;
+      let mirrorActive = false;
+      let blinkStartedAt = 0;
+      let blinking = false;
+      let nextBlinkAt = performance.now() + 3000 + Math.random() * 2000;
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      const face = root.querySelector<SVGPathElement>('[data-face]')!;
+      const leftEye = root.querySelector<SVGPathElement>('[data-left-eye]')!;
+      const rightEye = root.querySelector<SVGPathElement>('[data-right-eye]')!;
+      const mouth = root.querySelector<SVGPathElement>('[data-mouth]')!;
+      const features = root.querySelector<SVGGElement>('[data-features]')!;
+      const eyes = root.querySelector<SVGGElement>('[data-eyes]')!;
+
+      function setEmotion(next: string): void {
+        if (!emotions[next] || next === selectedEmotion) return;
+        const previous = selectedEmotion;
+        selectedEmotion = next;
+        root.dataset.emotion = next;
+        transitionFrom = { ...displayState };
+        transitionTo = { ...emotions[next].state };
+        transitionStartedAt = performance.now();
+        transitionActive = !reducedMotion.matches;
+        if (!transitionActive) displayState = { ...transitionTo };
+        if (next === 'privacy') {
+          targetX = -0.8;
+          targetY = 0;
+          requestMirror(true);
+        } else if (previous === 'privacy') {
+          targetX = 0;
+          targetY = 0;
+          requestMirror(false);
+        }
+        root.dispatchEvent(new CustomEvent('mascot:emotion-change', { detail: { emotion: next, previous } }));
+      }
+
+      function forceBlink(): void {
+        if (reducedMotion.matches || emotions[selectedEmotion].blink === false) return;
+        blinking = true;
+        blinkStartedAt = performance.now();
+      }
+
+      function eyePose(side: 'left' | 'right'): EyePose {
+        const prefix = side === 'left' ? 'leftEye' : 'rightEye';
+        return {
+          x: displayState[`${prefix}X`],
+          y: displayState[`${prefix}Y`],
+          width: displayState[`${prefix}Width`],
+          height: displayState[`${prefix}Height`],
+          radius: displayState[`${prefix}Radius`],
+          rotation: displayState[`${prefix}Rotation`],
+        };
+      }
+
+      function mirroredEyeTarget(counterpart: EyePose): EyePose {
+        return { ...counterpart, x: 2 * displayState.faceX - counterpart.x, rotation: -counterpart.rotation };
+      }
+
+      function interpolateEye(from: EyePose, to: EyePose, progress: number): EyePose {
+        return {
+          x: lerp(from.x, to.x, progress),
+          y: lerp(from.y, to.y, progress),
+          width: lerp(from.width, to.width, progress),
+          height: lerp(from.height, to.height, progress),
+          radius: lerp(from.radius, to.radius, progress),
+          rotation: lerp(from.rotation, to.rotation, progress),
+        };
+      }
+
+      function requestMirror(nextMirrored: boolean): void {
+        const target = nextMirrored ? 1 : 0;
+        if (mirrored === nextMirrored && Math.abs(mirrorTo - target) < 0.0001) return;
+        mirrored = nextMirrored;
+        if (reducedMotion.matches) {
+          mirrorProgress = target;
+          mirrorFrom = target;
+          mirrorTo = target;
+          mirrorActive = false;
+          return;
+        }
+        mirrorFrom = mirrorProgress;
+        mirrorTo = target;
+        mirrorStartedAt = performance.now();
+        mirrorDuration = Math.max(80, 520 * Math.abs(mirrorTo - mirrorFrom));
+        mirrorActive = Math.abs(mirrorTo - mirrorFrom) > 0.0001;
+        if (!mirrorActive) mirrorProgress = target;
+      }
+
+      function render(now: number): void {
+        if (transitionActive) {
+          const raw = clamp((now - transitionStartedAt) / 360, 0, 1);
+          displayState = interpolateFaceState(transitionFrom, transitionTo, easeInOutCubic(raw));
+          if (raw === 1) transitionActive = false;
+        }
+        trackingX += (targetX - trackingX) * 0.1;
+        trackingY += (targetY - trackingY) * 0.1;
+        if (mirrorActive) {
+          const raw = clamp((now - mirrorStartedAt) / mirrorDuration, 0, 1);
+          mirrorProgress = lerp(mirrorFrom, mirrorTo, easeInOutCubic(raw));
+          if (raw === 1) {
+            mirrorProgress = mirrorTo;
+            mirrorActive = false;
+          }
+        }
+        let blinkFactor = 1;
+        if (!reducedMotion.matches && !blinking && now >= nextBlinkAt) forceBlink();
+        if (blinking) {
+          const raw = clamp((now - blinkStartedAt) / 150, 0, 1);
+          blinkFactor = Math.abs(raw * 2 - 1);
+          if (raw === 1) {
+            blinking = false;
+            nextBlinkAt = now + 3000 + Math.random() * 2000;
+          }
+        }
+        face.setAttribute('d', roundedRectPath(displayState.faceX, displayState.faceY, displayState.faceWidth, displayState.faceHeight, displayState.faceRadius));
+        face.setAttribute('transform', rotationTransform(displayState.faceRotation, displayState.faceX, displayState.faceY));
+        const leftBase = eyePose('left');
+        const rightBase = eyePose('right');
+        const left = interpolateEye(leftBase, mirroredEyeTarget(rightBase), mirrorProgress);
+        const right = interpolateEye(rightBase, mirroredEyeTarget(leftBase), mirrorProgress);
+        leftEye.setAttribute('d', roundedRectPath(left.x, left.y, left.width, Math.max(0.001, left.height * blinkFactor), left.radius));
+        leftEye.setAttribute('transform', rotationTransform(left.rotation, left.x, left.y));
+        rightEye.setAttribute('d', roundedRectPath(right.x, right.y, right.width, Math.max(0.001, right.height * blinkFactor), right.radius));
+        rightEye.setAttribute('transform', rotationTransform(right.rotation, right.x, right.y));
+        const mirroredMouthX = 2 * displayState.faceX - displayState.mouthX;
+        const mouthState: FaceState = {
+          ...displayState,
+          mouthX: lerp(displayState.mouthX, mirroredMouthX, mirrorProgress),
+          mouthLeftOffset: lerp(displayState.mouthLeftOffset, displayState.mouthRightOffset, mirrorProgress),
+          mouthRightOffset: lerp(displayState.mouthRightOffset, displayState.mouthLeftOffset, mirrorProgress),
+          mouthRotation: lerp(displayState.mouthRotation, -displayState.mouthRotation, mirrorProgress),
+        };
+        mouth.setAttribute('d', mouthPath(mouthState));
+        mouth.setAttribute('transform', rotationTransform(mouthState.mouthRotation, mouthState.mouthX, mouthState.mouthY));
+        mouth.setAttribute('stroke-width', String(mouthState.mouthStroke));
+        features.setAttribute('transform', reducedMotion.matches ? '' : `translate(${trackingX * 6} ${trackingY * 4})`);
+        eyes.setAttribute('transform', reducedMotion.matches ? '' : `translate(0 ${trackingY * 8})`);
+        requestAnimationFrame(render);
+      }
+
+      window.addEventListener('pointermove', (event) => {
+        if (reducedMotion.matches) return;
+        if (selectedEmotion === 'privacy') {
+          targetX = -0.8;
+          targetY = 0;
+          return;
+        }
+        const rect = root.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const spanX = event.clientX < centerX ? Math.max(1, centerX) : Math.max(1, innerWidth - centerX);
+        const spanY = event.clientY < centerY ? Math.max(1, centerY) : Math.max(1, innerHeight - centerY);
+        targetX = clamp((event.clientX - centerX) / spanX, -1, 1);
+        targetY = clamp((event.clientY - centerY) / spanY, -1, 1);
+        if (!mirrored && targetX <= -0.38) requestMirror(true);
+        else if (mirrored && targetX >= -0.1) requestMirror(false);
+      }, { passive: true });
+
+      root.setEmotion = setEmotion;
+      root.getEmotion = () => selectedEmotion;
+      root.blink = forceBlink;
+      requestAnimationFrame(render);
+    });
+  }
+
+  initializeMascots();
+  document.addEventListener('astro:page-load', initializeMascots);
+</script>
+
+<style>
+  [data-mascot-face] { display: inline-grid; width: 100%; aspect-ratio: 1; place-items: center; }
+  [data-mascot-face] svg { display: block; width: 100%; height: 100%; overflow: visible; }
+</style>

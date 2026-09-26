@@ -1,6 +1,7 @@
 ---
 import { ClientRouter } from 'astro:transitions';
 import AppNav from '../components/navigation/AppNav.astro';
+import InteractiveMascotFace from '../components/mascot/InteractiveMascotFace.astro';
 import '../styles/app-shell.css';
 import '../styles/dashboard.css';
 import '../styles/detail-panel.css';
@@ -33,14 +34,7 @@ const showDetailPanel = Astro.url.pathname === '/monitoring' || Astro.url.pathna
       <aside class="app-sidebar" aria-label="Demo" transition:persist transition:name="app-sidebar">
         <div class="app-mobile-topbar">
           <div class="app-sidebar__brand">
-            <div class="app-sidebar__face" aria-hidden="true">
-              <svg viewBox="0 0 512 512" focusable="false">
-                <circle cx="256" cy="256" r="216" fill="#f7c974" />
-                <path d="M 161 209 C 161 209 161 209 161 209" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" />
-                <path d="M 351 209 C 351 209 351 209 351 209" fill="none" stroke="#414141" stroke-width="48" stroke-linecap="round" />
-                <path d="M 141 319 C 181 369 331 369 371 319" fill="none" stroke="#414141" stroke-width="32" stroke-linecap="round" />
-              </svg>
-            </div>
+            <InteractiveMascotFace class="app-sidebar__face" label="Cambiar expresión de Demo" />
             <span>Demo</span>
           </div>
           <button class="mobile-nav-toggle" type="button" hidden aria-controls="appNav" aria-expanded="false" aria-label="Expandir navegación">
