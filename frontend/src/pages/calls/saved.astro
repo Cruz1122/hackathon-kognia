@@ -10,11 +10,33 @@ import '../../styles/call-demo.css';
 
 <script>
   import { bootCallReplay } from '../../features/voice-call/application/call-replay';
+  import { bootLiveCall } from '../../features/voice-call/application/live-call';
   import { accessTokenKey, checkSession, redirectToLogin } from '../../features/auth/session-guard';
 
   const apiUrl = document.body.dataset.apiUrl ?? '';
   let cleanup: (() => void) | null = null;
   let mountedId = '';
+
+  function clearConversation(): void {
+    document.querySelector('#conversation')?.querySelectorAll(':scope > :not(#conversationEmpty)').forEach((node) => node.remove());
+    const empty = document.querySelector<HTMLElement>('#conversationEmpty');
+    if (empty) empty.hidden = false;
+  }
+
+  async function handoffToReplay(callId: string, token: string): Promise<void> {
+    const headers = { Authorization: `Bearer ${token}` };
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (new URLSearchParams(window.location.search).get('id') !== callId) return;
+      const recording = await fetch(`${apiUrl}/calls/${callId}/recording`, { headers });
+      if (recording.ok && new URLSearchParams(window.location.search).get('id') === callId) {
+        cleanup?.();
+        clearConversation();
+        cleanup = bootCallReplay(apiUrl, token, callId);
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+  }
 
   async function mountSavedCall(): Promise<void> {
     const root = document.querySelector<HTMLElement>('.call-demo-page');
@@ -25,8 +47,18 @@ import '../../styles/call-demo.css';
       redirectToLogin();
       return;
     }
+    const headers = { Authorization: `Bearer ${token}` };
+    const listResponse = await fetch(`${apiUrl}/calls`, { headers });
+    const list = listResponse.ok
+      ? await listResponse.json() as { calls?: Array<{ id: string }> }
+      : { calls: [] };
+    const live = (list.calls ?? []).some((call) => call.id === callId);
     cleanup?.();
-    cleanup = bootCallReplay(apiUrl, token, callId);
+    if (live) {
+      cleanup = bootLiveCall(apiUrl, token, callId, () => { void handoffToReplay(callId, token); });
+    } else {
+      cleanup = bootCallReplay(apiUrl, token, callId);
+    }
     mountedId = callId;
   }
 

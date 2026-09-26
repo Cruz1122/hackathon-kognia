@@ -155,16 +155,15 @@ def _pcm_samples(pcm: bytes) -> array.array:
 
 
 def mixed_call_wav(customer: bytes, agent: bytes, sample_rate: int = CANONICAL_RATE) -> bytes:
-    """One mono track of the call as it was heard: caller and played agent together."""
+    """Stereo call: channel 0 is the caller, channel 1 is the assistant."""
     caller = _pcm_samples(customer)
     played = _pcm_samples(agent)
     length = max(len(caller), len(played))
     mixed = array.array("h")
     for index in range(length):
-        left = caller[index] if index < len(caller) else 0
-        right = played[index] if index < len(played) else 0
-        mixed.append(max(-32768, min(32767, left + right)))
-    return wav_bytes(mixed.tobytes(), sample_rate, channels=1)
+        mixed.append(caller[index] if index < len(caller) else 0)
+        mixed.append(played[index] if index < len(played) else 0)
+    return wav_bytes(mixed.tobytes(), sample_rate, channels=2)
 
 
 def waveform_levels(pcm: bytes, sample_rate: int = CANONICAL_RATE, channels: int = 1) -> dict[str, list[float]]:

@@ -292,6 +292,8 @@ export function refreshOpenDetail(cardId: string, detail: DetailPayload): void {
 }
 
 export function bindDetailClicks(conversation: Element): void {
+  if (conversation instanceof HTMLElement && conversation.dataset.detailBound === '1') return;
+  if (conversation instanceof HTMLElement) conversation.dataset.detailBound = '1';
   ensurePanel();
   conversation.addEventListener('click', (event) => {
     const card = (event.target as HTMLElement | null)?.closest('.tool-call');

@@ -364,7 +364,7 @@ class TelephonyRuntime:
         record.status = "READY"
         record.sha256 = hashlib.sha256(payload).hexdigest()
         record.size_bytes = len(payload)
-        record.channels = 1
+        record.channels = wav_file.getnchannels()
         record.duration_ms = int(frames / rate * 1000)
         record.download_url = None
         record.error = None

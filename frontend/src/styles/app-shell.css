@@ -42,6 +42,9 @@ button, input { font: inherit; }
 .app-sidebar .app-nav__children .app-nav__item { grid-template-columns: minmax(0, 1fr); width: 100%; margin-inline: 0; padding: 12px 16px; font-size: 1.2rem; font-weight: 600; white-space: nowrap; }
 .app-sidebar .app-nav__call { font-style: italic; font-weight: 500; opacity: .88; }
 .app-sidebar .app-nav__call.is-active { opacity: 1; }
+.app-sidebar .app-nav__children .app-nav__call.is-live { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.app-nav__live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ui-amber); animation: app-nav-live-blink 1.1s ease-in-out infinite; }
+@keyframes app-nav-live-blink { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
 .app-sidebar .app-nav__item--disabled { cursor: not-allowed; opacity: .42; }
 .app-main { min-width: 0; min-height: 0; height: 100dvh; overflow: hidden; background: var(--ui-paper); }
 .app-main > .section-view { display: block; height: 100%; min-height: 0; opacity: 1; visibility: visible; pointer-events: auto; transform: none; }

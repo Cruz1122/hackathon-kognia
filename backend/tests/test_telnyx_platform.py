@@ -399,7 +399,7 @@ async def test_replay_range_and_tenant_isolation(telnyx_key: SigningKey, tmp_pat
         assert recording.status_code == 206
         assert hidden.status_code == 404
         with wave.open(str(record.path), "rb") as wav_file:
-            assert wav_file.getnchannels() == 1
+            assert wav_file.getnchannels() == 2
     finally:
         main.app.dependency_overrides.clear()
 
@@ -418,9 +418,9 @@ def test_mixed_call_wav_is_what_was_heard() -> None:
 
     wav = mixed_call_wav(b"\x01\x00\x02\x00", b"\x03\x00")
     with wave.open(io.BytesIO(wav)) as handle:
-        assert handle.getnchannels() == 1
+        assert handle.getnchannels() == 2
         frames = handle.readframes(handle.getnframes())
-    assert frames == b"\x04\x00\x02\x00"
+    assert frames == b"\x01\x00\x03\x00\x02\x00\x00\x00"
 
 
 def test_stream_url_is_wss() -> None:

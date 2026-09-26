@@ -1,5 +1,6 @@
 import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup, toolCallBusyMarkup } from './retrieval-card';
+import { WAVE_BLEED, crestFromLevel, drawEventMark, eventMarkIcon, sampleSeries } from './wave-mark';
 
 type TimelineEvent = {
   type: string;
@@ -21,8 +22,7 @@ function lucideRefresh(): void {
   lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
 }
 
-function peaksFromBuffer(buffer: AudioBuffer, count = 180): number[] {
-  const channel = buffer.getChannelData(0);
+function levelSeries(channel: Float32Array, count: number, gain: number): number[] {
   const size = Math.max(1, Math.floor(channel.length / count));
   const peaks: number[] = [];
   for (let index = 0; index < count; index += 1) {
@@ -34,9 +34,46 @@ function peaksFromBuffer(buffer: AudioBuffer, count = 180): number[] {
       energy += value * value;
       used += 1;
     }
-    peaks.push(Math.min(1, Math.sqrt(energy / Math.max(1, used)) * 4));
+    peaks.push(Math.min(1, Math.sqrt(energy / Math.max(1, used)) * gain));
   }
   return peaks;
+}
+
+function peaksFromBuffer(buffer: AudioBuffer, count = 180): { customer: number[]; agent: number[] } {
+  const customer = levelSeries(buffer.getChannelData(0), count, 4);
+  const agent = buffer.numberOfChannels > 1
+    ? levelSeries(buffer.getChannelData(1), count, 4)
+    : Array.from({ length: count }, () => 0);
+  return { customer, agent };
+}
+
+function monoPlaybackUrl(buffer: AudioBuffer): string {
+  const customer = buffer.getChannelData(0);
+  const agent = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
+  const header = 44;
+  const bytes = new ArrayBuffer(header + customer.length * 2);
+  const view = new DataView(bytes);
+  const write = (offset: number, text: string) => {
+    for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index));
+  };
+  write(0, 'RIFF');
+  view.setUint32(4, bytes.byteLength - 8, true);
+  write(8, 'WAVE');
+  write(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, 'data');
+  view.setUint32(40, customer.length * 2, true);
+  for (let index = 0; index < customer.length; index += 1) {
+    const mixed = Math.max(-1, Math.min(1, (customer[index] ?? 0) + (agent?.[index] ?? 0)));
+    view.setInt16(header + index * 2, mixed * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
 }
 
 function speechOnsetMs(buffer: AudioBuffer, markedMs: number, earliestMs: number): number {
@@ -131,47 +168,190 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
 
   const audio = new Audio();
   audio.preload = 'auto';
-  let peaks: number[] = [0.04];
+  let customerPeaks: number[] = [0.04];
+  let agentPeaks: number[] = [0];
   let offsetMs = 0;
   let disposed = false;
   let previousMs = 0;
   const items: HTMLElement[] = [];
   const context = canvas.getContext('2d');
 
+  function waveBox(): { width: number; height: number; dpr: number } {
+    const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
+    return { width: Math.max(1, rect.width), height: Math.max(1, rect.height), dpr: Math.min(window.devicePixelRatio || 1, 2) };
+  }
+
   function resize(): void {
     if (!context) return;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(Math.max(1, rect.width) * dpr);
-    canvas.height = Math.round(Math.max(1, rect.height) * dpr);
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const { width, height, dpr } = waveBox();
+    canvas.width = Math.round((width + WAVE_BLEED * 2) * dpr);
+    canvas.height = Math.round(height * dpr);
+    context.setTransform(dpr, 0, 0, dpr, WAVE_BLEED * dpr, 0);
+  }
+
+  let playAnchor = 0;
+  let playAnchorAt = performance.now();
+
+  function shownProgress(): number {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    if (duration <= 0) return 0;
+    if (audio.paused || waveShell.classList.contains('seeking')) return Math.min(1, Math.max(0, audio.currentTime / duration));
+    const elapsed = (performance.now() - playAnchorAt) / 1000;
+    return Math.min(1, Math.max(0, playAnchor + (elapsed * (audio.playbackRate || 1)) / duration));
+  }
+
+  function trackProgress(): void {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const actual = duration > 0 ? Math.min(1, Math.max(0, audio.currentTime / duration)) : 0;
+    const shown = shownProgress();
+    const ahead = duration > 0 ? (shown - actual) * duration : 0;
+    playAnchor = ahead > 0 && ahead < 0.35 && !waveShell.classList.contains('seeking') ? shown : actual;
+    playAnchorAt = performance.now();
   }
 
   function drawWave(progress: number): void {
     if (!context) return;
-    const rect = canvas.getBoundingClientRect();
-    const width = Math.max(1, rect.width);
-    const height = Math.max(1, rect.height);
-    context.clearRect(0, 0, width, height);
-    const paint = (from: number, to: number, fillStyle: string) => {
+    const { width, height, dpr } = waveBox();
+    const held = Math.min(1, Math.max(0, progress));
+    context.setTransform(dpr, 0, 0, dpr, WAVE_BLEED * dpr, 0);
+    context.clearRect(-WAVE_BLEED, 0, width + WAVE_BLEED * 2, height);
+    let pen = context;
+    const paintSeries = (series: number[], from: number, to: number, fillStyle: string | CanvasGradient, bursts: boolean) => {
       if (to <= from) return;
-      context.beginPath();
       const baseline = height - 1;
-      const span = Math.max(1, peaks.length - 1);
+      const span = Math.max(1, series.length - 1);
       const start = Math.floor(from * span);
       const end = Math.min(span, Math.ceil(to * span));
-      context.moveTo((start / span) * width, baseline);
-      for (let index = start; index <= end; index += 1) {
-        const amplitude = 5 + Math.pow(peaks[index] ?? 0.04, 1.25) * height * 0.5;
-        context.lineTo((index / span) * width, baseline - amplitude);
+      const levelAt = (index: number) => {
+        const prev = series[Math.max(0, index - 1)] ?? 0;
+        const value = series[index] ?? 0;
+        const next = series[Math.min(series.length - 1, index + 1)] ?? value;
+        return prev * 0.22 + value * 0.56 + next * 0.22;
+      };
+      const pointAt = (index: number) => ({
+        x: (index / span) * width,
+        y: baseline - (5 + Math.pow(Math.min(1, levelAt(index)), 1.25) * height * 0.5),
+      });
+      const curveThrough = (points: { x: number; y: number }[]) => {
+        if (points.length === 0) return;
+        pen.lineTo(points[0].x, points[0].y);
+        for (let index = 1; index < points.length - 1; index += 1) {
+          const current = points[index];
+          const next = points[index + 1];
+          if (!current || !next) continue;
+          pen.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
+        }
+        const last = points[points.length - 1];
+        if (last) pen.lineTo(last.x, last.y);
+      };
+      pen.beginPath();
+      if (!bursts) {
+        const points = [];
+        for (let index = start; index <= end; index += 1) points.push(pointAt(index));
+        pen.moveTo((start / span) * width, baseline);
+        curveThrough(points);
+        pen.lineTo((end / span) * width, baseline);
+        pen.closePath();
+        pen.fillStyle = fillStyle;
+        pen.fill();
+        return;
       }
-      context.lineTo((end / span) * width, baseline);
-      context.closePath();
-      context.fillStyle = fillStyle;
-      context.fill();
+      let open: { x: number; y: number }[] = [];
+      const closeBurst = (x: number) => {
+        curveThrough(open);
+        pen.lineTo(x, baseline);
+        pen.closePath();
+        open = [];
+      };
+      for (let index = start; index <= end; index += 1) {
+        const value = levelAt(index);
+        const x = (index / span) * width;
+        if (value < 0.05) {
+          if (open.length) closeBurst(x);
+          continue;
+        }
+        if (!open.length) pen.moveTo(x, baseline);
+        open.push(pointAt(index));
+      }
+      if (open.length) closeBurst((end / span) * width);
+      pen.fillStyle = fillStyle;
+      pen.fill();
     };
-    paint(0, 1, 'rgba(65,65,65,.14)');
-    paint(0, progress, '#f7c974');
+    const heard = customerPeaks.map((value, index) => Math.max(value, agentPeaks[index] ?? 0));
+    const baseline = height - 1;
+    const radius = 5;
+    const head = Math.min(width, Math.max(0, held * width));
+    const span = Math.max(1, heard.length - 1);
+    const levelAt = (series: number[], index: number) => {
+      const prev = series[Math.max(0, index - 1)] ?? 0;
+      const value = series[index] ?? 0;
+      const next = series[Math.min(series.length - 1, index + 1)] ?? value;
+      return prev * 0.22 + value * 0.56 + next * 0.22;
+    };
+    context.save();
+    context.beginPath();
+    context.rect(head, 0, Math.max(0, width - head), height);
+    context.clip();
+    paintSeries(heard, 0, 1, 'rgba(65,65,65,.14)', false);
+    context.restore();
+    context.save();
+    context.beginPath();
+    context.rect(0, 0, head, height);
+    context.clip();
+    paintSeries(heard, 0, 1, '#f7c974', false);
+    let runStart = -1;
+    const paintAgentRun = (runEnd: number) => {
+      if (runStart < 0) return;
+      const x0 = (runStart / span) * width;
+      const x1 = (runEnd / span) * width;
+      const runWidth = Math.max(1, x1 - x0);
+      const fade = Math.min(0.42, Math.max(0.12, 22 / runWidth));
+      const voice = context.createLinearGradient(x0, 0, x0 + runWidth, 0);
+      voice.addColorStop(0, '#f7c974');
+      voice.addColorStop(fade, '#faeccf');
+      voice.addColorStop(1 - fade, '#faeccf');
+      voice.addColorStop(1, '#f7c974');
+      context.save();
+      context.beginPath();
+      context.rect(x0, 0, runWidth, height);
+      context.clip();
+      paintSeries(heard, 0, 1, voice, false);
+      context.restore();
+      runStart = -1;
+    };
+    for (let index = 0; index <= span; index += 1) {
+      const agent = levelAt(agentPeaks, index);
+      const customer = levelAt(customerPeaks, index);
+      const agentSpeaking = agent >= 0.02 && agent >= customer;
+      if (agentSpeaking && runStart < 0) runStart = index;
+      if (!agentSpeaking && runStart >= 0) paintAgentRun(index);
+    }
+    if (runStart >= 0) paintAgentRun(span);
+    context.restore();
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    if (duration > 0) {
+      for (const item of items) {
+        const icon = eventMarkIcon(item);
+        if (!icon) continue;
+        const ratio = (Number(item.dataset.at ?? 0) * 1000 - offsetMs) / (duration * 1000);
+        if (ratio < 0 || ratio > 1) continue;
+        drawEventMark(context, ratio * width, baseline, width, icon);
+      }
+    }
+    const crest = crestFromLevel(sampleSeries(heard, head, width), baseline, height);
+    context.beginPath();
+    context.moveTo(head, Math.min(baseline, crest));
+    context.lineTo(head, baseline);
+    context.strokeStyle = '#414141';
+    context.lineWidth = 2;
+    context.lineCap = 'butt';
+    context.stroke();
+    const ballX = head;
+    const ballY = Math.min(height - radius, Math.max(radius, crest));
+    context.beginPath();
+    context.arc(ballX, ballY, radius, 0, Math.PI * 2);
+    context.fillStyle = '#414141';
+    context.fill();
   }
 
   function paint(timelineMs: number, animate: boolean): void {
@@ -230,14 +410,12 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
     if (conversationEmpty) conversationEmpty.hidden = visible;
     previousMs = timelineMs;
     const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
-    const progress = duration > 0 ? audio.currentTime / duration : 0;
-    waveShell.style.setProperty('--progress', `${progress * 100}%`);
+    trackProgress();
     waveShell.classList.toggle('at-live-edge', duration > 0 && audio.currentTime >= duration - 0.15);
     waveShell.setAttribute('aria-valuemax', String(Math.round(duration)));
     waveShell.setAttribute('aria-valuenow', String(Math.round(audio.currentTime)));
     if (currentTimeEl) currentTimeEl.textContent = formatTime(audio.currentTime);
     if (durationEl) durationEl.textContent = formatTime(duration);
-    drawWave(progress);
   }
 
   function seek(seconds: number): void {
@@ -276,7 +454,7 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
     const tools = new Map<string, { start: number; payload: Record<string, unknown> }>();
     const clock = (offsetMs: number) => formatTime(Math.max(0, offsetMs - originMs) / 1000);
     if (!events.some((event) => event.type === 'lifecycle' && event.payload?.state === 'ACTIVE')) {
-      addItem(0, 'system-event', `<span class="call-ended-label"><i data-lucide="phone" aria-hidden="true"></i><span>Llamada conectada</span></span>`);
+      addItem(originMs, 'system-event', `<span class="call-ended-label"><i data-lucide="phone" aria-hidden="true"></i><span>Llamada conectada</span></span>`);
     }
     events.forEach((event, index) => {
       const payload = event.payload ?? {};
@@ -365,13 +543,21 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
   });
   audio.addEventListener('timeupdate', onTime);
   audio.addEventListener('seeked', onTime);
-  audio.addEventListener('ended', () => setPlaying(false));
-  const resizeObserver = new ResizeObserver(() => {
-    resize();
-    drawWave(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.currentTime / audio.duration : 0);
+  audio.addEventListener('ended', () => {
+    setPlaying(false);
+    if (Number.isFinite(audio.duration)) paint(offsetMs + audio.duration * 1000, true);
   });
+  const resizeObserver = new ResizeObserver(() => resize());
   resizeObserver.observe(canvas);
   resize();
+  const tickWave = () => {
+    if (disposed) return;
+    const progress = shownProgress();
+    drawWave(progress);
+    waveShell.style.setProperty('--progress', `${progress * 100}%`);
+    waveFrame = window.requestAnimationFrame(tickWave);
+  };
+  let waveFrame = window.requestAnimationFrame(tickWave);
 
   void (async () => {
     const headers = { Authorization: `Bearer ${token}` };
@@ -394,10 +580,16 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
     renderTimeline(events, offsetMs);
     const blob = await recordingResponse.blob();
     if (disposed) return;
-    audio.src = URL.createObjectURL(blob);
-    const decoded = await new AudioContext().decodeAudioData(await blob.arrayBuffer());
-    peaks = peaksFromBuffer(decoded);
+    const bytes = await blob.arrayBuffer();
+    if (disposed) return;
+    const decoded = await new AudioContext().decodeAudioData(bytes.slice(0));
+    const wave = peaksFromBuffer(decoded);
+    customerPeaks = wave.customer;
+    agentPeaks = wave.agent;
+    audio.src = decoded.numberOfChannels > 1 ? monoPlaybackUrl(decoded) : URL.createObjectURL(blob);
     alignCustomerMessages(decoded, offsetMs, items);
+    const endedItem = items.find((item) => item.classList.contains('call-ended'));
+    if (endedItem) endedItem.dataset.at = String(offsetMs / 1000 + decoded.duration);
     if (conversationEmpty) conversationEmpty.innerHTML = emptyCopy;
     if (status) status.hidden = true;
     paint(offsetMs, false);
@@ -409,6 +601,7 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
 
   return () => {
     disposed = true;
+    window.cancelAnimationFrame(waveFrame);
     audio.pause();
     if (audio.src) URL.revokeObjectURL(audio.src);
     resizeObserver.disconnect();
