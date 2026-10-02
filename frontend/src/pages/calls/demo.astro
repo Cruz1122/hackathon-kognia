@@ -38,7 +38,14 @@ import '../../styles/call-demo.css';
     cleanup?.();
     waveCleanup?.();
     waveCleanup = mountCallDemoWave();
-    cleanup = bootLiveMonitor(apiUrl, token, conversationId, false);
+    const autoStart = new URLSearchParams(window.location.search).get('autostart') === '1';
+    cleanup = bootLiveMonitor(apiUrl, token, conversationId, autoStart);
+    if (autoStart) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('autostart');
+      const suffix = `${url.search}${url.hash}`;
+      window.history.replaceState(window.history.state, '', `${url.pathname}${suffix}`);
+    }
     mountedRoot = root;
     pendingRoot = null;
     lucideRefresh();
