@@ -28,6 +28,9 @@ from .timeline import timeline
 
 logger = logging.getLogger("hackathon.telnyx")
 BARGE_RMS = 0.05
+BARGE_STRONG_RMS = 0.08
+BARGE_ARM_SECONDS = 0.2
+BARGE_HITS = 2
 SPEECH_RMS = 0.02
 SILENCE_SECONDS = 0.8
 MAX_UTTERANCE_SECONDS = 8.0
@@ -482,15 +485,23 @@ class TelephonyRuntime:
                     pcm=pcm,
                 ),
             )
-        if session.agent_state == "speaking" and pcm16le_rms(pcm) >= BARGE_RMS:
-            await self._barge_in(session)
-        if session.stt is None:
-            return
+        rms = pcm16le_rms(pcm)
         busy = session.turn_task is not None and not session.turn_task.done()
         if busy:
+            now = time.monotonic()
+            armed = now >= session.turn_started_at + BARGE_ARM_SECONDS
+            if armed and rms >= BARGE_RMS:
+                session.barge_hits += 1
+            else:
+                session.barge_hits = 0
+            if armed and (rms >= BARGE_STRONG_RMS or session.barge_hits >= BARGE_HITS):
+                session.barge_hits = 0
+                await self._barge_in(session)
+            return
+        if session.stt is None:
             return
         now = time.monotonic()
-        if pcm16le_rms(pcm) >= SPEECH_RMS:
+        if rms >= SPEECH_RMS:
             session.last_voice_at = now
             if session.first_voice_at <= 0:
                 session.first_voice_at = now
@@ -534,6 +545,7 @@ class TelephonyRuntime:
         task = session.turn_task
         if task is not None and not task.done():
             task.cancel()
+        session.barge_hits = 0
         session.agent_state = "listening"
 
     async def _start_turn(self, session: CallSession, transcript: str) -> None:
@@ -550,6 +562,8 @@ class TelephonyRuntime:
                 logger.exception("Telnyx agent turn failed")
                 timeline.record(session, "agent.error", {"message": "turn failed"})
 
+        session.turn_started_at = time.monotonic()
+        session.barge_hits = 0
         session.turn_task = asyncio.create_task(_guarded())
 
     def _agent(self) -> Any:

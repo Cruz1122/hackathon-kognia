@@ -4,6 +4,7 @@ import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { showToast } from '../infrastructure/toast';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
@@ -116,7 +117,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   let ignoreTts = false;
   let waveFromAnalyser = false;
   let ttsRate = 24000;
-  let sentBarge = false;
   let bargeHits = 0;
   let bargeArmedAt = 0;
   let noiseFloor = 0.08;
@@ -211,6 +211,19 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (!connected || !socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify(payload));
     return true;
+  }
+
+  function handleLocalBarge(): void {
+    bargeHits = 0;
+    bargeArmedAt = performance.now() + 400;
+    pcm.cancel();
+    pcmReady = false;
+    ignoreTts = true;
+    processing = false;
+    unhookTtsWave();
+    hookMicWave();
+    finishAgent();
+    sendSocketCommand({ type: 'barge' });
   }
 
   function appendTokens(target: HTMLElement, text: string): void {
@@ -367,26 +380,24 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     });
     const started = await capture.startPcmStream((frame) => {
       if (!live || paused || !connected || !socket || socket.readyState !== WebSocket.OPEN) return;
-      const micLevel = capture.voiceLevel();
-      const voiced = capture.isVoiced();
       const now = performance.now();
-      waveApi?.setPlaying?.(true);
-      waveApi?.pushAmplitude(Math.max(micLevel, pcm.voiceLevel()));
-      const agentSpeaking = pcmReady;
-      if (!agentSpeaking) {
-        bargeHits = 0;
-        if (micLevel < noiseFloor + 0.04) noiseFloor = Math.max(0.06, noiseFloor * 0.94 + micLevel * 0.06);
-      } else if (!sentBarge && now >= bargeArmedAt) {
-        const floor = Math.max(0.08, noiseFloor);
-        const speech = voiced && micLevel >= Math.max(0.28, floor + 0.18);
-        const strong = voiced && micLevel >= Math.max(0.4, floor + 0.28);
-        bargeHits = speech ? bargeHits + 1 : 0;
-        if (strong || bargeHits >= 6) {
-          sentBarge = true;
-          bargeHits = 0;
-          sendSocketCommand({ type: 'barge' });
+      const level = capture.voiceLevel();
+      const audioPlaying = pcmReady || pcm.size > 0;
+      if (audioPlaying) {
+        if (now >= bargeArmedAt) {
+          const floor = Math.max(0.08, noiseFloor);
+          const voiced = capture.isVoiced();
+          const speech = (voiced && level >= Math.max(0.18, floor + 0.12))
+            || level >= Math.max(0.32, floor + 0.24);
+          bargeHits = speech ? bargeHits + 1 : 0;
+          if (bargeHits >= 2) handleLocalBarge();
         }
+      } else {
+        bargeHits = 0;
+        if (level < noiseFloor + 0.04) noiseFloor = Math.max(0.06, noiseFloor * 0.94 + level * 0.06);
       }
+      waveApi?.setPlaying?.(true);
+      waveApi?.pushAmplitude(Math.max(level, pcm.voiceLevel()));
       socket.send(frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength));
     });
     if (!started) {
@@ -432,18 +443,14 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       completePendingRetrieval(data);
     } else if (type === 'turn.started') {
       ignoreTts = false;
-      sentBarge = false;
       bargeHits = 0;
-      bargeArmedAt = performance.now() + 2000;
     } else if (type === 'tts.format') {
       if (ignoreTts) return;
       ttsRate = Number(data.sample_rate) || 24000;
     } else if (type === 'tts.cancel' || type === 'turn.cancelled') {
+      if (type === 'tts.cancel') showToast('Te escucho…', 'info');
       cancelPendingRetrieval();
       ignoreTts = true;
-      sentBarge = false;
-      bargeHits = 0;
-      bargeArmedAt = 0;
       pcm.cancel();
       pcmReady = false;
       processing = false;
@@ -455,9 +462,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       finishAgent();
       processing = false;
       pcmReady = false;
-      sentBarge = false;
-      bargeHits = 0;
-      bargeArmedAt = 0;
       pcm.finish(() => {
         unhookTtsWave();
         hookMicWave();
@@ -499,10 +503,11 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         if (!pcmReady) {
           pcm.start(ttsRate);
           pcmReady = true;
+          bargeArmedAt = performance.now() + 250;
+          bargeHits = 0;
         }
         pcm.enqueue(bytes, () => undefined, () => undefined);
         hookTtsWave();
-        bargeArmedAt = Math.max(bargeArmedAt, performance.now() + 900);
         waveApi?.setPlaying?.(true);
         waveApi?.pushAmplitude(Math.max(capture.voiceLevel(), pcm.voiceLevel()));
         return;
