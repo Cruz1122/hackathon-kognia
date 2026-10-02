@@ -64,9 +64,10 @@ button, input { font: inherit; }
 ::view-transition-group(app-sidebar),
 ::view-transition-old(app-sidebar),
 ::view-transition-new(app-sidebar) {
-  z-index: 2;
+  z-index: 5;
   animation: none;
   mix-blend-mode: normal;
+  isolation: isolate;
 }
 .app-shell .login-material,
 .app-shell .login-material.is-gone { display: none !important; }
