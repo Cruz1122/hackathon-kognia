@@ -293,6 +293,100 @@ async def test_ask_validates_prompt_and_streams_sse(
     assert invalid.status_code == 422
 
 
+def test_context_window_keeps_last_turns() -> None:
+    from app.features.agent.service import context_window
+
+    history = [
+        {"role": "user", "content": f"u{index}"} if index % 2 == 0 else {"role": "assistant", "content": f"a{index}"}
+        for index in range(20)
+    ]
+    windowed = context_window(history)
+
+    # 6 turns of (user, assistant) = last 12 messages, starting on a user turn.
+    assert len(windowed) == 12
+    assert windowed[0]["role"] == "user"
+    assert windowed == history[-12:]
+
+
+def test_context_window_keeps_consecutive_user_fragments_with_their_turn() -> None:
+    from app.features.agent.service import context_window
+
+    history: list[dict[str, str]] = [
+        {"role": "system", "content": "reglas"},
+        {"role": "user", "content": "t1"},
+        {"role": "assistant", "content": "r1"},
+        {"role": "user", "content": "t2"},
+        {"role": "assistant", "content": "r2"},
+        {"role": "user", "content": "t3"},
+        {"role": "assistant", "content": "r3"},
+        {"role": "user", "content": "t4"},
+        {"role": "assistant", "content": "r4"},
+        {"role": "user", "content": "t5"},
+        {"role": "assistant", "content": "r5"},
+        {"role": "user", "content": "t6"},
+        {"role": "assistant", "content": "r6"},
+    ]
+    windowed = context_window(history)
+
+    assert windowed == [
+        {"role": "user", "content": "t1"},
+        {"role": "assistant", "content": "r1"},
+        {"role": "user", "content": "t2"},
+        {"role": "assistant", "content": "r2"},
+        {"role": "user", "content": "t3"},
+        {"role": "assistant", "content": "r3"},
+        {"role": "user", "content": "t4"},
+        {"role": "assistant", "content": "r4"},
+        {"role": "user", "content": "t5"},
+        {"role": "assistant", "content": "r5"},
+        {"role": "user", "content": "t6"},
+        {"role": "assistant", "content": "r6"},
+    ]
+    assert all(item["role"] in {"user", "assistant"} for item in windowed)
+
+
+def test_context_window_preserves_fragmented_speech_turn() -> None:
+    from app.features.agent.service import context_window
+
+    history: list[dict[str, str]] = [
+        {"role": "user", "content": "Listo, me gustaría ver si tienes acceso"},
+        {"role": "assistant", "content": "¿A qué te refieres exactamente?"},
+        {"role": "user", "content": "reservas y sumas"},
+        {"role": "assistant", "content": "Puedo con reservas y sumas."},
+    ]
+    assert context_window(history) == history
+
+
+@pytest.mark.asyncio
+async def test_ask_truncates_history_to_context_window(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    captured: list[dict[str, str]] = []
+
+    async def fake_stream(config, prompt, *, messages):
+        captured.extend(messages)
+        yield "respuesta"
+
+    install_message_llm(monkeypatch, fake_stream)
+    history = [
+        {"role": "user" if index % 2 == 0 else "assistant", "content": f"m{index}"}
+        for index in range(24)
+    ]
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/ask",
+            headers=auth_headers,
+            json={"prompt": "¿Y ahora?", "messages": history, "channel": "voice-demo"},
+        )
+
+    assert response.status_code == 200
+    assert captured == [*history[-12:], {"role": "user", "content": "¿Y ahora?"}]
+
+
 @pytest.mark.asyncio
 async def test_ask_forwards_voice_history_to_the_shared_agent(
     monkeypatch: pytest.MonkeyPatch,

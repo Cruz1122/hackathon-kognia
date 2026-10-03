@@ -44,7 +44,7 @@ from .db.models import MessageRole, Organization, User, UserRole
 from .db.queries import create_conversation, get_conversation, list_messages
 from .db.session import check_database, dispose_engine, get_db
 from .platform.redis import close_redis
-from .features.agent.service import stream_agent
+from .features.agent.service import context_window, stream_agent
 from .agent.tools.contracts import ToolContext
 from .features.transcription.service import pcm_speech_features, stt_label
 from .features.chat.schemas import (
@@ -714,6 +714,14 @@ async def voice(request: Request) -> StreamingResponse:
         history = json.loads(history_header)
         if not isinstance(history, list):
             history = []
+        else:
+            history = context_window(
+                [
+                    {"role": item.get("role"), "content": item.get("content")}
+                    for item in history
+                    if isinstance(item, dict)
+                ]
+            )
         chain = get_model_chain()
         if not any(config.api_key for config in chain):
             raise HTTPException(status_code=503, detail="No hay API keys configuradas.")
@@ -899,11 +907,13 @@ async def ask(
             raise
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Conversation service unavailable.") from exc
-        history = [
-            {"role": message.role.value, "content": message.content}
-            for message in persisted_messages
-            if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
-        ]
+        history = context_window(
+            [
+                {"role": message.role.value, "content": message.content}
+                for message in persisted_messages
+                if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+            ]
+        )
         try:
             await _persist_message(
                 session,
@@ -1139,7 +1149,7 @@ async def _run_call_turn(
             history.extend(
                 [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
             )
-            del history[:-40]
+            history[:] = context_window(history)
         await _send_call_event(
             websocket,
             "turn.completed",
@@ -1339,11 +1349,13 @@ async def call_socket(
             logger.exception("Call conversation lookup failed")
             await websocket.close(code=1011)
             return
-        history: list[dict[str, str]] = [
-            {"role": message.role.value, "content": message.content}
-            for message in persisted_messages
-            if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
-        ]
+        history: list[dict[str, str]] = context_window(
+            [
+                {"role": message.role.value, "content": message.content}
+                for message in persisted_messages
+                if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+            ]
+        )
         await websocket.send_json(
             {
                 "type": "call.connected",

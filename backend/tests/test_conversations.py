@@ -327,6 +327,65 @@ def test_ws_attaches_conversation_and_persists_user_and_assistant(
     ]
 
 
+def test_ws_call_forwards_only_last_context_messages(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+    persisted = [
+        DbMessage(
+            id=uuid.uuid4(),
+            conversation_id=conversation.id,
+            role=MessageRole.USER if index % 2 == 0 else MessageRole.ASSISTANT,
+            content=f"m{index}",
+            channel="voice",
+            created_at=datetime.now(UTC),
+        )
+        for index in range(24)
+    ]
+    captured: list[dict[str, str]] = []
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return persisted
+
+    async def fake_agent(prompt, *, messages, llm=None):
+        captured.extend(messages or [])
+        yield "token", {"text": "ok"}
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stream_agent", fake_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+            websocket.send_json({"type": "turn", "prompt": "Y ahora"})
+            while True:
+                if websocket.receive_json()["type"] == "turn.completed":
+                    break
+    finally:
+        client.close()
+
+    expected = [
+        {"role": message.role.value, "content": message.content}
+        for message in persisted
+        if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+    ][-12:]
+    assert captured == expected
+
+
 def test_ws_barge_cancels_active_turn(
     monkeypatch: pytest.MonkeyPatch,
     auth_context: tuple[AsyncMock, User, dict[str, str]],
