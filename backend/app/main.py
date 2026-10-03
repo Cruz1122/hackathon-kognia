@@ -44,7 +44,7 @@ from .db.models import MessageRole, Organization, User, UserRole
 from .db.queries import create_conversation, get_conversation, list_messages
 from .db.session import check_database, dispose_engine, get_db
 from .platform.redis import close_redis
-from .features.agent.service import stream_agent
+from .features.agent.service import context_window, stream_agent
 from .agent.tools.contracts import ToolContext
 from .features.transcription.service import pcm_speech_features, stt_label
 from .features.chat.schemas import (
@@ -102,10 +102,11 @@ DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
 CALL_SPEECH_RMS = 0.02
 CALL_BARGE_RMS = 0.05
 CALL_BARGE_STRONG_RMS = 0.08
+CALL_BARGE_ARM_SECONDS = 0.2
+CALL_BARGE_HITS = 2
 CALL_SILENCE_SECONDS = 0.8
 CALL_MAX_UTTERANCE_SECONDS = 8.0
 CALL_TURN_GUARD_SECONDS = 2.5
-CALL_POST_TURN_GUARD_SECONDS = 0.45
 DEMO_KNOWLEDGE_CANDIDATES = (
     Path(__file__).resolve().parent / "platform" / "rag" / "demo_corpus.md",
     REPOSITORY_ROOT / "tests" / "fixtures" / "rag" / "corpus_v1.md",
@@ -713,6 +714,14 @@ async def voice(request: Request) -> StreamingResponse:
         history = json.loads(history_header)
         if not isinstance(history, list):
             history = []
+        else:
+            history = context_window(
+                [
+                    {"role": item.get("role"), "content": item.get("content")}
+                    for item in history
+                    if isinstance(item, dict)
+                ]
+            )
         chain = get_model_chain()
         if not any(config.api_key for config in chain):
             raise HTTPException(status_code=503, detail="No hay API keys configuradas.")
@@ -898,11 +907,13 @@ async def ask(
             raise
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Conversation service unavailable.") from exc
-        history = [
-            {"role": message.role.value, "content": message.content}
-            for message in persisted_messages
-            if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
-        ]
+        history = context_window(
+            [
+                {"role": message.role.value, "content": message.content}
+                for message in persisted_messages
+                if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+            ]
+        )
         try:
             await _persist_message(
                 session,
@@ -1138,7 +1149,7 @@ async def _run_call_turn(
             history.extend(
                 [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
             )
-            del history[:-40]
+            history[:] = context_window(history)
         await _send_call_event(
             websocket,
             "turn.completed",
@@ -1338,11 +1349,13 @@ async def call_socket(
             logger.exception("Call conversation lookup failed")
             await websocket.close(code=1011)
             return
-        history: list[dict[str, str]] = [
-            {"role": message.role.value, "content": message.content}
-            for message in persisted_messages
-            if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
-        ]
+        history: list[dict[str, str]] = context_window(
+            [
+                {"role": message.role.value, "content": message.content}
+                for message in persisted_messages
+                if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+            ]
+        )
         await websocket.send_json(
             {
                 "type": "call.connected",
@@ -1362,21 +1375,23 @@ async def call_socket(
         last_voice_at = 0.0
         first_voice_at = 0.0
         ignore_until = 0.0
+        barge_armed_at = 0.0
         barge_hits = 0
         turn_task: asyncio.Task[None] | None = None
         stream = await asyncio.to_thread(stt_provider.create_stream)
 
         async def _reap_turn() -> None:
-            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_hits, stream
+            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_armed_at, barge_hits, stream
             if turn_task is None or not turn_task.done():
                 return
             task = turn_task
             turn_task = None
             barge_hits = 0
+            barge_armed_at = 0.0
             last_partial = ""
             last_voice_at = 0.0
             first_voice_at = 0.0
-            ignore_until = time.monotonic() + CALL_POST_TURN_GUARD_SECONDS
+            ignore_until = 0.0
             try:
                 await task
             except asyncio.CancelledError:
@@ -1387,7 +1402,7 @@ async def call_socket(
                 await asyncio.to_thread(stt_provider.reset_stream, stream)
 
         async def _start_turn(prompt: str) -> None:
-            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, stream, ignore_until
+            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, stream, ignore_until, barge_armed_at, barge_hits
             flushed = ""
             if stream is not None:
                 try:
@@ -1402,7 +1417,10 @@ async def call_socket(
             if not _usable_transcript(final):
                 ignore_until = 0.0
                 return
-            ignore_until = time.monotonic() + CALL_TURN_GUARD_SECONDS
+            now = time.monotonic()
+            ignore_until = now + CALL_TURN_GUARD_SECONDS
+            barge_armed_at = now + CALL_BARGE_ARM_SECONDS
+            barge_hits = 0
             await _send_call_event(
                 websocket,
                 "customer.transcript",
@@ -1423,7 +1441,7 @@ async def call_socket(
             )
 
         async def _barge_in() -> None:
-            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_hits, stream
+            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_armed_at, barge_hits, stream
             barge_hits = 0
             if turn_task is None:
                 return
@@ -1445,6 +1463,7 @@ async def call_socket(
             last_voice_at = time.monotonic()
             first_voice_at = last_voice_at
             ignore_until = 0.0
+            barge_armed_at = 0.0
             if stream is not None:
                 await asyncio.to_thread(stt_provider.reset_stream, stream)
 
@@ -1473,13 +1492,15 @@ async def call_socket(
                         if first_voice_at <= 0:
                             first_voice_at = now
                     if busy:
-                        if voiced and rms >= CALL_BARGE_RMS and now >= ignore_until:
+                        if now >= barge_armed_at and rms >= CALL_BARGE_RMS:
                             barge_hits += 1
                         else:
                             barge_hits = 0
-                        if now >= ignore_until and (
-                            barge_hits >= 6 or (voiced and rms >= CALL_BARGE_STRONG_RMS)
-                        ):
+                        strong = rms >= CALL_BARGE_STRONG_RMS
+                        enough = barge_hits >= CALL_BARGE_HITS or (
+                            voiced and barge_hits >= max(2, CALL_BARGE_HITS // 2)
+                        )
+                        if now >= barge_armed_at and (strong or enough):
                             barge_hits = 0
                             await _barge_in()
                         else:
@@ -1587,6 +1608,8 @@ async def call_socket(
                 last_partial = ""
                 last_voice_at = 0.0
                 first_voice_at = 0.0
+                barge_hits = 0
+                barge_armed_at = 0.0
                 if stream is not None:
                     await asyncio.to_thread(stt_provider.reset_stream, stream)
                 else:
@@ -1597,13 +1620,22 @@ async def call_socket(
                 last_partial = ""
                 last_voice_at = 0.0
                 first_voice_at = 0.0
+                barge_hits = 0
+                barge_armed_at = 0.0
                 if stream is not None:
                     await asyncio.to_thread(stt_provider.reset_stream, stream)
                 continue
             if payload.get("type") == "barge":
                 busy = turn_task is not None and not turn_task.done()
-                if busy and time.monotonic() >= ignore_until:
+                if busy:
                     await _barge_in()
+                else:
+                    last_partial = ""
+                    last_voice_at = time.monotonic()
+                    first_voice_at = last_voice_at
+                    ignore_until = 0.0
+                    barge_hits = 0
+                    barge_armed_at = 0.0
                 continue
             if payload.get("type") == "audio":
                 mime = payload.get("mime")

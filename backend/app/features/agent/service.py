@@ -22,6 +22,10 @@ from .tools import (
 
 Message = dict[str, Any]
 MAX_TOOL_ROUNDS = 4
+# Ventana de contexto enviada al proveedor, medida en turnos completos: cada
+# turno empieza en un mensaje "user" y arrastra lo que venga hasta el siguiente
+# "user" (así los fragmentos de habla consecutivos no rompen la ventana).
+MAX_CONTEXT_TURNS = 6
 TOOL_REGISTRY = load_tool_registry()
 _RAG_STOP_WORDS = frozenset(
     "a al algo aquí asistirte avísame avisame caracter caracteres claro como con "
@@ -51,6 +55,32 @@ _CAPABILITY_MARKERS = (
 _MIN_KNOWLEDGE_TERMS = 2
 
 
+def context_window(
+    messages: Sequence[Message] | None,
+    limit: int = MAX_CONTEXT_TURNS,
+) -> list[Message]:
+    """Return the last `limit` complete turns of user/assistant history.
+
+    A turn starts at a ``user`` message and includes every following message
+    until the next ``user``. This keeps consecutive ``user`` fragments together
+    with the assistant reply that answered them, instead of cutting mid-turn.
+    Non-conversational roles (system/tool) are dropped.
+    """
+    if not messages or limit <= 0:
+        return []
+    conversational = [
+        message
+        for message in messages
+        if message.get("role") in {"user", "assistant"} and message.get("content")
+    ]
+    if not conversational:
+        return []
+    boundaries = [index for index, message in enumerate(conversational) if message["role"] == "user"]
+    if len(boundaries) <= limit:
+        return conversational
+    return conversational[boundaries[-limit] :]
+
+
 async def stream_agent(
     prompt: str,
     *,
@@ -70,7 +100,8 @@ async def stream_agent(
         else [config for config in chain for _ in range(attempts_per_model)]
     )
 
-    knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, messages)
+    history = context_window(messages)
+    knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, history)
 
     attempt = 0
     permanent_failures: set[Provider] = set()
@@ -84,7 +115,7 @@ async def stream_agent(
         answer_parts: list[str] = []
         try:
             if use_tools:
-                conversation: list[Message] = [*knowledge, *(messages or []), {"role": "user", "content": prompt}]
+                conversation: list[Message] = [*knowledge, *history, {"role": "user", "content": prompt}]
                 used_tools = False
                 for _ in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
@@ -167,7 +198,7 @@ async def stream_agent(
                 yield "done", {"provider": config.provider.value, "model": config.model}
                 return
 
-            conversation: list[Message] | None = [*knowledge, *(messages or []), {"role": "user", "content": prompt}]
+            conversation: list[Message] | None = [*knowledge, *history, {"role": "user", "content": prompt}]
             async for kind, payload in provider.stream(
                 config,
                 prompt,
@@ -206,12 +237,30 @@ async def _knowledge_message(prompt: str, messages: Sequence[Message] | None) ->
     return knowledge
 
 
+def _contextual_query(prompt: str, recent: Sequence[Message]) -> str:
+    """Merge recent turns into a standalone query so short follow-ups retrieve.
+
+    E.g. a follow-up "reservas y sumas" after "¿tienes acceso a ...?" must search
+    for both ideas, not the fragment in isolation.
+    """
+    previous = " ".join(
+        str(message.get("content") or "").strip()
+        for message in recent
+        if message.get("role") == "user"
+    ).strip()
+    if not previous:
+        return prompt
+    return f"{previous[-400:]} {prompt}".strip()
+
+
 async def _retrieve_knowledge(
     prompt: str,
     messages: Sequence[Message] | None,
 ) -> tuple[list[Message], bool, str | None, list[RetrievalHit]]:
+    recent = list(messages or [])[-4:]
+    query = _contextual_query(prompt, recent)
     try:
-        result = await rag_retriever.search(prompt, conversation=list(messages or [])[-2:])
+        result = await rag_retriever.search(query, conversation=recent)
     except Exception:
         # Preserve the provider-facing history when knowledge infrastructure is
         # down; the runtime remains usable and must not fabricate context.

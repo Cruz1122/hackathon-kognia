@@ -49,6 +49,8 @@ class CallSession:
     utterance_offset_ms: int | None = None
     agent_segment_open: bool = False
     playback_spans: list[tuple[int, int, str]] = field(default_factory=list)
+    turn_started_at: float = 0.0
+    barge_hits: int = 0
 
     def offset_ms(self) -> int:
         offset = int((time.monotonic() - self.monotonic_zero) * 1000)

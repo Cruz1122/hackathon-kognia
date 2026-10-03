@@ -10,7 +10,7 @@
 - `done` `{ provider, model }`
 - `error` si el stream se corta **después** de haber emitido tokens
 
-Máximo **4** rondas de tools (`MAX_TOOL_ROUNDS`). System prompt: agente de voz breve en español; debe ejecutar tools en vez de inventar resultados.
+Máximo **4** rondas de tools (`MAX_TOOL_ROUNDS`). System prompt: agente de voz breve en español, siempre en texto plano (sin Markdown ni listas); debe ejecutar tools en vez de inventar resultados.
 
 ## Tools de demo
 

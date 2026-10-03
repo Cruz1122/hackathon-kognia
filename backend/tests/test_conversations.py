@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
@@ -323,6 +325,241 @@ def test_ws_attaches_conversation_and_persists_user_and_assistant(
         (MessageRole.USER, "Hola desde WS"),
         (MessageRole.ASSISTANT, "respuesta WS"),
     ]
+
+
+def test_ws_call_forwards_only_last_context_messages(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+    persisted = [
+        DbMessage(
+            id=uuid.uuid4(),
+            conversation_id=conversation.id,
+            role=MessageRole.USER if index % 2 == 0 else MessageRole.ASSISTANT,
+            content=f"m{index}",
+            channel="voice",
+            created_at=datetime.now(UTC),
+        )
+        for index in range(24)
+    ]
+    captured: list[dict[str, str]] = []
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return persisted
+
+    async def fake_agent(prompt, *, messages, llm=None):
+        captured.extend(messages or [])
+        yield "token", {"text": "ok"}
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stream_agent", fake_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+            websocket.send_json({"type": "turn", "prompt": "Y ahora"})
+            while True:
+                if websocket.receive_json()["type"] == "turn.completed":
+                    break
+    finally:
+        client.close()
+
+    expected = [
+        {"role": message.role.value, "content": message.content}
+        for message in persisted
+        if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+    ][-12:]
+    assert captured == expected
+
+
+def test_ws_barge_cancels_active_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return []
+
+    async def slow_agent(prompt, *, messages, llm=None):
+        yield "token", {"text": "respuesta que el usuario interrumpe"}
+        await asyncio.sleep(30)
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stt_provider", FakeSTT())
+    monkeypatch.setattr(main, "stream_agent", slow_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    loud = b"\x00\x40" * 1600  # int16 0x4000 → strong energy frame
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+
+            websocket.send_json({"type": "pcm.start", "sample_rate": 16000})
+            websocket.send_bytes(loud)
+
+            events = []
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "turn.started":
+                    break
+
+            websocket.send_json({"type": "barge"})
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "turn.cancelled":
+                    break
+    finally:
+        client.close()
+
+    types = [event["type"] for event in events]
+    assert "tts.cancel" in types
+    assert "turn.cancelled" in types
+    stored = [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], DbMessage)]
+    assert [message.role for message in stored] == [MessageRole.USER]
+
+
+def test_ws_voice_energy_cancels_active_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    _session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return []
+
+    async def slow_agent(prompt, *, messages, llm=None):
+        yield "token", {"text": "respuesta larga"}
+        await asyncio.sleep(30)
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stt_provider", FakeSTT())
+    monkeypatch.setattr(main, "stream_agent", slow_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    loud = b"\x00\x40" * 1600
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+
+            websocket.send_json({"type": "pcm.start", "sample_rate": 16000})
+            websocket.send_bytes(loud)
+            while websocket.receive_json()["type"] != "turn.started":
+                pass
+
+            time.sleep(main.CALL_BARGE_ARM_SECONDS + 0.2)
+            websocket.send_bytes(loud)
+
+            events = []
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "turn.cancelled":
+                    break
+    finally:
+        client.close()
+
+    types = [event["type"] for event in events]
+    assert "tts.cancel" in types
+    assert "turn.cancelled" in types
+
+
+def test_ws_interrupt_after_turn_completed_still_transcribes(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    """Regression: barge arriving after the backend turn finished must not swallow the next utterance."""
+    _session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return []
+
+    async def fast_agent(prompt, *, messages, llm=None):
+        yield "token", {"text": "respuesta corta"}
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stt_provider", FakeSTT())
+    monkeypatch.setattr(main, "stream_agent", fast_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    loud = b"\x00\x40" * 1600
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+
+            websocket.send_json({"type": "pcm.start", "sample_rate": 16000})
+            websocket.send_bytes(loud)
+            while websocket.receive_json()["type"] != "turn.completed":
+                pass
+
+            # The user corrects while the client is still playing the buffered reply.
+            websocket.send_json({"type": "barge"})
+            websocket.send_bytes(loud)
+
+            events = []
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "turn.started":
+                    break
+    finally:
+        client.close()
+
+    types = [event["type"] for event in events]
+    assert "customer.transcript" in types
+    assert "turn.started" in types
 
 
 def test_ws_does_not_attach_foreign_conversation(
