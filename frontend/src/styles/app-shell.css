@@ -19,7 +19,7 @@ button, input { font: inherit; }
 
 .app-shell { --sidebar-track: minmax(240px, min(17.5%, 21rem)); display: grid; grid-template-columns: var(--sidebar-track) minmax(0, 1fr); width: 100%; height: 100dvh; min-height: 100dvh; overflow: hidden; }
 .app-shell.has-detail-panel { grid-template-columns: var(--sidebar-track) minmax(0, 1fr) minmax(220px, min(17.5%, 21rem)); }
-.app-sidebar { display: flex; min-height: 100dvh; flex-direction: column; gap: 18px; padding: 28px 22px 32px; background: var(--ui-graphite); color: var(--ui-paper); }
+.app-sidebar { position: relative; z-index: 5; display: flex; min-height: 100dvh; flex-direction: column; gap: 18px; padding: 28px 22px 32px; background: var(--ui-graphite); color: var(--ui-paper); }
 .app-mobile-topbar { display: flex; width: 100%; align-items: center; }
 .app-sidebar__brand { display: flex; align-items: center; gap: 12px; color: var(--ui-paper); font-size: 1.65rem; font-weight: 800; line-height: 1; }
 .app-sidebar__face { display: grid; width: 48px; flex: 0 0 48px; aspect-ratio: 1; place-items: center; border-radius: 50%; }
@@ -68,6 +68,14 @@ button, input { font: inherit; }
   animation: none;
   mix-blend-mode: normal;
   isolation: isolate;
+}
+/* Browsers without native View Transitions: keep the sidebar static and on top
+   so page content never sweeps across it during the fallback animation. */
+[data-astro-transition-fallback] .app-sidebar,
+[data-astro-transition-fallback] [data-astro-transition-persist="app-sidebar"] {
+  animation: none !important;
+  position: relative;
+  z-index: 5;
 }
 .app-shell .login-material,
 .app-shell .login-material.is-gone { display: none !important; }
