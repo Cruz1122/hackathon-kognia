@@ -78,6 +78,9 @@ La web incluye una demo de llamada por voz en `index.astro`: captura PCM 16 kHz 
 
 `make setup` descarga la voz Piper Claude junto al modelo Sherpa. Al arrancar el backend, el `lifespan` carga Sherpa-ONNX y la voz Piper sin exigir API keys. `/health/live` indica que el proceso responde y `/health/ready` devuelve `200` solo cuando Sherpa-ONNX, Piper y PostgreSQL están listos (o `503` si alguna capacidad no está disponible). La página `/monitoring` se suscribe a `/ws/events` cuando hay un access token en `sessionStorage` (el mismo de la demo de llamada). Sin sesión sigue mostrando la línea de tiempo local de ejemplo. El hub es in-memory y no transporta PCM.
 
+Cada turno del agente guarda una traza local en `agent_traces` (una fila por turno, tenant-scoped) con la transcripción, el provider/modelo, el historial enviado, el contexto RAG, el texto del modelo y cada tool con sus argumentos, resultado y duración. La página `/dev` muestra esa trazabilidad por llamada: lista las llamadas con trazas y permite navegar turno a turno. Los endpoints `GET /dev/calls` y `GET /calls/{id}/traces` la exponen solo para el tenant autenticado. La traza se captura con spans de forma compatible con OpenTelemetry GenAI, pero no depende de ningún servicio externo.
+
+
 Las conversaciones autenticadas son la fuente de verdad en PostgreSQL: cada turno persiste únicamente el transcript final del usuario y la respuesta final del asistente. El request legacy puede seguir enviando `messages` sin `conversation_id` durante la transición; esa lista no se persiste y no sustituye el historial de una conversación adjunta.
 
 ```json

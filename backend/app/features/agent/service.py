@@ -11,6 +11,7 @@ from ...platform.rag.chunking import chunk_heading
 from ...platform.rag.citations import build_knowledge_context
 from ...platform.rag.contracts import RetrievalHit
 from ...platform.rag.runtime import retriever as rag_retriever
+from ...platform.tracing import TraceRecorder
 from .tools import (
     CANONICAL_TOOLS,
     describe_tool_done,
@@ -87,9 +88,11 @@ async def stream_agent(
     messages: Sequence[Message] | None = None,
     llm: LLMProvider | None = None,
     tool_context: ToolContext | None = None,
+    trace: TraceRecorder | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm
+    recorder = trace or TraceRecorder()
     chain = get_model_chain()
     attempts_per_model = 3
     total_attempts = len(chain) * attempts_per_model
@@ -101,9 +104,15 @@ async def stream_agent(
     )
 
     history = context_window(messages)
+    tools_available = (
+        [tool.name for tool in CANONICAL_TOOLS] if provider.capabilities.supports_tools else []
+    )
+    recorder.start(prompt, history, tools_available)
     knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, history)
+    recorder.record_retrieval(used_rag=used_rag, topic=retrieval_topic, hits=retrieval_hits)
 
     attempt = 0
+    answer_parts: list[str] = []
     permanent_failures: set[Provider] = set()
     use_tools = provider.capabilities.supports_tools
     while attempt < len(configs):
@@ -112,26 +121,38 @@ async def stream_agent(
         if config.provider in permanent_failures:
             continue
         emitted_tokens = False
-        answer_parts: list[str] = []
         try:
             if use_tools:
                 conversation: list[Message] = [*knowledge, *history, {"role": "user", "content": prompt}]
                 used_tools = False
-                for _ in range(MAX_TOOL_ROUNDS):
+                for round_index in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
-                    async for kind, payload in provider.stream(
-                        config,
-                        prompt,
+                    llm_span = recorder.start_llm(
+                        provider=config.provider.value,
+                        model=config.model,
+                        attempt=attempt,
+                        round_index=round_index + 1,
                         messages=conversation,
-                        tools=CANONICAL_TOOLS,
-                    ):
-                        if kind == "token":
-                            emitted_tokens = True
-                            text = str(payload["text"])
-                            answer_parts.append(text)
-                            yield "token", {"text": text}
-                        elif kind == "tool_calls":
-                            tool_calls = list(payload.get("calls") or [])
+                        tools=tools_available,
+                    )
+                    try:
+                        async for kind, payload in provider.stream(
+                            config,
+                            prompt,
+                            messages=conversation,
+                            tools=CANONICAL_TOOLS,
+                        ):
+                            if kind == "token":
+                                emitted_tokens = True
+                                text = str(payload["text"])
+                                answer_parts.append(text)
+                                recorder.note_first_token(llm_span)
+                                recorder.note_text(llm_span, text)
+                                yield "token", {"text": text}
+                            elif kind == "tool_calls":
+                                tool_calls = list(payload.get("calls") or [])
+                    finally:
+                        recorder.close_span(llm_span, tool_calls=tool_calls)
                     if not tool_calls:
                         break
                     used_tools = True
@@ -145,6 +166,7 @@ async def stream_agent(
                         title, status = describe_tool_start(name, arguments)
                         inputs = present_tool_inputs(name, arguments)
                         yield "tool.started", {"tool": name, "tool_call_id": call_id, "title": title, "status": status, "inputs": inputs}
+                        tool_span = recorder.start_tool(name=name, tool_call_id=call_id, arguments=arguments)
                         tool_result = await TOOL_REGISTRY.execute(
                             name,
                             arguments,
@@ -155,6 +177,14 @@ async def stream_agent(
                         else:
                             result = __import__("json").dumps({"error_code": tool_result.error_code, "message": tool_result.message}, ensure_ascii=False)
                         done_title, done_status = describe_tool_done(name, arguments, result)
+                        outputs = present_tool_outputs(name, result)
+                        recorder.close_tool(
+                            tool_span,
+                            result=result,
+                            ok=tool_result.ok,
+                            inputs=inputs,
+                            outputs=outputs,
+                        )
                         yield "tool.completed", {
                             "tool": name,
                             "tool_call_id": call_id,
@@ -162,7 +192,7 @@ async def stream_agent(
                             "status": done_status,
                             "result": result,
                             "inputs": inputs,
-                            "outputs": present_tool_outputs(name, result),
+                            "outputs": outputs,
                         }
                         assistant_calls.append(
                             {
@@ -195,40 +225,89 @@ async def stream_agent(
                 if rag_event:
                     yield "rag.started", rag_event
                     yield "rag.completed", rag_event
+                recorder.finish(
+                    answer="".join(answer_parts),
+                    provider=config.provider.value,
+                    model=config.model,
+                    status="ok",
+                )
                 yield "done", {"provider": config.provider.value, "model": config.model}
                 return
 
             conversation: list[Message] | None = [*knowledge, *history, {"role": "user", "content": prompt}]
-            async for kind, payload in provider.stream(
-                config,
-                prompt,
+            llm_span = recorder.start_llm(
+                provider=config.provider.value,
+                model=config.model,
+                attempt=attempt,
+                round_index=1,
                 messages=conversation,
-                tools=None,
-            ):
-                if kind != "token":
-                    continue
-                emitted_tokens = True
-                text = str(payload["text"])
-                answer_parts.append(text)
-                yield "token", {"text": text}
+                tools=[],
+            )
+            try:
+                async for kind, payload in provider.stream(
+                    config,
+                    prompt,
+                    messages=conversation,
+                    tools=None,
+                ):
+                    if kind != "token":
+                        continue
+                    emitted_tokens = True
+                    text = str(payload["text"])
+                    answer_parts.append(text)
+                    recorder.note_first_token(llm_span)
+                    recorder.note_text(llm_span, text)
+                    yield "token", {"text": text}
+            finally:
+                recorder.close_span(llm_span, tool_calls=[])
             if not emitted_tokens:
                 raise ProviderError("Provider returned an empty stream")
             rag_event = _build_rag_event("".join(answer_parts), used_rag, retrieval_topic, retrieval_hits)
             if rag_event:
                 yield "rag.started", rag_event
                 yield "rag.completed", rag_event
+            recorder.finish(
+                answer="".join(answer_parts),
+                provider=config.provider.value,
+                model=config.model,
+                status="ok",
+            )
             yield "done", {"provider": config.provider.value, "model": config.model}
             return
         except ProviderError as exc:
+            recorder.record_error(
+                provider=config.provider.value,
+                model=config.model,
+                attempt=attempt,
+                message=str(exc),
+            )
             if emitted_tokens:
+                recorder.finish(
+                    answer="".join(answer_parts),
+                    provider=config.provider.value,
+                    model=config.model,
+                    status="error",
+                )
                 yield "error", {"message": "La respuesta del proveedor se interrumpió"}
                 return
             if not exc.retryable:
                 permanent_failures.add(config.provider)
             if attempt >= total_attempts:
+                recorder.finish(
+                    answer="".join(answer_parts),
+                    provider=None,
+                    model=None,
+                    status="error",
+                )
                 yield "error", {"message": "No hay proveedores disponibles"}
                 return
 
+    recorder.finish(
+        answer="".join(answer_parts),
+        provider=None,
+        model=None,
+        status="error",
+    )
     yield "error", {"message": "No hay proveedores disponibles"}
 
 

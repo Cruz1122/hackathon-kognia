@@ -44,6 +44,7 @@ from .db.models import MessageRole, Organization, User, UserRole
 from .db.queries import create_conversation, get_conversation, list_messages
 from .db.session import check_database, dispose_engine, get_db
 from .platform.redis import close_redis
+from .platform.tracing import TraceRecorder, save_trace
 from .features.agent.service import context_window, stream_agent
 from .agent.tools.contracts import ToolContext
 from .features.transcription.service import pcm_speech_features, stt_label
@@ -70,6 +71,7 @@ from .platform.rag.extraction import RagExtractionError
 from .analytics.router import router as analytics_router
 from .platform.queue import enqueue_enrichment
 from .commercial.router import router as commercial_router
+from .features.dev.router import router as dev_router
 from .telephony.router import router as telnyx_router
 
 
@@ -213,6 +215,7 @@ app.add_middleware(
 )
 app.include_router(analytics_router)
 app.include_router(commercial_router)
+app.include_router(dev_router)
 app.include_router(telnyx_router)
 
 
@@ -789,6 +792,7 @@ def _agent_stream(
     organization_id: uuid.UUID | None = None,
     conversation_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    trace: TraceRecorder | None = None,
 ):
     kwargs: dict[str, object] = {"messages": messages, "llm": llm_provider}
     if "tool_context" in inspect.signature(stream_agent).parameters:
@@ -798,6 +802,8 @@ def _agent_stream(
             conversation_id=str(conversation_id) if conversation_id else None,
             user_id=str(user_id) if user_id else None,
         )
+    if trace is not None and "trace" in inspect.signature(stream_agent).parameters:
+        kwargs["trace"] = trace
     return stream_agent(prompt, **kwargs)
 
 
@@ -1039,6 +1045,7 @@ async def _run_call_turn(
     organization_id: uuid.UUID,
     conversation_id: uuid.UUID,
     user_id: uuid.UUID | None = None,
+    call_id: uuid.UUID | None = None,
 ) -> None:
     try:
         await _persist_message(
@@ -1057,6 +1064,11 @@ async def _run_call_turn(
             conversation_id=conversation_id,
         )
         return
+    recorder = TraceRecorder(
+        call_id=str(call_id) if call_id else None,
+        conversation_id=str(conversation_id),
+        organization_id=str(organization_id),
+    )
     await _send_call_event(
         websocket,
         "turn.started",
@@ -1089,6 +1101,7 @@ async def _run_call_turn(
             organization_id=organization_id,
             conversation_id=conversation_id,
             user_id=user_id,
+            trace=recorder,
         ):
             if name == "error":
                 failed = True
@@ -1191,6 +1204,8 @@ async def _run_call_turn(
             )
         except Exception:
             pass
+    finally:
+        await save_trace(recorder)
 
 
 async def _receive_json_message(websocket: WebSocket) -> dict[str, object] | None:
@@ -1437,6 +1452,7 @@ async def call_socket(
                     organization_id=organization_id,
                     conversation_id=conversation_id,
                     user_id=user.id,
+                    call_id=call_record.id if call_record else None,
                 )
             )
 
