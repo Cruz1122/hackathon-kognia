@@ -66,6 +66,10 @@ class TraceRecorder:
     status: str = "ok"
     answer: str = ""
     spans: list[dict[str, Any]] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    llm_calls: int = 0
 
     _t0: float = field(default_factory=time.perf_counter)
     _turn: dict[str, Any] | None = None
@@ -112,6 +116,32 @@ class TraceRecorder:
             return
         attributes = span["attributes"]
         attributes["text"] = _clip(str(attributes.get("text") or "") + text)
+
+    def note_usage(
+        self,
+        span: dict[str, Any] | None,
+        *,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+    ) -> None:
+        prompt_tokens = max(0, int(prompt_tokens))
+        completion_tokens = max(0, int(completion_tokens))
+        total_tokens = max(0, int(total_tokens)) or prompt_tokens + completion_tokens
+        if total_tokens == 0 and prompt_tokens == 0 and completion_tokens == 0:
+            return
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+        self.total_tokens += total_tokens
+        self.llm_calls += 1
+        if span is not None:
+            span["attributes"].update(
+                {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                }
+            )
 
     def start_llm(
         self,
@@ -197,4 +227,10 @@ class TraceRecorder:
             "tools_available": self.tools_available,
             "answer": self.answer,
             "spans": self.spans,
+            "usage": {
+                "prompt_tokens": self.prompt_tokens,
+                "completion_tokens": self.completion_tokens,
+                "total_tokens": self.total_tokens,
+                "llm_calls": self.llm_calls,
+            },
         }

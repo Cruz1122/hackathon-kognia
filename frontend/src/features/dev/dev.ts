@@ -7,6 +7,15 @@ type TraceSpan = {
   attributes: Record<string, unknown>;
 };
 
+type Usage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  llm_calls?: number;
+};
+
+type CallSummary = Usage & { turns: number; duration_ms: number; status: string };
+
 type Turn = {
   id: string;
   provider: string | null;
@@ -16,7 +25,8 @@ type Turn = {
   duration_ms: number;
   prompt: string;
   answer: string;
-  data: Record<string, unknown> & { spans?: TraceSpan[]; tools_available?: string[] };
+  usage?: Usage;
+  data: Record<string, unknown> & { spans?: TraceSpan[]; tools_available?: string[]; usage?: Usage };
 };
 
 type CallGroup = {
@@ -31,10 +41,13 @@ type CallGroup = {
   status: string;
   preview: string;
   channel?: string | null;
+  total_tokens?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
 };
 
 type CallsPayload = { calls?: CallGroup[] };
-type TracesPayload = { call_id: string | null; conversation_id: string; turns?: Turn[] };
+type TracesPayload = { call_id: string | null; conversation_id: string; summary?: CallSummary; turns?: Turn[] };
 
 type SpanTone = 'rag' | 'llm' | 'tool' | 'error' | 'other';
 
@@ -87,6 +100,13 @@ function duration(ms: number): string {
   return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)} s`;
 }
 
+const tokenFormat = new Intl.NumberFormat('es');
+
+function tokens(value: unknown): string {
+  const count = typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  return tokenFormat.format(count);
+}
+
 function spanMeta(name: string): { icon: string; title: string; tone: SpanTone } {
   if (name.startsWith('tool.')) return { icon: 'wrench', title: name.slice(5), tone: 'tool' };
   if (name === 'rag.retrieve') return { icon: 'book-open', title: 'Búsqueda en conocimiento', tone: 'rag' };
@@ -119,6 +139,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
   let calls: CallGroup[] = [];
   let selectedKey = '';
   let turns: Turn[] = [];
+  let summary: CallSummary | null = null;
   let selectedTurn = 0;
   let disposed = false;
   let busy = false;
@@ -158,6 +179,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
     const group = calls.find((call) => call.key === selectedKey);
     if (!group) {
       turns = [];
+      summary = null;
       return;
     }
     const url = group.call_id
@@ -167,6 +189,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
     if (!response.ok) throw new Error(`traces ${response.status}`);
     const payload = (await response.json()) as TracesPayload;
     turns = payload.turns ?? [];
+    summary = payload.summary ?? null;
     if (selectedTurn >= turns.length) selectedTurn = Math.max(0, turns.length - 1);
     if (selectedTurn < 0) selectedTurn = 0;
   }
@@ -199,6 +222,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
       const meta = el('span', 'dev-call__meta');
       meta.append(
         el('span', '', `${call.turns} turno${call.turns === 1 ? '' : 's'}`),
+        el('span', '', `${tokens(call.total_tokens)} tokens`),
         el('span', '', relative(call.updated_at)),
         el('span', '', `${call.provider ?? 'modelo'}${call.model ? ` · ${call.model}` : ''}`),
       );
@@ -260,6 +284,11 @@ export function bootDev(apiUrl: string, token: string): () => void {
         fieldRow('Primer token', attrs.first_token_ms === null || attrs.first_token_ms === undefined ? '—' : duration(Number(attrs.first_token_ms))),
         fieldRow('Tools disponibles', Array.isArray(attrs.tools) ? `${attrs.tools.length}` : '0'),
       );
+      if (typeof attrs.total_tokens === 'number') {
+        facts.append(
+          fieldRow('Tokens', `${tokens(attrs.total_tokens)} (${tokens(attrs.prompt_tokens)} entrada · ${tokens(attrs.completion_tokens)} salida)`),
+        );
+      }
       item.append(facts);
       const rationale = el('div', 'dev-reason');
       rationale.append(el('span', 'dev-reason__label', 'Razonamiento / texto del modelo'));
@@ -306,6 +335,32 @@ export function bootDev(apiUrl: string, token: string): () => void {
     return item;
   }
 
+  function renderSummary(data: CallSummary): HTMLElement {
+    const card = el('section', 'dev-summary');
+    card.append(el('h4', 'dev-section-title', 'Uso de tokens de la llamada'));
+
+    const metrics = el('div', 'dev-summary__metrics');
+    const metric = (label: string, value: string, tone = ''): void => {
+      const item = el('div', `dev-metric${tone ? ` dev-metric--${tone}` : ''}`);
+      item.append(el('span', 'dev-metric__value', value), el('span', 'dev-metric__label', label));
+      metrics.append(item);
+    };
+    metric('Tokens totales', tokens(data.total_tokens), 'total');
+    metric('Entrada', tokens(data.prompt_tokens));
+    metric('Salida', tokens(data.completion_tokens));
+    metric('Llamadas al modelo', tokens(data.llm_calls ?? 0));
+    card.append(metrics);
+
+    card.append(
+      el(
+        'p',
+        'dev-section-sub',
+        `${data.turns} turno${data.turns === 1 ? '' : 's'} · ${duration(data.duration_ms)} de cómputo`,
+      ),
+    );
+    return card;
+  }
+
   function renderDetail(): void {
     const group = calls.find((call) => call.key === selectedKey);
     if (!group || turns.length === 0) {
@@ -349,6 +404,8 @@ export function bootDev(apiUrl: string, token: string): () => void {
     header.append(heading, nav);
     detailBody!.append(header);
 
+    if (summary) detailBody!.append(renderSummary(summary));
+
     const chips = el('div', 'dev-turns');
     turns.forEach((turn, index) => {
       const chip = el('button', `dev-turn-chip${index === selectedTurn ? ' is-active' : ''}`, `T${index + 1}`);
@@ -364,12 +421,14 @@ export function bootDev(apiUrl: string, token: string): () => void {
     detailBody!.append(chips);
 
     const turn = turns[selectedTurn];
+    const turnUsage = turn.usage ?? turn.data.usage;
     const facts = el('div', 'dev-facts dev-facts--turn');
     facts.append(
       fieldRow('Estado', turn.status),
       fieldRow('Declarado', turn.provider && turn.model ? `${turn.provider}/${turn.model}` : '—'),
       fieldRow('Duración', duration(turn.duration_ms)),
       fieldRow('Inicio', relative(turn.started_at)),
+      fieldRow('Tokens', turnUsage ? `${tokens(turnUsage.total_tokens)} (${tokens(turnUsage.prompt_tokens)} entrada · ${tokens(turnUsage.completion_tokens)} salida)` : '—'),
     );
     detailBody!.append(facts);
 

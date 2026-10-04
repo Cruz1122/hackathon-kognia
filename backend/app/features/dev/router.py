@@ -32,6 +32,39 @@ def _preview(data: dict[str, Any] | None) -> str:
     return prompt[:140]
 
 
+def _usage(data: dict[str, Any] | None) -> dict[str, int]:
+    raw = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "llm_calls": 0}
+    return {
+        "prompt_tokens": int(raw.get("prompt_tokens") or 0),
+        "completion_tokens": int(raw.get("completion_tokens") or 0),
+        "total_tokens": int(raw.get("total_tokens") or 0),
+        "llm_calls": int(raw.get("llm_calls") or 0),
+    }
+
+
+def _sum_usage(rows: list[AgentTrace]) -> dict[str, int]:
+    totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "llm_calls": 0}
+    for row in rows:
+        usage = _usage(row.data if isinstance(row.data, dict) else None)
+        for key in totals:
+            totals[key] += usage[key]
+    return totals
+
+
+def _call_summary(rows: list[AgentTrace]) -> dict[str, Any]:
+    usage = _sum_usage(rows)
+    duration = sum(row.duration_ms for row in rows)
+    status = "ok" if all(row.status == "ok" for row in rows) else "error"
+    return {
+        **usage,
+        "turns": len(rows),
+        "duration_ms": duration,
+        "status": status,
+    }
+
+
 def _turn_view(row: AgentTrace) -> dict[str, Any]:
     data = row.data if isinstance(row.data, dict) else {}
     return {
@@ -43,6 +76,7 @@ def _turn_view(row: AgentTrace) -> dict[str, Any]:
         "duration_ms": row.duration_ms,
         "prompt": data.get("prompt") or "",
         "answer": data.get("answer") or "",
+        "usage": _usage(data),
         "data": data,
     }
 
@@ -79,8 +113,15 @@ async def list_dev_calls(
                 "model": row.model,
                 "status": "ok",
                 "preview": _preview(row.data),
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
             }
             groups[key] = group
+        usage = _usage(row.data if isinstance(row.data, dict) else None)
+        group["total_tokens"] += usage["total_tokens"]
+        group["prompt_tokens"] += usage["prompt_tokens"]
+        group["completion_tokens"] += usage["completion_tokens"]
         group["turns"] += 1
         started = row.started_at.isoformat()
         if started < group["started_at"]:
@@ -152,6 +193,7 @@ async def get_call_traces(
     return {
         "call_id": str(call_id),
         "conversation_id": str(call.conversation_id),
+        "summary": _call_summary(rows),
         "turns": [_turn_view(row) for row in rows],
     }
 
@@ -180,5 +222,6 @@ async def get_conversation_traces(
     return {
         "call_id": None,
         "conversation_id": str(conversation_id),
+        "summary": _call_summary(rows),
         "turns": [_turn_view(row) for row in rows],
     }

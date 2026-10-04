@@ -10,6 +10,8 @@
 - `done` `{ provider, model }`
 - `error` si el stream se corta **después** de haber emitido tokens
 
+Los adaptadores de proveedor emiten además `usage` `{ prompt_tokens, completion_tokens, total_tokens }` (OpenAI con `stream_options.include_usage`, Gemini con `usageMetadata`). El `TraceRecorder` los acumula y `to_dict()` expone `usage`; el modo dev (`/dev/calls`, `/dev/conversations/{id}/traces`) agrega el total por llamada.
+
 Máximo **4** rondas de tools (`MAX_TOOL_ROUNDS`). System prompt: agente de voz breve en español, siempre en texto plano (sin Markdown ni listas); debe ejecutar tools en vez de inventar resultados.
 
 ## Tools de demo

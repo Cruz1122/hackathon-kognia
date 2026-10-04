@@ -160,6 +160,13 @@ async def stream_agent(
                                 yield "token", {"text": text}
                             elif kind == "tool_calls":
                                 tool_calls = list(payload.get("calls") or [])
+                            elif kind == "usage":
+                                recorder.note_usage(
+                                    llm_span,
+                                    prompt_tokens=int(payload.get("prompt_tokens") or 0),
+                                    completion_tokens=int(payload.get("completion_tokens") or 0),
+                                    total_tokens=int(payload.get("total_tokens") or 0),
+                                )
                     finally:
                         recorder.close_span(llm_span, tool_calls=tool_calls)
                     if not tool_calls:
@@ -259,6 +266,14 @@ async def stream_agent(
                     messages=conversation,
                     tools=None,
                 ):
+                    if kind == "usage":
+                        recorder.note_usage(
+                            llm_span,
+                            prompt_tokens=int(payload.get("prompt_tokens") or 0),
+                            completion_tokens=int(payload.get("completion_tokens") or 0),
+                            total_tokens=int(payload.get("total_tokens") or 0),
+                        )
+                        continue
                     if kind != "token":
                         continue
                     emitted_tokens = True
