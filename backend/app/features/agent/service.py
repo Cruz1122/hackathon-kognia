@@ -88,6 +88,20 @@ async def stream_agent(
     llm: LLMProvider | None = None,
     tool_context: ToolContext | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    if tool_context and tool_context.conversation_id and tool_context.organization_id:
+        from ...agent.runtime import stateful_stream
+        async for event in stateful_stream(prompt, messages=messages, llm=llm,
+                                          tool_context=tool_context, generate=_generate):
+            yield event
+        return
+    # Compatibility path is read-only: ToolRegistry rejects every write.
+    async for event in _generate(prompt, messages=messages, llm=llm, tool_context=tool_context):
+        yield event
+
+
+async def _generate(
+    prompt: str, *, messages=None, llm=None, tool_context=None, system_context: str = '', tools_enabled: bool = True,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm
     chain = get_model_chain()
@@ -102,10 +116,12 @@ async def stream_agent(
 
     history = context_window(messages)
     knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, history)
+    if system_context:
+        knowledge = [{'role': 'system', 'content': system_context}, *knowledge]
 
     attempt = 0
     permanent_failures: set[Provider] = set()
-    use_tools = provider.capabilities.supports_tools
+    use_tools = provider.capabilities.supports_tools and tools_enabled
     while attempt < len(configs):
         config = configs[attempt]
         attempt += 1

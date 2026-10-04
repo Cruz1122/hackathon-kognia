@@ -417,24 +417,29 @@ def _audio_suffix(content_type: str) -> str:
     return ".webm"
 
 
-def decode_audio_file(path: Path) -> bytes:
+def decode_audio_file(path: Path, *, max_seconds: int | None = None) -> bytes:
+    # Probe one second past the budget so excessive notes are rejected, not silently truncated.
+    limit = ['-t', str(max_seconds + 1)] if max_seconds is not None else []
     completed = subprocess.run(
-        ["ffmpeg", "-nostdin", "-i", str(path), "-ac", "1", "-ar", "16000", "-f", "s16le", "-"],
+        ["ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "file,pipe", "-i", str(path), *limit, "-ac", "1", "-ar", "16000", "-f", "s16le", "-"],
         check=False,
         capture_output=True,
+        timeout=30 if max_seconds is not None else None,
     )
     if completed.returncode != 0 or not completed.stdout:
         raise RuntimeError(completed.stderr.decode("utf-8", errors="replace") or "ffmpeg no pudo decodificar el audio.")
+    if max_seconds is not None and len(completed.stdout) > max_seconds * 16000 * 2:
+        raise ValueError('Audio exceeds duration limit')
     return completed.stdout
 
 
-def transcribe_audio(audio: bytes, content_type: str) -> str:
+def transcribe_audio(audio: bytes, content_type: str, *, max_seconds: int | None = None) -> str:
     """Transcribe one short browser recording with Sherpa-ONNX."""
     suffix = _audio_suffix(content_type)
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
         temporary.write(audio)
         path = Path(temporary.name)
     try:
-        return transcribe_pcm(decode_audio_file(path), 16000)
+        return transcribe_pcm(decode_audio_file(path, max_seconds=max_seconds), 16000)
     finally:
         path.unlink(missing_ok=True)

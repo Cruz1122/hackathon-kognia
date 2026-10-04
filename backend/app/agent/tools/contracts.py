@@ -15,6 +15,7 @@ class ToolDefinition:
     handler: Callable[..., Any]
     side_effects: Literal["read", "write"]
     timeout_s: float = 5.0
+    replay_safe: bool = False  # Only pure/local effects committed in the operation ledger.
 
     def __post_init__(self) -> None:
         if not self.name or self.name.strip() != self.name:
@@ -33,6 +34,8 @@ class ToolContext:
     conversation_id: str | None = None
     organization_id: str | None = None
     user_id: str | None = None
+    channel: str = 'voice'
+    operation_id: str | None = None
 
 
 @dataclass

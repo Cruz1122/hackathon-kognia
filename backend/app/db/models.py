@@ -19,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    Boolean,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,6 +28,64 @@ from .base import Base
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+class AgentSnapshot(Base):
+    __tablename__ = 'agent_snapshots'
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False)
+    __table_args__ = (ForeignKeyConstraint(['conversation_id', 'organization_id'], ['conversations.id', 'conversations.organization_id'], ondelete='CASCADE'),)
+
+
+class AgentOperation(Base):
+    """Durable effect intent/result; also the demo booking ledger."""
+    __tablename__ = 'agent_operations'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    tool: Mapped[str] = mapped_column(String(80), nullable=False)
+    arguments: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    __table_args__ = (ForeignKeyConstraint(['conversation_id', 'organization_id'], ['conversations.id', 'conversations.organization_id'], ondelete='CASCADE'),)
+
+
+class ChannelBinding(Base):
+    """Operator-verified identity and routing; never inferred from caller ID."""
+    __tablename__ = 'channel_bindings'
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    phone_number_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    wa_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    template_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    template_language: Mapped[str] = mapped_column(String(16), nullable=False, default='es')
+    last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        ForeignKeyConstraint(['conversation_id', 'organization_id'], ['conversations.id', 'conversations.organization_id'], ondelete='CASCADE'),
+        UniqueConstraint('phone_number_id', 'wa_id', name='uq_channel_identity'),
+        UniqueConstraint('organization_id', 'phone', name='uq_channel_phone'),
+        UniqueConstraint('conversation_id', name='uq_channel_conversation'),
+    )
+
+
+class ChannelEvent(Base):
+    """Durable inbox/outbox. Redis is a wake-up, not the source of truth."""
+    __tablename__ = 'channel_events'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    binding_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey('channel_bindings.id', ondelete='CASCADE'), nullable=False)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default='pending')
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    __table_args__ = (Index('ix_channel_pending', 'status', 'created_at'),)
 
 
 class UserRole(StrEnum):

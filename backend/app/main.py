@@ -71,6 +71,8 @@ from .analytics.router import router as analytics_router
 from .platform.queue import enqueue_enrichment
 from .commercial.router import router as commercial_router
 from .telephony.router import router as telnyx_router
+from .whatsapp.router import router as whatsapp_router
+from .agent.router import router as agent_state_router
 
 
 logger = logging.getLogger("hackathon.voice")
@@ -214,6 +216,8 @@ app.add_middleware(
 app.include_router(analytics_router)
 app.include_router(commercial_router)
 app.include_router(telnyx_router)
+app.include_router(whatsapp_router)
+app.include_router(agent_state_router)
 
 
 def _health_status() -> dict[str, str]:
@@ -815,6 +819,7 @@ async def _ask_stream(
     user_id: uuid.UUID | None = None,
 ) -> AsyncIterator[str]:
     answer_parts: list[str] = []
+    proposal_id = None
     async for name, payload in _agent_stream(
         prompt,
         messages=messages,
@@ -841,7 +846,13 @@ async def _ask_stream(
                         {"message": "No se pudo guardar la respuesta de la conversación."},
                     )
                     return
+        if name == 'done':
+            proposal_id = payload.get('proposal_id')
         yield _event(name, payload)
+    # The agent generator must release its conversation lock before transport acknowledgement.
+    if proposal_id and organization_id and conversation_id:
+        from .agent.store import mark_presented
+        await mark_presented(str(organization_id), str(conversation_id), str(proposal_id))
 
 
 async def _replay_stream(buffered_chunks: list[str], stream: AsyncIterator[str]) -> AsyncIterator[str]:
@@ -1067,6 +1078,7 @@ async def _run_call_turn(
     answer = ""
     buffer = ""
     failed = False
+    proposal_id = None
     pending: asyncio.Queue[str | None] = asyncio.Queue()
 
     async def speak_worker() -> None:
@@ -1100,6 +1112,8 @@ async def _run_call_turn(
                     conversation_id=conversation_id,
                 )
                 break
+            if name == 'done':
+                proposal_id = payload.get('proposal_id')
             if name in {"tool.started", "tool.completed", "rag.started", "rag.completed"}:
                 await _send_call_event(
                     websocket,
@@ -1128,6 +1142,9 @@ async def _run_call_turn(
             await pending.put(buffer.strip())
         await pending.put(None)
         await speaker
+        if proposal_id and not failed:
+            from .agent.store import mark_presented
+            await mark_presented(str(organization_id), str(conversation_id), str(proposal_id))
         if not failed and answer.strip():
             try:
                 await _persist_message(

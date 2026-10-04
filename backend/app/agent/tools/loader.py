@@ -15,7 +15,13 @@ def load_tool_registry(value: str | None = None) -> ToolRegistry:
         if not callable(register):
             raise RuntimeError(f"Configured tool module has no register_tools: {path}")
         register(registry)
+        registry.domain_questions.update(getattr(module, 'JEV_QUESTIONS', {}))
+        instructions = getattr(module, 'CONTEXT_INSTRUCTIONS', '')
+        if instructions:
+            registry.context_instructions.append(instructions)
     if value is None:
+        from ...whatsapp.tools import register_tools as register_channels
+        register_channels(registry)
         from .legacy import register_tools
         register_tools(registry)
     registry.freeze()

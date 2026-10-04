@@ -51,6 +51,7 @@ class CallSession:
     playback_spans: list[tuple[int, int, str]] = field(default_factory=list)
     turn_started_at: float = 0.0
     barge_hits: int = 0
+    presentation_mark: tuple[str, str] | None = None
 
     def offset_ms(self) -> int:
         offset = int((time.monotonic() - self.monotonic_zero) * 1000)
@@ -105,12 +106,13 @@ class CallRegistry:
         call_session_id: str | None,
         caller: str,
         callee: str,
+        call_id: uuid.UUID | None = None,
     ) -> CallSession:
         existing = self.by_control(telnyx_call_control_id)
         if existing is not None and not existing.closed:
             return existing
         session = CallSession(
-            call_id=uuid.uuid4(),
+            call_id=call_id or uuid.uuid4(),
             token=secrets.token_urlsafe(32),
             telnyx_call_control_id=telnyx_call_control_id,
             call_leg_id=call_leg_id,

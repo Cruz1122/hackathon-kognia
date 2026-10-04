@@ -17,6 +17,11 @@ async def handle_job(job: object) -> None:
     from .platform.queue import Job
     from .telephony.recording_worker import process_recording_job
 
+    if isinstance(job, Job) and job.type == 'channel_work':
+        from .whatsapp.service import process_pending
+        await process_pending()
+        return
+
     if isinstance(job, Job) and job.type == "download_recording":
         await process_recording_job(job)
         return
@@ -33,6 +38,8 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         while not stop_event.is_set():
             job = None
             try:
+                from .whatsapp.service import process_pending
+                await process_pending()
                 job = await dequeue_job(timeout=1)
                 if job is not None:
                     await handle_job(job)

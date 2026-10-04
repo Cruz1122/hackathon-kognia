@@ -120,6 +120,15 @@ class TelephonyRuntime:
             await self._answer_inbound(body, occurred_at if isinstance(occurred_at, str) else None)
             return
         session = registry.by_control(control_id) if control_id else None
+        if session is None and body.get('client_state'):
+            from .continuity import restore_outbound
+            session = await restore_outbound(body)
+        if event_type == 'call.answered' and session is not None and not session.answered and not session.closed:
+            await self.api().streaming_start(control_id, self.api().media_url(str(session.call_id), session.token))
+            session.answered = True
+            session.lifecycle_state = 'ACTIVE'
+            timeline.record(session, 'lifecycle', {'state': 'ACTIVE'})
+            return
         if event_type == "call.hangup" and session is not None:
             await self.finish_call(session, occurred_at if isinstance(occurred_at, str) else None)
             return
@@ -206,7 +215,7 @@ class TelephonyRuntime:
         try:
             from sqlalchemy import select
 
-            from ..db.models import Call, CallStatus, Customer
+            from ..db.models import Call, CallStatus, Customer, ChannelBinding, Conversation
             from ..db.queries import create_conversation
             from ..db.session import get_session_factory
 
@@ -224,13 +233,13 @@ class TelephonyRuntime:
                         customer = Customer(organization_id=session.organization_id, phone=phone)
                         db.add(customer)
                         await db.flush()
-                conversation = await create_conversation(
-                    db,
-                    organization_id=session.organization_id,
-                    created_by=session.system_user_id,
-                    channel="pstn",
-                    status="open",
-                )
+                binding = await db.scalar(select(ChannelBinding).where(
+                    ChannelBinding.organization_id == session.organization_id, ChannelBinding.phone == phone))
+                conversation = await db.get(Conversation, binding.conversation_id) if binding else None
+                if conversation is None:
+                    conversation = await create_conversation(
+                        db, organization_id=session.organization_id,
+                        created_by=session.system_user_id, channel="pstn", status="open")
                 if customer is not None:
                     conversation.customer_id = customer.id
                 db.add(
@@ -339,6 +348,8 @@ class TelephonyRuntime:
                 )
                 await db.commit()
             await enqueue_enrichment(session.organization_id, session.conversation_id)
+            from ..whatsapp.service import prepare_continuation
+            await prepare_continuation(session.conversation_id, session.organization_id, str(session.call_id))
         except Exception:
             logger.exception("Telnyx hangup persistence failed")
 
@@ -461,6 +472,10 @@ class TelephonyRuntime:
             name = str(mark.get("name") or "")
             if session.marks.played(name) == "played":
                 timeline.record(session, "audio.played", {"name": name})
+                if session.presentation_mark and session.presentation_mark[0] == name:
+                    from ..agent.store import mark_presented
+                    await mark_presented(str(session.organization_id), str(session.conversation_id), session.presentation_mark[1])
+                    session.presentation_mark = None
             return
         if kind == "stop":
             self.write_capture(session)
@@ -534,6 +549,7 @@ class TelephonyRuntime:
                 await self._start_turn(session, final)
 
     async def _barge_in(self, session: CallSession) -> None:
+        session.presentation_mark = None
         cancelled = session.marks.clear_unplayed() if session.marks is not None else []
         for name in cancelled:
             timeline.record(session, "audio.cancelled", {"name": name})

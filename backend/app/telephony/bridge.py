@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -32,17 +33,20 @@ async def run_agent_turn(
     timeline.record(session, "agent.state", {"state": "thinking"})
     session.agent_state = "thinking"
     tool_context = ToolContext(
-        request_id=f"telnyx-{session.call_id}",
+        request_id=f"telnyx-{session.call_id}-{uuid.uuid4()}",
         conversation_id=str(session.conversation_id) if session.conversation_id else None,
         organization_id=str(session.organization_id) if session.organization_id else None,
         user_id=str(session.system_user_id) if session.system_user_id else None,
     )
     answer: list[str] = []
+    proposal_id = None
     generator = agent(transcript, messages=list(session.history), tool_context=tool_context)
     try:
         async for kind, payload in generator:
             if session.closed:
                 break
+            if kind == 'done':
+                proposal_id = payload.get('proposal_id')
             await _publish_agent_event(session, kind, payload, answer)
     except asyncio.CancelledError:
         await _cancel_playback(session)
@@ -53,7 +57,21 @@ async def run_agent_turn(
     session.history.append({"role": "user", "content": transcript})
     if spoken:
         session.history.append({"role": "assistant", "content": spoken})
+        if agent is stream_agent and session.conversation_id and session.organization_id:
+            from ..db.models import Message, MessageRole
+            from ..db.session import get_session_factory
+            async with get_session_factory()() as db:
+                db.add_all([
+                    Message(conversation_id=session.conversation_id, role=MessageRole.USER, content=transcript, channel='voice'),
+                    Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT, content=spoken, channel='voice'),
+                ])
+                await db.commit()
         await _speak(session, voice, spoken)
+        if proposal_id and session.websocket and not session.closed:
+            mark = session.marks.generated()
+            session.presentation_mark = (mark, proposal_id)
+            session.marks.sent(mark)
+            await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
     session.agent_state = "listening"
     timeline.record(session, "agent.state", {"state": "listening"})
 
