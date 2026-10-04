@@ -29,7 +29,6 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   bindDetailClicks(conversation);
   mountSessionPanel();
 
-  const conversationId = sessionStorage.getItem('kognia.auth.conversation-id')?.trim() ?? '';
   const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
   if (!token) {
     if (hubChip) hubChip.textContent = 'Demo local';
@@ -143,6 +142,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
     const eventConversation = typeof (envelope as { conversation_id?: unknown }).conversation_id === 'string'
       ? String((envelope as { conversation_id?: unknown }).conversation_id)
       : '';
+    const conversationId = sessionStorage.getItem('kognia.auth.conversation-id')?.trim() ?? '';
     if (conversationId && eventConversation && eventConversation !== conversationId) return;
     const payload = envelope.payload && typeof envelope.payload === 'object' && !Array.isArray(envelope.payload)
       ? envelope.payload as Record<string, unknown>

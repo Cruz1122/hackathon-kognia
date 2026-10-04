@@ -66,6 +66,9 @@ def context_window(
     until the next ``user``. This keeps consecutive ``user`` fragments together
     with the assistant reply that answered them, instead of cutting mid-turn.
     Non-conversational roles (system/tool) are dropped.
+
+    If the opening user turn falls outside the sliding window, it is still
+    prepended so the model can answer questions about how the call started.
     """
     if not messages or limit <= 0:
         return []
@@ -77,9 +80,15 @@ def context_window(
     if not conversational:
         return []
     boundaries = [index for index, message in enumerate(conversational) if message["role"] == "user"]
+    if not boundaries:
+        return conversational
     if len(boundaries) <= limit:
         return conversational
-    return conversational[boundaries[-limit] :]
+    window = conversational[boundaries[-limit] :]
+    if boundaries[-limit] <= boundaries[0]:
+        return window
+    opening_end = boundaries[1] if len(boundaries) > 1 else len(conversational)
+    return [*conversational[boundaries[0] : opening_end], *window]
 
 
 async def stream_agent(
