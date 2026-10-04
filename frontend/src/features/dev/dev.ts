@@ -14,7 +14,7 @@ type Usage = {
   llm_calls?: number;
 };
 
-type CallSummary = Usage & { turns: number; duration_ms: number; status: string };
+type CallSummary = Usage & { turns: number; duration_ms: number; status: string; cost_usd?: number | null };
 
 type Turn = {
   id: string;
@@ -26,6 +26,7 @@ type Turn = {
   prompt: string;
   answer: string;
   usage?: Usage;
+  cost_usd?: number | null;
   data: Record<string, unknown> & { spans?: TraceSpan[]; tools_available?: string[]; usage?: Usage };
 };
 
@@ -44,10 +45,17 @@ type CallGroup = {
   total_tokens?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
+  cost_usd?: number | null;
 };
 
 type CallsPayload = { calls?: CallGroup[] };
-type TracesPayload = { call_id: string | null; conversation_id: string; summary?: CallSummary; turns?: Turn[] };
+type TracesPayload = {
+  call_id: string | null;
+  conversation_id: string;
+  pricing_source?: string;
+  summary?: CallSummary;
+  turns?: Turn[];
+};
 
 type SpanTone = 'rag' | 'llm' | 'tool' | 'error' | 'other';
 
@@ -107,6 +115,13 @@ function tokens(value: unknown): string {
   return tokenFormat.format(count);
 }
 
+function cost(value: unknown): string {
+  const amount = typeof value === 'number' && Number.isFinite(value) ? value : null;
+  if (amount === null || amount <= 0) return '—';
+  if (amount < 0.01) return `$${amount.toFixed(4)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
 function spanMeta(name: string): { icon: string; title: string; tone: SpanTone } {
   if (name.startsWith('tool.')) return { icon: 'wrench', title: name.slice(5), tone: 'tool' };
   if (name === 'rag.retrieve') return { icon: 'book-open', title: 'Búsqueda en conocimiento', tone: 'rag' };
@@ -140,6 +155,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
   let selectedKey = '';
   let turns: Turn[] = [];
   let summary: CallSummary | null = null;
+  let pricingSource = '';
   let selectedTurn = 0;
   let disposed = false;
   let busy = false;
@@ -190,6 +206,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
     const payload = (await response.json()) as TracesPayload;
     turns = payload.turns ?? [];
     summary = payload.summary ?? null;
+    pricingSource = payload.pricing_source ?? '';
     if (selectedTurn >= turns.length) selectedTurn = Math.max(0, turns.length - 1);
     if (selectedTurn < 0) selectedTurn = 0;
   }
@@ -223,6 +240,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
       meta.append(
         el('span', '', `${call.turns} turno${call.turns === 1 ? '' : 's'}`),
         el('span', '', `${tokens(call.total_tokens)} tokens`),
+        el('span', '', cost(call.cost_usd)),
         el('span', '', relative(call.updated_at)),
         el('span', '', `${call.provider ?? 'modelo'}${call.model ? ` · ${call.model}` : ''}`),
       );
@@ -348,14 +366,18 @@ export function bootDev(apiUrl: string, token: string): () => void {
     metric('Tokens totales', tokens(data.total_tokens), 'total');
     metric('Entrada', tokens(data.prompt_tokens));
     metric('Salida', tokens(data.completion_tokens));
+    metric('Costo estimado', cost(data.cost_usd), 'cost');
     metric('Llamadas al modelo', tokens(data.llm_calls ?? 0));
     card.append(metrics);
 
+    const sourceNote = pricingSource === 'openrouter'
+      ? 'precios en vivo de OpenRouter'
+      : 'precios de respaldo (sin conexión a OpenRouter)';
     card.append(
       el(
         'p',
         'dev-section-sub',
-        `${data.turns} turno${data.turns === 1 ? '' : 's'} · ${duration(data.duration_ms)} de cómputo`,
+        `${data.turns} turno${data.turns === 1 ? '' : 's'} · ${duration(data.duration_ms)} de cómputo · ${sourceNote}`,
       ),
     );
     return card;
@@ -429,6 +451,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
       fieldRow('Duración', duration(turn.duration_ms)),
       fieldRow('Inicio', relative(turn.started_at)),
       fieldRow('Tokens', turnUsage ? `${tokens(turnUsage.total_tokens)} (${tokens(turnUsage.prompt_tokens)} entrada · ${tokens(turnUsage.completion_tokens)} salida)` : '—'),
+      fieldRow('Costo', cost(turn.cost_usd)),
     );
     detailBody!.append(facts);
 

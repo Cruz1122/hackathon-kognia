@@ -84,11 +84,13 @@ def test_call_summary_aggregates_token_usage() -> None:
         SimpleNamespace(
             status="ok",
             duration_ms=120,
+            model="gpt-4o-mini",
             data={"usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14, "llm_calls": 1}},
         ),
         SimpleNamespace(
             status="ok",
             duration_ms=80,
+            model="gpt-4o-mini",
             data={"usage": {"prompt_tokens": 20, "completion_tokens": 6, "total_tokens": 26, "llm_calls": 2}},
         ),
     ]
@@ -101,6 +103,51 @@ def test_call_summary_aggregates_token_usage() -> None:
     assert summary["total_tokens"] == 40
     assert summary["llm_calls"] == 3
     assert summary["status"] == "ok"
+    # gpt-4o-mini: 30 in / 10 out → 30/1e6*0.15 + 10/1e6*0.60
+    assert summary["cost_usd"] == pytest.approx(0.0000105, abs=1e-6)
+
+
+def test_estimate_cost_uses_published_prices() -> None:
+    from app.platform import pricing
+
+    pricing.reset_remote_cache()
+    assert pricing.price_for("gpt-4o-mini") is not None
+    assert pricing.price_for("minimax/minimax-m2.7") is not None
+    assert pricing.price_for("unknown-model") is None
+    # 1M in + 1M out at gpt-4o-mini → $0.15 + $0.60
+    assert pricing.estimate_cost_usd("gpt-4o-mini", 1_000_000, 1_000_000) == 0.75
+    assert pricing.estimate_cost_usd("unknown-model", 1000, 1000) is None
+
+
+def test_remote_catalogue_overrides_fallback_and_maps_aliases() -> None:
+    from app.platform import pricing
+
+    pricing.reset_remote_cache()
+    catalogue = pricing._parse_catalogue(
+        {
+            "data": [
+                {
+                    "id": "openai/gpt-4o-mini",
+                    "pricing": {"prompt": "0.0000002", "completion": "0.0000008", "input_cache_read": "0.0000001"},
+                }
+            ]
+        }
+    )
+    remote = pricing._RemoteCache()
+    remote.prices = catalogue
+    remote.loaded = True
+    pricing._remote_cache = remote
+
+    price = pricing.price_for("gpt-4o-mini")
+    assert price is not None
+    assert price.input_per_million == pytest.approx(0.20)
+    assert price.output_per_million == pytest.approx(0.80)
+    assert price.cached_input_per_million == pytest.approx(0.10)
+
+    pricing.reset_remote_cache()
+    # Without the remote catalogue, the hardcoded fallback still resolves.
+    fallback = pricing.price_for("gpt-4o-mini")
+    assert fallback is not None and fallback.input_per_million == 0.15
 
 
 @pytest.mark.asyncio

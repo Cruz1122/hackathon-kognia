@@ -19,6 +19,8 @@ class Provider(StrEnum):
 
 DEFAULT_REDIS_URL = "redis://localhost:16379/0"
 DEFAULT_ANALYTICS_CACHE_TTL_SECONDS = 60
+DEFAULT_PRICING_CACHE_TTL_SECONDS = 21600  # 6 hours
+DEFAULT_PRICING_SOURCE_URL = "https://openrouter.ai/api/v1/models"
 
 
 @dataclass(frozen=True)
@@ -98,3 +100,18 @@ def get_analytics_cache_ttl_seconds() -> int:
     if value < 1:
         raise ValueError("ANALYTICS_CACHE_TTL_SECONDS must be positive")
     return value
+
+
+def get_pricing_cache_ttl_seconds() -> int:
+    raw = os.getenv("PRICING_CACHE_TTL_SECONDS", str(DEFAULT_PRICING_CACHE_TTL_SECONDS))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("PRICING_CACHE_TTL_SECONDS must be an integer") from exc
+    if value < 1:
+        raise ValueError("PRICING_CACHE_TTL_SECONDS must be positive")
+    return value
+
+
+def get_pricing_source_url() -> str:
+    return os.getenv("PRICING_SOURCE_URL", DEFAULT_PRICING_SOURCE_URL).strip() or DEFAULT_PRICING_SOURCE_URL

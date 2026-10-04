@@ -12,6 +12,8 @@
 
 Los adaptadores de proveedor emiten además `usage` `{ prompt_tokens, completion_tokens, total_tokens }` (OpenAI con `stream_options.include_usage`, Gemini con `usageMetadata`). El `TraceRecorder` los acumula y `to_dict()` expone `usage`; el modo dev (`/dev/calls`, `/dev/conversations/{id}/traces`) agrega el total por llamada.
 
+`app/platform/pricing.py` resuelve modelo → tarifa USD por millón: primero el catálogo público de OpenRouter (`GET /api/v1/models`, sin key), cacheado en Redis (`pricing:openrouter:models`, TTL `PRICING_CACHE_TTL_SECONDS`, por defecto 6 h) y con espejo en memoria; si OpenRouter/Redis fallan, usa tarifas de lista fijas. El modo dev calcula `cost_usd` por turno (sumando spans `llm.request` con el modelo de cada uno) y por llamada, e informa `pricing_source` (`openrouter` o `fallback`). Es una estimación: no modela caché ni el tier de contexto largo, y modelos sin tarifa quedan en `null`. `PRICING_SOURCE_URL` permite apuntar a otro catálogo.
+
 Máximo **4** rondas de tools (`MAX_TOOL_ROUNDS`). System prompt: agente de voz breve en español, siempre en texto plano (sin Markdown ni listas); debe ejecutar tools en vez de inventar resultados.
 
 ## Tools de demo

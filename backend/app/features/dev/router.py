@@ -12,8 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth.dependencies import get_current_user
 from ...db.models import AgentTrace, Call, Conversation, User
 from ...db.session import get_db
+from ...platform.pricing import estimate_cost_usd, pricing_source, refresh_prices
 
 router = APIRouter(tags=["dev"])
+
+
+async def _ensure_prices() -> None:
+    """Best-effort: load OpenRouter prices (cached); fallback stays in pricing.py."""
+    try:
+        await refresh_prices()
+    except Exception:
+        pass
 
 
 def _tenant(user: User) -> uuid.UUID:
@@ -53,15 +62,49 @@ def _sum_usage(rows: list[AgentTrace]) -> dict[str, int]:
     return totals
 
 
+def _cost_usd(data: dict[str, Any] | None, fallback_model: str | None) -> float | None:
+    """Sum per-request cost using each span's model; fall back to the row model."""
+    cost = 0.0
+    known = False
+    spans = data.get("spans") if isinstance(data, dict) else None
+    if isinstance(spans, list):
+        for span in spans:
+            if not isinstance(span, dict) or span.get("name") != "llm.request":
+                continue
+            attributes = span.get("attributes")
+            if not isinstance(attributes, dict):
+                continue
+            span_cost = estimate_cost_usd(
+                attributes.get("model"),
+                int(attributes.get("prompt_tokens") or 0),
+                int(attributes.get("completion_tokens") or 0),
+            )
+            if span_cost is not None:
+                cost += span_cost
+                known = True
+    if known:
+        return round(cost, 6)
+    usage = _usage(data)
+    return estimate_cost_usd(fallback_model, usage["prompt_tokens"], usage["completion_tokens"])
+
+
 def _call_summary(rows: list[AgentTrace]) -> dict[str, Any]:
     usage = _sum_usage(rows)
     duration = sum(row.duration_ms for row in rows)
     status = "ok" if all(row.status == "ok" for row in rows) else "error"
+    cost = 0.0
+    cost_known = False
+    for row in rows:
+        row_cost = _cost_usd(row.data if isinstance(row.data, dict) else None, row.model)
+        if row_cost is not None:
+            cost += row_cost
+            cost_known = True
     return {
         **usage,
         "turns": len(rows),
         "duration_ms": duration,
         "status": status,
+        "cost_usd": round(cost, 6) if cost_known else None,
     }
 
 
@@ -77,6 +120,7 @@ def _turn_view(row: AgentTrace) -> dict[str, Any]:
         "prompt": data.get("prompt") or "",
         "answer": data.get("answer") or "",
         "usage": _usage(data),
+        "cost_usd": _cost_usd(data, row.model),
         "data": data,
     }
 
@@ -87,6 +131,7 @@ async def list_dev_calls(
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     organization_id = _tenant(user)
+    await _ensure_prices()
     rows = list(
         (
             await session.scalars(
@@ -116,12 +161,16 @@ async def list_dev_calls(
                 "total_tokens": 0,
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
+                "cost_usd": 0.0,
             }
             groups[key] = group
         usage = _usage(row.data if isinstance(row.data, dict) else None)
         group["total_tokens"] += usage["total_tokens"]
         group["prompt_tokens"] += usage["prompt_tokens"]
         group["completion_tokens"] += usage["completion_tokens"]
+        row_cost = _cost_usd(row.data if isinstance(row.data, dict) else None, row.model)
+        if row_cost is not None:
+            group["cost_usd"] = round(float(group["cost_usd"]) + row_cost, 6)
         group["turns"] += 1
         started = row.started_at.isoformat()
         if started < group["started_at"]:
@@ -181,6 +230,7 @@ async def get_call_traces(
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     organization_id = _tenant(user)
+    await _ensure_prices()
     call = await session.get(Call, call_id)
     if call is None or call.organization_id != organization_id:
         raise HTTPException(status_code=404, detail="not found")
@@ -193,6 +243,7 @@ async def get_call_traces(
     return {
         "call_id": str(call_id),
         "conversation_id": str(call.conversation_id),
+        "pricing_source": pricing_source(),
         "summary": _call_summary(rows),
         "turns": [_turn_view(row) for row in rows],
     }
@@ -205,6 +256,7 @@ async def get_conversation_traces(
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     organization_id = _tenant(user)
+    await _ensure_prices()
     conversation = await session.scalar(
         select(Conversation).where(
             Conversation.id == conversation_id,
@@ -222,6 +274,7 @@ async def get_conversation_traces(
     return {
         "call_id": None,
         "conversation_id": str(conversation_id),
+        "pricing_source": pricing_source(),
         "summary": _call_summary(rows),
         "turns": [_turn_view(row) for row in rows],
     }
