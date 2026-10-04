@@ -1,0 +1,354 @@
+---
+import SignalScale from './SignalScale.astro';
+import CategoricalIndicator from './CategoricalIndicator.astro';
+import { AgentSignalsProjector, EMPTY_AGENT_SIGNALS } from '../../lib/agent-signals/model';
+import { DEMO_FRAMES } from '../../lib/agent-signals/demo';
+import type { AgentSignalsEnvelope } from '../../lib/agent-signals/types';
+
+interface Props {
+  id?: string;
+  initialData?: AgentSignalsEnvelope;
+  autoDemo?: boolean;
+  demoFrames?: readonly AgentSignalsEnvelope[];
+  demoIntervalMs?: number;
+  class?: string;
+}
+
+const {
+  id = `agent-signals-${crypto.randomUUID()}`,
+  autoDemo = false,
+  initialData = autoDemo ? DEMO_FRAMES[0] : EMPTY_AGENT_SIGNALS,
+  demoFrames = DEMO_FRAMES,
+  demoIntervalMs = 1500,
+  class: className,
+} = Astro.props;
+
+const projector = new AgentSignalsProjector();
+const initial = projector.project(initialData);
+---
+
+<section
+  id={id}
+  class:list={['agent-signals', className]}
+  data-agent-signals
+  data-initial={JSON.stringify(initialData)}
+  data-demo={JSON.stringify(demoFrames)}
+  data-auto-demo={String(autoDemo)}
+  data-demo-interval={String(demoIntervalMs)}
+  aria-label="Indicadores del agente"
+>
+  <div class="agent-signals__scales">
+    <SignalScale snapshot={initial.scales.satisfaction} />
+    <SignalScale snapshot={initial.scales.tension} />
+    <SignalScale snapshot={initial.scales.fluency} />
+    <SignalScale snapshot={initial.scales.hallucination} />
+  </div>
+
+  <div class="agent-signals__categories">
+    <CategoricalIndicator snapshot={initial.categories.intent} />
+    <CategoricalIndicator snapshot={initial.categories.human} />
+    <CategoricalIndicator snapshot={initial.categories.schedule} />
+  </div>
+</section>
+
+<script>
+  import {
+    ArrowRight,
+    CircleHelp,
+    ClockArrowUp,
+    LockKeyhole,
+    Pencil,
+    Phone,
+    UserRound,
+    UserRoundCheck,
+    UserRoundX,
+    X,
+    createIcons,
+  } from 'lucide';
+  import { AgentSignalsProjector, snapScale } from '../../lib/agent-signals/model';
+  import type { AgentSignalsEnvelope, AgentSignalsSnapshot, CategoryKey, ScaleKey } from '../../lib/agent-signals/types';
+
+  interface MascotElement extends HTMLElement {
+    setEmotion?: (emotion: string) => void;
+    lookAt?: (clientX: number, clientY: number) => void;
+  }
+
+  interface PanelElement extends HTMLElement {
+    setSignals?: (data: AgentSignalsEnvelope) => void;
+    resetSignalHistory?: () => void;
+    startDemo?: () => void;
+    stopDemo?: () => void;
+    __agentSignalsCleanup?: () => void;
+  }
+
+  const LUCIDE_ICONS = {
+    ArrowRight,
+    CircleHelp,
+    ClockArrowUp,
+    LockKeyhole,
+    Pencil,
+    Phone,
+    UserRound,
+    UserRoundCheck,
+    UserRoundX,
+    X,
+  };
+
+  function parse<T>(value: string | undefined, fallback: T): T {
+    if (!value) return fallback;
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function renderLucide(): void {
+    createIcons({
+      icons: LUCIDE_ICONS,
+      attrs: {
+        'stroke-width': 1.7,
+        width: 26,
+        height: 26,
+        'aria-hidden': 'true',
+      },
+    });
+  }
+
+  function randomViewportTarget(root: HTMLElement): { x: number; y: number; sector: string } {
+    const rect = root.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const sectors = ['left', 'right', 'up', 'down', 'up-left', 'up-right', 'down-left', 'down-right'] as const;
+    const sector = sectors[Math.floor(Math.random() * sectors.length)];
+    const horizontal = Math.max(80, innerWidth * (.2 + Math.random() * .26));
+    const vertical = Math.max(80, innerHeight * (.2 + Math.random() * .28));
+    const driftX = innerWidth * (Math.random() * .12 - .06);
+    const driftY = innerHeight * (Math.random() * .12 - .06);
+    let x = centerX;
+    let y = centerY;
+
+    if (sector.includes('left')) x -= horizontal;
+    if (sector.includes('right')) x += horizontal;
+    if (sector === 'up' || sector === 'down') x += driftX;
+    if (sector.includes('up')) y -= vertical;
+    if (sector.includes('down')) y += vertical;
+    if (sector === 'left' || sector === 'right') y += driftY;
+
+    const marginX = Math.max(24, innerWidth * .04);
+    const marginY = Math.max(24, innerHeight * .05);
+    return {
+      x: Math.min(innerWidth - marginX, Math.max(marginX, x)),
+      y: Math.min(innerHeight - marginY, Math.max(marginY, y)),
+      sector,
+    };
+  }
+
+  function initializePanels(): void {
+    document.querySelectorAll<PanelElement>('[data-agent-signals]').forEach((root) => {
+      root.__agentSignalsCleanup?.();
+
+      const projector = new AgentSignalsProjector();
+      const initial = parse<AgentSignalsEnvelope | null>(root.dataset.initial, null);
+      const demo = parse<AgentSignalsEnvelope[]>(root.dataset.demo, []);
+      const demoInterval = Math.max(250, Number(root.dataset.demoInterval) || 1500);
+      const timers = new Set<number>();
+      const categoryTimers = new Map<CategoryKey, Set<number>>();
+      let demoTimer: number | undefined;
+      let demoIndex = 0;
+
+      const schedule = (callback: () => void, delay: number, group?: Set<number>): number => {
+        const timer = window.setTimeout(() => {
+          timers.delete(timer);
+          group?.delete(timer);
+          callback();
+        }, delay);
+        timers.add(timer);
+        group?.add(timer);
+        return timer;
+      };
+
+      const startIndependentGaze = (mascot: MascotElement): void => {
+        const sequence = (): void => {
+          if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+          const count = 1 + Math.floor(Math.random() * 3);
+          let index = 0;
+
+          const glance = (): void => {
+            if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            if (!mascot.lookAt) {
+              schedule(glance, 50);
+              return;
+            }
+            const target = randomViewportTarget(mascot);
+            mascot.dataset.gazeTarget = `${Math.round(target.x)},${Math.round(target.y)}`;
+            mascot.dataset.gazeSector = target.sector;
+            mascot.lookAt(target.x, target.y);
+            index += 1;
+            const hold = 1200 + Math.random() * 1800;
+            schedule(index < count ? glance : sequence, hold);
+          };
+
+          glance();
+        };
+
+        schedule(sequence, 500 + Math.random() * 1100);
+      };
+
+      const updateScale = (key: ScaleKey, snapshot: AgentSignalsSnapshot['scales'][ScaleKey]): void => {
+        const card = root.querySelector<HTMLElement>(`[data-signal-scale="${key}"]`);
+        if (!card) return;
+        const percentage = card.querySelector<HTMLElement>('[data-scale-percentage]');
+        const meter = card.querySelector<HTMLElement>('[data-scale-meter]');
+        const mascotWrap = card.querySelector<HTMLElement>('[data-scale-mascot]');
+        const mascot = card.querySelector<MascotElement>('[data-mascot-face]');
+        const snapped = snapScale(snapshot.score);
+
+        if (percentage) percentage.textContent = `${snapshot.percentage}%`;
+        if (meter) {
+          meter.setAttribute('aria-valuenow', snapshot.score.toFixed(2));
+          meter.setAttribute('aria-valuetext', `${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`);
+          meter.setAttribute('aria-label', `${snapshot.title}: ${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`);
+        }
+        mascotWrap?.style.setProperty('--position', String(snapped.position));
+        mascot?.setEmotion?.(snapped.emotion);
+      };
+
+      const updateCategory = (key: CategoryKey, snapshot: AgentSignalsSnapshot['categories'][CategoryKey]): void => {
+        const card = root.querySelector<HTMLElement>(`[data-category="${key}"]`);
+        if (!card || card.dataset.value === snapshot.value) return;
+        card.dataset.value = snapshot.value;
+        const label = card.querySelector<HTMLElement>('[data-category-label]');
+        const icon = card.querySelector<HTMLElement>('[data-category-icon]');
+        const stops = [0, 1, 2, 3].map((index) => card.querySelector<SVGStopElement>(`[data-category-stop="${index}"]`));
+        const pending = categoryTimers.get(key) ?? new Set<number>();
+        pending.forEach((timer) => {
+          window.clearTimeout(timer);
+          timers.delete(timer);
+        });
+        pending.clear();
+        categoryTimers.set(key, pending);
+
+        const commit = (): void => {
+          stops.forEach((stop, index) => stop?.setAttribute('stop-color', snapshot.gradient[index]));
+          if (label) label.textContent = snapshot.label;
+          if (icon) icon.innerHTML = `<i data-lucide="${snapshot.icon}"></i>`;
+          card.setAttribute('aria-label', `${snapshot.title}: ${snapshot.label}`);
+          renderLucide();
+        };
+
+        if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          commit();
+          return;
+        }
+
+        card.dataset.changing = 'out';
+        schedule(() => {
+          commit();
+          card.dataset.changing = 'in';
+          schedule(() => { delete card.dataset.changing; }, 220, pending);
+        }, 140, pending);
+      };
+
+      const setSignals = (data: AgentSignalsEnvelope): void => {
+        const snapshot = projector.project(data);
+        (Object.keys(snapshot.scales) as ScaleKey[]).forEach((key) => updateScale(key, snapshot.scales[key]));
+        (Object.keys(snapshot.categories) as CategoryKey[]).forEach((key) => updateCategory(key, snapshot.categories[key]));
+        root.dispatchEvent(new CustomEvent('agent-signals:rendered', { detail: snapshot }));
+      };
+
+      const stopDemo = (): void => {
+        if (demoTimer !== undefined) window.clearInterval(demoTimer);
+        demoTimer = undefined;
+      };
+
+      const startDemo = (): void => {
+        stopDemo();
+        if (!demo.length) return;
+        demoIndex = 0;
+        projector.reset();
+        setSignals(demo[demoIndex]);
+        demoTimer = window.setInterval(() => {
+          demoIndex = (demoIndex + 1) % demo.length;
+          setSignals(demo[demoIndex]);
+        }, demoInterval);
+      };
+
+      const onUpdate = (event: Event): void => {
+        const payload = (event as CustomEvent<AgentSignalsEnvelope>).detail;
+        if (payload?.signals) setSignals(payload);
+      };
+
+      const cleanup = (): void => {
+        stopDemo();
+        timers.forEach((timer) => window.clearTimeout(timer));
+        timers.clear();
+        categoryTimers.clear();
+        root.removeEventListener('agent-signals:update', onUpdate);
+        document.removeEventListener('astro:before-swap', cleanup);
+      };
+
+      Object.assign(root, {
+        setSignals,
+        resetSignalHistory: () => projector.reset(),
+        startDemo,
+        stopDemo,
+      });
+      root.addEventListener('agent-signals:update', onUpdate);
+      document.addEventListener('astro:before-swap', cleanup, { once: true });
+      root.__agentSignalsCleanup = cleanup;
+
+      renderLucide();
+      root.querySelectorAll<MascotElement>('[data-mascot-face]').forEach(startIndependentGaze);
+      if (initial) setSignals(initial);
+      if (root.dataset.autoDemo === 'true') startDemo();
+    });
+  }
+
+  initializePanels();
+  document.addEventListener('astro:page-load', initializePanels);
+</script>
+
+<style>
+  .agent-signals {
+    --ui-graphite: #414141;
+    --ui-amber: #f7c974;
+    --ui-cream: #faeccf;
+    --ui-paper: #f8f8f8;
+    --radius-max: 32px;
+    --radius-ui: min(var(--radius-max), 50%);
+    width: min(1380px, 100%);
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+    gap: 18px;
+    align-items: start;
+    font-family: "Urbanist", sans-serif;
+  }
+
+  .agent-signals__scales {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    gap: 18px;
+  }
+
+  .agent-signals__categories { display: grid; gap: 14px; }
+
+  @media (max-width: 1180px) {
+    .agent-signals { grid-template-columns: 1fr; }
+    .agent-signals__categories { grid-template-columns: repeat(3, minmax(210px, 1fr)); }
+  }
+
+  @media (max-width: 860px) {
+    .agent-signals__scales {
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      overflow-x: auto;
+      padding-bottom: 10px;
+      scroll-snap-type: x proximity;
+    }
+
+    .agent-signals__scales :global(.signal-scale) { scroll-snap-align: start; }
+    .agent-signals__categories { grid-template-columns: 1fr; }
+  }
+</style>
