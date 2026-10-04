@@ -3,13 +3,21 @@ import {
   AMBER,
   DEFAULT_EMOTIONS,
   GRAPHITE,
+  type EmotionDefinition,
   mouthPath,
   roundedRectPath,
   rotationTransform,
 } from './mascot-core';
 
+type GradientStops = readonly [string, string, string, string];
+type GradientEmotion = EmotionDefinition & { gradient?: GradientStops };
+type GradientEmotionMap = Record<string, GradientEmotion>;
+
 interface Props {
-  emotion?: keyof typeof DEFAULT_EMOTIONS;
+  emotion?: string;
+  emotions?: GradientEmotionMap;
+  mergeDefaultEmotions?: boolean;
+  pointerTracking?: boolean;
   class?: string;
   id?: string;
   ariaLabel?: string;
@@ -17,26 +25,61 @@ interface Props {
 
 const {
   emotion = 'default-happy',
+  emotions,
+  mergeDefaultEmotions = true,
+  pointerTracking = true,
   class: className,
   id = `mascot-${crypto.randomUUID()}`,
   ariaLabel = 'Mascota emocional interactiva',
 } = Astro.props;
-const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['default-happy'].state;
+
+const emotionMap: GradientEmotionMap = emotions
+  ? mergeDefaultEmotions
+    ? { ...DEFAULT_EMOTIONS, ...emotions }
+    : emotions
+  : DEFAULT_EMOTIONS;
+const selectedInitialEmotion = emotionMap[emotion] ? emotion : 'default-happy';
+const initialDefinition = emotionMap[selectedInitialEmotion] ?? DEFAULT_EMOTIONS['default-happy'];
+const initialState = initialDefinition.state;
+const initialGradient = initialDefinition.gradient ?? [AMBER, AMBER, AMBER, AMBER];
+const gradientId = `${id.replace(/[^a-zA-Z0-9_-]/g, '-')}-gradient`;
+const gradientCx = initialState.faceX - initialState.faceWidth * 0.25;
+const gradientCy = initialState.faceY - initialState.faceHeight * 0.32;
+const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight) * 1.22;
 ---
 
 <div
   id={id}
   class={className}
   data-mascot-face
-  data-emotion={emotion}
-  data-emotions={JSON.stringify(DEFAULT_EMOTIONS)}
+  data-emotion={selectedInitialEmotion}
+  data-emotions={JSON.stringify(emotionMap)}
+  data-pointer-tracking={String(pointerTracking)}
 >
   <svg viewBox="-180 -180 360 360" width="100%" height="100%" role="img" aria-label={ariaLabel}>
+    <defs>
+      <radialGradient
+        id={gradientId}
+        data-gradient
+        gradientUnits="userSpaceOnUse"
+        cx={gradientCx}
+        cy={gradientCy}
+        fx={gradientCx}
+        fy={gradientCy}
+        r={gradientRadius}
+        gradientTransform={rotationTransform(initialState.faceRotation, initialState.faceX, initialState.faceY)}
+      >
+        <stop data-stop="0" offset="0%" stop-color={initialGradient[0]} />
+        <stop data-stop="1" offset="32%" stop-color={initialGradient[1]} />
+        <stop data-stop="2" offset="72%" stop-color={initialGradient[2]} />
+        <stop data-stop="3" offset="100%" stop-color={initialGradient[3]} />
+      </radialGradient>
+    </defs>
     <path
       data-face
       d={roundedRectPath(initialState.faceX, initialState.faceY, initialState.faceWidth, initialState.faceHeight, initialState.faceRadius)}
       transform={rotationTransform(initialState.faceRotation, initialState.faceX, initialState.faceY)}
-      fill={AMBER}
+      fill={`url(#${gradientId})`}
     />
     <g data-features>
       <g data-eyes>
@@ -65,7 +108,12 @@ const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['defau
     setEmotion?: (emotion: string) => void;
     getEmotion?: () => string;
     blink?: () => void;
+    lookAt?: (clientX: number, clientY: number) => void;
+    lookCenter?: () => void;
   }
+
+  type GradientStops = readonly [string, string, string, string];
+  type RuntimeEmotionMap = EmotionMap & Record<string, EmotionMap[string] & { gradient?: GradientStops }>;
 
   interface EyePose {
     x: number;
@@ -76,14 +124,41 @@ const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['defau
     rotation: number;
   }
 
+  const FLAT_AMBER: GradientStops = ['#f7c974', '#f7c974', '#f7c974', '#f7c974'];
+  const TRACKING_DEADZONE = 0.07;
+  const MIRROR_ENTER = 0.38;
+  const MIRROR_EXIT = 0.1;
+
+  function applyDeadzone(value: number): number {
+    const absolute = Math.abs(value);
+    if (absolute <= TRACKING_DEADZONE) return 0;
+    return Math.sign(value) * ((absolute - TRACKING_DEADZONE) / (1 - TRACKING_DEADZONE));
+  }
+
+  function parseHex(color: string): [number, number, number] {
+    const value = color.replace('#', '');
+    const full = value.length === 3 ? value.split('').map((part) => part + part).join('') : value;
+    const parsed = Number.parseInt(full, 16);
+    return [(parsed >> 16) & 255, (parsed >> 8) & 255, parsed & 255];
+  }
+
+  function interpolateColor(from: string, to: string, progress: number): string {
+    const start = parseHex(from);
+    const end = parseHex(to);
+    return `rgb(${start.map((channel, index) => Math.round(lerp(channel, end[index], progress))).join(' ')})`;
+  }
+
   function initializeMascots(): void {
     document.querySelectorAll<MascotElement>('[data-mascot-face]:not([data-mascot-ready])').forEach((root) => {
       root.dataset.mascotReady = 'true';
-      const emotions = JSON.parse(root.dataset.emotions ?? '{}') as EmotionMap;
+      const emotions = JSON.parse(root.dataset.emotions ?? '{}') as RuntimeEmotionMap;
       let selectedEmotion = root.dataset.emotion && emotions[root.dataset.emotion] ? root.dataset.emotion : 'default-happy';
       let displayState = { ...emotions[selectedEmotion].state };
+      let displayGradient = [...(emotions[selectedEmotion].gradient ?? FLAT_AMBER)];
       let transitionFrom = { ...displayState };
       let transitionTo = { ...displayState };
+      let gradientFrom = [...displayGradient];
+      let gradientTo = [...displayGradient];
       let transitionStartedAt = 0;
       let transitionActive = false;
       let targetX = 0;
@@ -107,6 +182,8 @@ const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['defau
       const mouth = root.querySelector<SVGPathElement>('[data-mouth]')!;
       const features = root.querySelector<SVGGElement>('[data-features]')!;
       const eyes = root.querySelector<SVGGElement>('[data-eyes]')!;
+      const gradient = root.querySelector<SVGRadialGradientElement>('[data-gradient]')!;
+      const gradientStops = [0, 1, 2, 3].map((index) => root.querySelector<SVGStopElement>(`[data-stop="${index}"]`)!);
 
       function setEmotion(next: string): void {
         if (!emotions[next] || next === selectedEmotion) return;
@@ -115,9 +192,14 @@ const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['defau
         root.dataset.emotion = next;
         transitionFrom = { ...displayState };
         transitionTo = { ...emotions[next].state };
+        gradientFrom = [...displayGradient];
+        gradientTo = [...(emotions[next].gradient ?? FLAT_AMBER)];
         transitionStartedAt = performance.now();
         transitionActive = !reducedMotion.matches;
-        if (!transitionActive) displayState = { ...transitionTo };
+        if (!transitionActive) {
+          displayState = { ...transitionTo };
+          displayGradient = [...gradientTo];
+        }
         if (next === 'privacy') {
           targetX = -0.8;
           targetY = 0;
@@ -182,10 +264,39 @@ const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['defau
         if (!mirrorActive) mirrorProgress = target;
       }
 
+      function lookAt(clientX: number, clientY: number): void {
+        if (reducedMotion.matches) return;
+        if (selectedEmotion === 'privacy') {
+          targetX = -0.8;
+          targetY = 0;
+          requestMirror(true);
+          return;
+        }
+        const rect = root.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const spanX = clientX < centerX ? Math.max(1, centerX) : Math.max(1, innerWidth - centerX);
+        const spanY = clientY < centerY ? Math.max(1, centerY) : Math.max(1, innerHeight - centerY);
+        const normalizedX = clamp((clientX - centerX) / spanX, -1, 1);
+        const normalizedY = clamp((clientY - centerY) / spanY, -1, 1);
+        targetX = applyDeadzone(normalizedX);
+        targetY = applyDeadzone(normalizedY);
+        if (!mirrored && normalizedX <= -MIRROR_ENTER) requestMirror(true);
+        else if (mirrored && normalizedX >= -MIRROR_EXIT) requestMirror(false);
+      }
+
+      function lookCenter(): void {
+        targetX = 0;
+        targetY = 0;
+        requestMirror(false);
+      }
+
       function render(now: number): void {
         if (transitionActive) {
           const raw = clamp((now - transitionStartedAt) / 360, 0, 1);
-          displayState = interpolateFaceState(transitionFrom, transitionTo, easeInOutCubic(raw));
+          const eased = easeInOutCubic(raw);
+          displayState = interpolateFaceState(transitionFrom, transitionTo, eased);
+          displayGradient = gradientFrom.map((color, index) => interpolateColor(color, gradientTo[index], eased));
           if (raw === 1) transitionActive = false;
         }
         trackingX += (targetX - trackingX) * 0.1;
@@ -210,6 +321,15 @@ const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['defau
         }
         face.setAttribute('d', roundedRectPath(displayState.faceX, displayState.faceY, displayState.faceWidth, displayState.faceHeight, displayState.faceRadius));
         face.setAttribute('transform', rotationTransform(displayState.faceRotation, displayState.faceX, displayState.faceY));
+        const gradientCx = displayState.faceX - displayState.faceWidth * 0.25;
+        const gradientCy = displayState.faceY - displayState.faceHeight * 0.32;
+        gradient.setAttribute('cx', String(gradientCx));
+        gradient.setAttribute('cy', String(gradientCy));
+        gradient.setAttribute('fx', String(gradientCx));
+        gradient.setAttribute('fy', String(gradientCy));
+        gradient.setAttribute('r', String(Math.max(displayState.faceWidth, displayState.faceHeight) * 1.22));
+        gradient.setAttribute('gradientTransform', rotationTransform(displayState.faceRotation, displayState.faceX, displayState.faceY));
+        gradientStops.forEach((stop, index) => stop.setAttribute('stop-color', displayGradient[index]));
         const leftBase = eyePose('left');
         const rightBase = eyePose('right');
         const left = interpolateEye(leftBase, mirroredEyeTarget(rightBase), mirrorProgress);
@@ -235,26 +355,16 @@ const initialState = DEFAULT_EMOTIONS[emotion]?.state ?? DEFAULT_EMOTIONS['defau
       }
 
       window.addEventListener('pointermove', (event) => {
-        if (reducedMotion.matches) return;
-        if (selectedEmotion === 'privacy') {
-          targetX = -0.8;
-          targetY = 0;
-          return;
-        }
-        const rect = root.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2;
-        const centerY = rect.top + rect.height / 2;
-        const spanX = event.clientX < centerX ? Math.max(1, centerX) : Math.max(1, innerWidth - centerX);
-        const spanY = event.clientY < centerY ? Math.max(1, centerY) : Math.max(1, innerHeight - centerY);
-        targetX = clamp((event.clientX - centerX) / spanX, -1, 1);
-        targetY = clamp((event.clientY - centerY) / spanY, -1, 1);
-        if (!mirrored && targetX <= -0.38) requestMirror(true);
-        else if (mirrored && targetX >= -0.1) requestMirror(false);
+        if (root.dataset.pointerTracking === 'true') lookAt(event.clientX, event.clientY);
       }, { passive: true });
 
-      root.setEmotion = setEmotion;
-      root.getEmotion = () => selectedEmotion;
-      root.blink = forceBlink;
+      Object.assign(root, {
+        setEmotion,
+        getEmotion: () => selectedEmotion,
+        blink: forceBlink,
+        lookAt,
+        lookCenter,
+      });
       requestAnimationFrame(render);
     });
   }
