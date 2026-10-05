@@ -143,11 +143,18 @@ export class AgentSignalsProjector {
     const satisfaction = centroid(signals.satisfaction.probabilities, SATISFACTION);
     const tension = centroid(signals.frustration.probabilities, TENSION);
 
-    if (signals.confirmation) this.#confirmation.push(CONFIRMATION[signals.confirmation.value]);
-    if (signals.integrity) this.#integrityRisk.push(INTEGRITY_RISK[signals.integrity.value]);
+    if (!envelope.aggregated) {
+      if (signals.confirmation) this.#confirmation.push(CONFIRMATION[signals.confirmation.value]);
+      if (signals.integrity) this.#integrityRisk.push(INTEGRITY_RISK[signals.integrity.value]);
+    }
 
-    const fluency = this.#confirmation.average();
-    const hallucinationDisplay = 5 - this.#integrityRisk.average();
+    const fluency = envelope.aggregated && signals.confirmation
+      ? centroid(signals.confirmation.probabilities, CONFIRMATION)
+      : this.#confirmation.average();
+    const integrityRisk = envelope.aggregated && signals.integrity
+      ? centroid(signals.integrity.probabilities, INTEGRITY_RISK)
+      : this.#integrityRisk.average();
+    const hallucinationDisplay = 5 - integrityRisk;
 
     return {
       scales: {

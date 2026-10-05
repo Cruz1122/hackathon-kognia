@@ -173,7 +173,7 @@ function sessionFields(): DetailField[] {
 
 function renderSession(): void {
   const root = document.getElementById('detailPanel');
-  const panel = root?.querySelector('#sessionPanel');
+  const panel = root?.querySelector('#sessionSummary');
   if (!panel) return;
   panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado de la llamada</h2><div class="detail-sheet"><section class="detail-group">${fieldsMarkup(sessionFields())}</section></div>`;
 }

@@ -9,6 +9,9 @@ from sqlalchemy import and_, case, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import (
+    AgentSnapshot,
+    Call,
+    CallStatus,
     Conversation,
     Message,
     Objection,
@@ -32,6 +35,34 @@ class AnalyticsRepository:
             )
         )
         return int(value or 0)
+
+    @staticmethod
+    async def get_final_agent_signals(
+        session: AsyncSession,
+        organization_id: uuid.UUID,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> list[dict[str, Any]]:
+        ended_conversations = (
+            select(Call.conversation_id)
+            .where(
+                Call.organization_id == organization_id,
+                Call.status == CallStatus.ENDED,
+                Call.ended_at.is_not(None),
+                Call.ended_at >= date_from,
+                Call.ended_at < date_to,
+            )
+            .distinct()
+        )
+        rows = (
+            await session.scalars(
+                select(AgentSnapshot.data).where(
+                    AgentSnapshot.organization_id == organization_id,
+                    AgentSnapshot.conversation_id.in_(ended_conversations),
+                )
+            )
+        ).all()
+        return [row for row in rows if isinstance(row, dict)]
 
     @staticmethod
     async def get_opportunity_summary(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> dict[str, int]:

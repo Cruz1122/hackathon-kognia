@@ -1,6 +1,7 @@
 import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { applyCallAgentSignals } from './agent-signals';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -159,6 +160,8 @@ export function bootEventsMonitor(apiUrl: string): () => void {
       node.className = 'token';
       node.textContent = String(payload.text ?? '');
       ensureAgent().append(node);
+    } else if (type === 'agent.signals') {
+      applyCallAgentSignals(payload);
     } else if (type === 'tool.started') {
       enterLiveFeed();
       const toolCallId = String(payload.tool_call_id ?? payload.id ?? `${String(payload.tool ?? 'tool')}-${Date.now()}`);

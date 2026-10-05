@@ -31,7 +31,7 @@ class ModelConfig:
 
 MODEL_CHAINS: dict[AppEnv, tuple[tuple[Provider, str], ...]] = {
     AppEnv.TEST: (
-        (Provider.OPENAI, "gpt-4o-mini"),
+        (Provider.OPENAI, "gpt-4.1"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7"),
         (Provider.GROQ, "llama-3.3-70b-versatile"),
@@ -72,7 +72,7 @@ def get_model_chain(app_env: AppEnv | str | None = None) -> tuple[ModelConfig, .
     return tuple(
         ModelConfig(
             provider=provider,
-            model=model,
+            model=(os.getenv('OPENAI_MODEL', model).strip() or model) if provider is Provider.OPENAI else model,
             api_key=_api_key_for(provider),
             base_url=BASE_URLS[provider],
         )

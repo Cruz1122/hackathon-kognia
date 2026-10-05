@@ -1,3 +1,7 @@
+---
+import AgentSignalsPanel from '../agent-signals/AgentSignalsPanel.astro';
+---
+
 <section class="section-view section-view--dashboard analytics-dashboard" data-section="dashboard" aria-label="Dashboard" aria-hidden="true">
   <div class="dashboard-page">
     <header class="dashboard-topline">
@@ -15,6 +19,16 @@
         <article class="dashboard-kpi dashboard-kpi--priority"><small>Revenue recuperado</small><strong id="dashboardRecoveredRevenue">—</strong><span id="dashboardRecoveredRevenueDelta" class="dashboard-kpi__delta">vs período anterior</span><div class="dashboard-sparkline" id="dashboardRecoveredRevenueSparkline" role="img" aria-label="Tendencia de revenue recuperado"></div></article>
       </div>
       <div class="dashboard-secondary"><span><strong id="dashboardConversations">—</strong> conversaciones</span><span><strong id="dashboardRecoveredSales">—</strong> ventas recuperadas</span><span class="dashboard-secondary__recovery"><span><strong id="dashboardRecoveryRate">—</strong> tasa de recuperación</span><span class="dashboard-progress" aria-hidden="true"><span id="dashboardRecoveryMeter"></span></span></span></div>
+      <section class="dashboard-signals" id="dashboardAgentSignalsSection" hidden aria-labelledby="dashboardAgentSignalsTitle">
+        <div class="dashboard-signals__head">
+          <div>
+            <p class="dashboard-signals__kicker">JEV · promedio del período</p>
+            <h3 id="dashboardAgentSignalsTitle">Señales finales de las llamadas</h3>
+          </div>
+          <p class="dashboard-signals__sample" id="dashboardAgentSignalsSample">—</p>
+        </div>
+        <AgentSignalsPanel id="dashboardAgentSignals" />
+      </section>
       <div class="dashboard-grid">
         <article class="dashboard-card dashboard-card--conversion"><div class="dashboard-card-head"><div><h3>Conversión diaria</h3><p>Qué proporción de oportunidades termina en venta.</p></div></div><div class="dashboard-chart-host" id="dashboardConversionChart" role="img" aria-describedby="dashboardConversionInsight" aria-label="Tasa de conversión por día"></div><p class="dashboard-chart-insight" id="dashboardConversionInsight"></p></article>
         <article class="dashboard-card dashboard-card--recovery"><div class="dashboard-card-head"><div><h3>Recuperación</h3><p>Qué parte del seguimiento vuelve a convertirse.</p></div></div><div class="dashboard-chart-host" id="dashboardRecoveryChart" role="img" aria-describedby="dashboardRecoveryInsight" aria-label="Porcentaje de oportunidades recuperadas"></div><p class="dashboard-chart-insight" id="dashboardRecoveryInsight"></p></article>

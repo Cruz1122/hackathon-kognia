@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import select
 
-from ..db.models import AgentOperation, Call, CallStatus, Conversation
+from ..db.models import AgentOperation, Call, CallStatus, ChannelBinding, Conversation, Message, MessageRole
 from ..db.session import get_session_factory
 from .sessions import registry
 
@@ -33,12 +33,23 @@ async def restore_outbound(body: dict):
             Conversation.organization_id == operation.organization_id))
         if not conversation:
             return None
+        # The destination is the verified channel identity, not a stored tool argument.
+        from ..whatsapp.identity import verified_destination
+        binding = await verified_destination(db, operation.organization_id, operation.conversation_id)
+        callee = binding.phone if binding else None
+        if not callee:
+            return None
         session = registry.create(telnyx_call_control_id=control,
             call_leg_id=body.get('call_leg_id'), call_session_id=body.get('call_session_id'),
-            caller=str(body.get('from') or ''), callee=operation.arguments['phone'], call_id=call_id)
+            caller=str(body.get('from') or ''), callee=callee, call_id=call_id)
         session.organization_id = operation.organization_id
         session.conversation_id = operation.conversation_id
         session.system_user_id = conversation.created_by
+        rows = (await db.scalars(select(Message).where(
+            Message.conversation_id == operation.conversation_id,
+            Message.role.in_([MessageRole.USER, MessageRole.ASSISTANT])
+        ).order_by(Message.created_at.desc(), Message.id.desc()).limit(24))).all()
+        session.history = [{'role': row.role.value, 'content': row.content} for row in reversed(rows)]
         if call is None:
             db.add(Call(id=call_id, organization_id=operation.organization_id,
                 conversation_id=operation.conversation_id, status=CallStatus.ACTIVE,

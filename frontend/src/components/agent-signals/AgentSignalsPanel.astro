@@ -1,6 +1,8 @@
 ---
 import SignalScale from './SignalScale.astro';
 import CategoricalIndicator from './CategoricalIndicator.astro';
+import CompactSignalScale from './CompactSignalScale.astro';
+import CompactCategoricalIndicator from './CompactCategoricalIndicator.astro';
 import { AgentSignalsProjector, EMPTY_AGENT_SIGNALS } from '../../lib/agent-signals/model';
 import { DEMO_FRAMES } from '../../lib/agent-signals/demo';
 import type { AgentSignalsEnvelope } from '../../lib/agent-signals/types';
@@ -11,6 +13,7 @@ interface Props {
   autoDemo?: boolean;
   demoFrames?: readonly AgentSignalsEnvelope[];
   demoIntervalMs?: number;
+  variant?: 'full' | 'compact';
   class?: string;
 }
 
@@ -18,8 +21,9 @@ const {
   id = `agent-signals-${crypto.randomUUID()}`,
   autoDemo = false,
   initialData = autoDemo ? DEMO_FRAMES[0] : EMPTY_AGENT_SIGNALS,
-  demoFrames = DEMO_FRAMES,
+  demoFrames = autoDemo ? DEMO_FRAMES : [],
   demoIntervalMs = 1500,
+  variant = 'full',
   class: className,
 } = Astro.props;
 
@@ -29,7 +33,7 @@ const initial = projector.project(initialData);
 
 <section
   id={id}
-  class:list={['agent-signals', className]}
+  class:list={['agent-signals', variant === 'compact' && 'agent-signals--compact', className]}
   data-agent-signals
   data-initial={JSON.stringify(initialData)}
   data-demo={JSON.stringify(demoFrames)}
@@ -37,18 +41,42 @@ const initial = projector.project(initialData);
   data-demo-interval={String(demoIntervalMs)}
   aria-label="Indicadores del agente"
 >
-  <div class="agent-signals__scales">
-    <SignalScale snapshot={initial.scales.satisfaction} />
-    <SignalScale snapshot={initial.scales.tension} />
-    <SignalScale snapshot={initial.scales.fluency} />
-    <SignalScale snapshot={initial.scales.hallucination} />
-  </div>
+  {variant === 'compact' ? (
+    <>
+      <section class="agent-signals__compact-group">
+        <h3>Escalas</h3>
+        <div class="agent-signals__scales">
+          <CompactSignalScale snapshot={initial.scales.satisfaction} />
+          <CompactSignalScale snapshot={initial.scales.tension} />
+          <CompactSignalScale snapshot={initial.scales.fluency} />
+          <CompactSignalScale snapshot={initial.scales.hallucination} />
+        </div>
+      </section>
+      <section class="agent-signals__compact-group">
+        <h3>Clasificación</h3>
+        <dl class="agent-signals__categories detail-fields">
+          <CompactCategoricalIndicator snapshot={initial.categories.intent} />
+          <CompactCategoricalIndicator snapshot={initial.categories.human} />
+          <CompactCategoricalIndicator snapshot={initial.categories.schedule} />
+        </dl>
+      </section>
+    </>
+  ) : (
+    <>
+      <div class="agent-signals__scales">
+        <SignalScale snapshot={initial.scales.satisfaction} />
+        <SignalScale snapshot={initial.scales.tension} />
+        <SignalScale snapshot={initial.scales.fluency} />
+        <SignalScale snapshot={initial.scales.hallucination} />
+      </div>
 
-  <div class="agent-signals__categories">
-    <CategoricalIndicator snapshot={initial.categories.intent} />
-    <CategoricalIndicator snapshot={initial.categories.human} />
-    <CategoricalIndicator snapshot={initial.categories.schedule} />
-  </div>
+      <div class="agent-signals__categories">
+        <CategoricalIndicator snapshot={initial.categories.intent} />
+        <CategoricalIndicator snapshot={initial.categories.human} />
+        <CategoricalIndicator snapshot={initial.categories.schedule} />
+      </div>
+    </>
+  )}
 </section>
 
 <script>
@@ -78,6 +106,8 @@ const initial = projector.project(initialData);
     resetSignalHistory?: () => void;
     startDemo?: () => void;
     stopDemo?: () => void;
+    startGaze?: () => void;
+    stopGaze?: () => void;
     __agentSignalsCleanup?: () => void;
   }
 
@@ -103,8 +133,9 @@ const initial = projector.project(initialData);
     }
   }
 
-  function renderLucide(): void {
+  function renderLucide(root: Element): void {
     createIcons({
+      root,
       icons: LUCIDE_ICONS,
       attrs: {
         'stroke-width': 1.7,
@@ -154,6 +185,9 @@ const initial = projector.project(initialData);
       const demoInterval = Math.max(250, Number(root.dataset.demoInterval) || 1500);
       const timers = new Set<number>();
       const categoryTimers = new Map<CategoryKey, Set<number>>();
+      const gazeTimers = new Map<MascotElement, Set<number>>();
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      let gazeEnabled = true;
       let demoTimer: number | undefined;
       let demoIndex = 0;
 
@@ -169,15 +203,17 @@ const initial = projector.project(initialData);
       };
 
       const startIndependentGaze = (mascot: MascotElement): void => {
+        const mascotTimers = gazeTimers.get(mascot) ?? new Set<number>();
+        gazeTimers.set(mascot, mascotTimers);
         const sequence = (): void => {
-          if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+          if (!gazeEnabled || reducedMotion.matches) return;
           const count = 1 + Math.floor(Math.random() * 3);
           let index = 0;
 
           const glance = (): void => {
-            if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            if (!gazeEnabled || reducedMotion.matches) return;
             if (!mascot.lookAt) {
-              schedule(glance, 50);
+              schedule(glance, 50, mascotTimers);
               return;
             }
             const target = randomViewportTarget(mascot);
@@ -186,13 +222,36 @@ const initial = projector.project(initialData);
             mascot.lookAt(target.x, target.y);
             index += 1;
             const hold = 1200 + Math.random() * 1800;
-            schedule(index < count ? glance : sequence, hold);
+            schedule(index < count ? glance : sequence, hold, mascotTimers);
           };
 
           glance();
         };
 
-        schedule(sequence, 500 + Math.random() * 1100);
+        schedule(sequence, 500 + Math.random() * 1100, mascotTimers);
+      };
+
+      const clearGazeTimers = (): void => {
+        gazeTimers.forEach((mascotTimers) => {
+          mascotTimers.forEach((timer) => {
+            window.clearTimeout(timer);
+            timers.delete(timer);
+          });
+          mascotTimers.clear();
+        });
+      };
+      const stopGaze = (): void => {
+        gazeEnabled = false;
+        clearGazeTimers();
+      };
+      const startGaze = (): void => {
+        clearGazeTimers();
+        gazeEnabled = true;
+        if (!reducedMotion.matches) root.querySelectorAll<MascotElement>('[data-mascot-face]').forEach(startIndependentGaze);
+      };
+      const onMotionChange = (): void => {
+        clearGazeTimers();
+        if (gazeEnabled && !reducedMotion.matches) startGaze();
       };
 
       const updateScale = (key: ScaleKey, snapshot: AgentSignalsSnapshot['scales'][ScaleKey]): void => {
@@ -212,6 +271,7 @@ const initial = projector.project(initialData);
         }
         mascotWrap?.style.setProperty('--position', String(snapped.position));
         mascot?.setEmotion?.(snapped.emotion);
+        mascot?.querySelector('svg')?.setAttribute('aria-label', `${snapshot.title}: ${snapshot.percentage}%`);
       };
 
       const updateCategory = (key: CategoryKey, snapshot: AgentSignalsSnapshot['categories'][CategoryKey]): void => {
@@ -234,10 +294,11 @@ const initial = projector.project(initialData);
           if (label) label.textContent = snapshot.label;
           if (icon) icon.innerHTML = `<i data-lucide="${snapshot.icon}"></i>`;
           card.setAttribute('aria-label', `${snapshot.title}: ${snapshot.label}`);
-          renderLucide();
+          renderLucide(card);
         };
 
         if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          delete card.dataset.changing;
           commit();
           return;
         }
@@ -276,30 +337,39 @@ const initial = projector.project(initialData);
 
       const onUpdate = (event: Event): void => {
         const payload = (event as CustomEvent<AgentSignalsEnvelope>).detail;
-        if (payload?.signals) setSignals(payload);
+        if (payload?.signals) {
+          stopDemo();
+          setSignals(payload);
+        }
       };
 
       const cleanup = (): void => {
         stopDemo();
+        stopGaze();
+        gazeTimers.clear();
         timers.forEach((timer) => window.clearTimeout(timer));
         timers.clear();
         categoryTimers.clear();
         root.removeEventListener('agent-signals:update', onUpdate);
+        reducedMotion.removeEventListener('change', onMotionChange);
         document.removeEventListener('astro:before-swap', cleanup);
       };
 
       Object.assign(root, {
-        setSignals,
+        setSignals: (data: AgentSignalsEnvelope) => { stopDemo(); setSignals(data); },
         resetSignalHistory: () => projector.reset(),
         startDemo,
         stopDemo,
+        startGaze,
+        stopGaze,
       });
       root.addEventListener('agent-signals:update', onUpdate);
       document.addEventListener('astro:before-swap', cleanup, { once: true });
       root.__agentSignalsCleanup = cleanup;
 
-      renderLucide();
-      root.querySelectorAll<MascotElement>('[data-mascot-face]').forEach(startIndependentGaze);
+      renderLucide(root);
+      reducedMotion.addEventListener('change', onMotionChange);
+      startGaze();
       if (initial) setSignals(initial);
       if (root.dataset.autoDemo === 'true') startDemo();
     });
@@ -335,9 +405,37 @@ const initial = projector.project(initialData);
 
   .agent-signals__categories { display: grid; gap: 14px; }
 
+  .agent-signals--compact {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .agent-signals--compact .agent-signals__compact-group {
+    min-width: 0;
+  }
+
+  .agent-signals--compact .agent-signals__compact-group > h3 {
+    margin: 0 0 8px;
+    padding: 0;
+    font: 800 11px/1.2 "Urbanist", sans-serif;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    opacity: .46;
+  }
+
+  .agent-signals--compact .agent-signals__scales {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .agent-signals--compact .agent-signals__categories {
+    gap: 6px;
+  }
+
   @media (max-width: 1180px) {
     .agent-signals { grid-template-columns: 1fr; }
-    .agent-signals__categories { grid-template-columns: repeat(3, minmax(210px, 1fr)); }
   }
 
   @media (max-width: 860px) {
@@ -350,5 +448,11 @@ const initial = projector.project(initialData);
 
     .agent-signals__scales :global(.signal-scale) { scroll-snap-align: start; }
     .agent-signals__categories { grid-template-columns: 1fr; }
+
+    .agent-signals--compact .agent-signals__scales {
+      grid-template-columns: minmax(0, 1fr);
+      overflow: visible;
+      padding-bottom: 0;
+    }
   }
 </style>

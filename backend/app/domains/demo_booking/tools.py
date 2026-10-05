@@ -11,7 +11,16 @@ from .repository import repository
 CONTEXT_INSTRUCTIONS = (
     'Restaurant booking demonstration. Availability is simulated, not a live restaurant integration. '
     'Collect date, time, party size and customer name. Check availability before proposing create_booking. '
-    'Never treat missing year or ambiguous time as confirmed. '
+    'Resolve relative dates such as mañana/tomorrow using current_date from operational memory, including the year. '
+    'Do not ask the customer to repeat a date or year already derivable from that context. '
+    'Ask only when a date is genuinely ambiguous or the hour lacks AM/PM context. '
+    'When name, date, unambiguous time and party size are known, check_availability and then call create_booking '
+    'to register the proposal immediately; do not ask the customer to confirm in words before registering it. '
+    'If availability is false, do not create or propose a booking for that slot. '
+    'This demo cannot accommodate groups larger than ten at any time; changing the hour does not resolve that limit. '
+    'Explain that concrete limit and offer assistance, never an invented available slot. '
+    'Do not promise split-group reservations, neighboring tables or a multi-table arrangement; those options are '
+    'not supported by this demo. Offer human assistance to assess larger groups instead. '
     'When schedule_flexibility is flexible and the requested slot is unavailable, offer a different time instead of repeating the same search.'
 )
 JEV_QUESTIONS = {

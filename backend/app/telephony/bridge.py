@@ -20,6 +20,49 @@ from .tts import PiperTTSProvider
 logger = logging.getLogger("hackathon.telnyx.bridge")
 
 
+async def _with_holding(generator, session: CallSession, voice):
+    from ..agent.phrases import HOLDING, pick
+
+    held = False
+    queue = asyncio.Queue(maxsize=32)
+    end = object()
+
+    async def produce():
+        try:
+            # One task owns the entire generator lifetime, including ContextVar tokens.
+            async for event in generator:
+                await queue.put(event)
+        except Exception as exc:
+            await queue.put(exc)
+        finally:
+            await generator.aclose()
+            # A cancelled consumer will never drain a full queue.
+            if not asyncio.current_task().cancelling():
+                await queue.put(end)
+
+    producer = asyncio.create_task(produce())
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=4)
+            except asyncio.TimeoutError:
+                if producer.done():
+                    producer.result()
+                    return
+                if not held:
+                    held = True
+                    await _speak(session, voice, pick(HOLDING))
+                continue
+            if event is end:
+                return
+            if isinstance(event, Exception):
+                raise event
+            yield event
+    finally:
+        producer.cancel()
+        await asyncio.gather(producer, return_exceptions=True)
+
+
 async def run_agent_turn(
     session: CallSession,
     transcript: str,
@@ -37,12 +80,14 @@ async def run_agent_turn(
         conversation_id=str(session.conversation_id) if session.conversation_id else None,
         organization_id=str(session.organization_id) if session.organization_id else None,
         user_id=str(session.system_user_id) if session.system_user_id else None,
+        channel='voice',
     )
     answer: list[str] = []
     proposal_id = None
     generator = agent(transcript, messages=list(session.history), tool_context=tool_context)
+    waiting = _with_holding(generator, session, voice)
     try:
-        async for kind, payload in generator:
+        async for kind, payload in waiting:
             if session.closed:
                 break
             if kind == 'done':
@@ -52,6 +97,7 @@ async def run_agent_turn(
         await _cancel_playback(session)
         raise
     finally:
+        await waiting.aclose()
         await generator.aclose()
     spoken = "".join(answer).strip()
     session.history.append({"role": "user", "content": transcript})
@@ -92,6 +138,9 @@ async def _publish_agent_event(
         timeline.record(session, "tool.completed", payload)
         return
     if kind in {"rag.started", "rag.completed"}:
+        timeline.record(session, kind, payload)
+        return
+    if kind == "agent.signals":
         timeline.record(session, kind, payload)
         return
     if kind == "error":

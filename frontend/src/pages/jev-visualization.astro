@@ -1,6 +1,7 @@
 ---
 import AgentSignalsPanel from '../components/agent-signals/AgentSignalsPanel.astro';
 import { DEMO_FRAMES } from '../lib/agent-signals/demo';
+import '../styles/detail-panel.css';
 ---
 
 <!doctype html>
@@ -14,36 +15,53 @@ import { DEMO_FRAMES } from '../lib/agent-signals/demo';
     <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   </head>
   <body>
-    <main class="validation-page">
-      <header class="validation-header">
-        <div>
-          <p class="validation-kicker">Vista temporal</p>
-          <h1>Señales del agente</h1>
-        </div>
-        <p>La demo recorre estados numéricos y categóricos. Los controles permiten fijar anclas y miradas para inspección.</p>
-      </header>
+    <div class="validation-shell">
+      <main class="validation-page">
+        <header class="validation-header">
+          <div>
+            <p class="validation-kicker">Vista temporal</p>
+            <h1>Señales del agente</h1>
+          </div>
+          <p>La demo recorre estados numéricos y categóricos. Los controles permiten fijar anclas y miradas para inspección.</p>
+        </header>
 
-      <section class="validation-controls" aria-label="Controles de validación">
-        <div class="validation-controls__group">
-          <strong>Satisfacción</strong>
-          <button type="button" data-anchor="very_low">0 · angry</button>
-          <button type="button" data-anchor="low">1.25 · sad</button>
-          <button type="button" data-anchor="neutral">2.5 · surprised</button>
-          <button type="button" data-anchor="high">3.75 · intimidated</button>
-          <button type="button" data-anchor="very_high">5 · happy</button>
-        </div>
-        <div class="validation-controls__group">
-          <strong>Mirada</strong>
-          <button type="button" data-gaze="left">Izquierda</button>
-          <button type="button" data-gaze="right">Derecha</button>
-          <button type="button" data-gaze="up">Arriba</button>
-          <button type="button" data-gaze="down">Abajo</button>
-          <button type="button" data-demo-restart>Reanudar demo</button>
-        </div>
-      </section>
+        <section class="validation-controls" aria-label="Controles de validación">
+          <div class="validation-controls__group">
+            <strong>Satisfacción</strong>
+            <button type="button" data-anchor="very_low">0 · angry</button>
+            <button type="button" data-anchor="low">1.25 · sad</button>
+            <button type="button" data-anchor="neutral">2.5 · surprised</button>
+            <button type="button" data-anchor="high">3.75 · intimidated</button>
+            <button type="button" data-anchor="very_high">5 · happy</button>
+          </div>
+          <div class="validation-controls__group">
+            <strong>Mirada</strong>
+            <button type="button" data-gaze="left">Izquierda</button>
+            <button type="button" data-gaze="right">Derecha</button>
+            <button type="button" data-gaze="up">Arriba</button>
+            <button type="button" data-gaze="down">Abajo</button>
+            <button type="button" data-demo-restart>Reanudar demo</button>
+          </div>
+        </section>
 
-      <AgentSignalsPanel id="jev-agent-signals" initialData={DEMO_FRAMES[0]} autoDemo={true} demoIntervalMs={2200} />
-    </main>
+        <AgentSignalsPanel id="jev-agent-signals" class="validation-signals" initialData={DEMO_FRAMES[0]} autoDemo={true} demoIntervalMs={2200} />
+      </main>
+
+      <aside class="detail-panel validation-detail-panel" aria-label="Señales compactas del agente">
+        <div class="detail-panel__session">
+          <p class="detail-kicker">Agente</p>
+          <h2 class="detail-title">Señales en tiempo real</h2>
+          <AgentSignalsPanel
+            id="jev-agent-signals-compact"
+            class="validation-signals"
+            variant="compact"
+            initialData={DEMO_FRAMES[0]}
+            autoDemo={true}
+            demoIntervalMs={2200}
+          />
+        </div>
+      </aside>
+    </div>
 
     <script>
       import type { AgentSignalsEnvelope, OrdinalValue } from '../lib/agent-signals/types';
@@ -52,6 +70,8 @@ import { DEMO_FRAMES } from '../lib/agent-signals/demo';
         setSignals?: (data: AgentSignalsEnvelope) => void;
         startDemo?: () => void;
         stopDemo?: () => void;
+        startGaze?: () => void;
+        stopGaze?: () => void;
       }
 
       interface MascotElement extends HTMLElement {
@@ -67,20 +87,23 @@ import { DEMO_FRAMES } from '../lib/agent-signals/demo';
       };
 
       function installValidationControls(): void {
-        const panel = document.querySelector<PanelElement>('#jev-agent-signals');
-        if (!panel || panel.dataset.controlsReady === 'true') return;
-        panel.dataset.controlsReady = 'true';
-        const initial = JSON.parse(panel.dataset.initial ?? '{}') as AgentSignalsEnvelope;
+        const panels = [...document.querySelectorAll<PanelElement>('.validation-signals')];
+        const primaryPanel = panels[0];
+        if (!primaryPanel || primaryPanel.dataset.controlsReady === 'true') return;
+        primaryPanel.dataset.controlsReady = 'true';
+        const initial = JSON.parse(primaryPanel.dataset.initial ?? '{}') as AgentSignalsEnvelope;
 
         document.querySelectorAll<HTMLButtonElement>('[data-anchor]').forEach((button) => {
           button.addEventListener('click', () => {
             const value = button.dataset.anchor as OrdinalValue;
-            panel.stopDemo?.();
-            panel.setSignals?.({
-              signals: {
-                ...initial.signals,
-                satisfaction: { value, probabilities: anchors[value] },
-              },
+            panels.forEach((panel) => {
+              panel.stopDemo?.();
+              panel.setSignals?.({
+                signals: {
+                  ...initial.signals,
+                  satisfaction: { value, probabilities: anchors[value] },
+                },
+              });
             });
           });
         });
@@ -94,11 +117,19 @@ import { DEMO_FRAMES } from '../lib/agent-signals/demo';
               down: [innerWidth / 2, innerHeight - 24],
             };
             const target = targets[button.dataset.gaze as keyof typeof targets];
-            panel.querySelectorAll<MascotElement>('[data-mascot-face]').forEach((mascot) => mascot.lookAt?.(...target));
+            panels.forEach((panel) => {
+              panel.stopGaze?.();
+              panel.querySelectorAll<MascotElement>('[data-mascot-face]').forEach((mascot) => mascot.lookAt?.(...target));
+            });
           });
         });
 
-        document.querySelector<HTMLButtonElement>('[data-demo-restart]')?.addEventListener('click', () => panel.startDemo?.());
+        document.querySelector<HTMLButtonElement>('[data-demo-restart]')?.addEventListener('click', () => {
+          panels.forEach((panel) => {
+            panel.startGaze?.();
+            panel.startDemo?.();
+          });
+        });
       }
 
       installValidationControls();
@@ -122,7 +153,12 @@ import { DEMO_FRAMES } from '../lib/agent-signals/demo';
   * { box-sizing: border-box; }
 
   html,
-  body { min-height: 100%; margin: 0; }
+  body {
+    height: 100%;
+    min-height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
 
   body {
     background: var(--ui-cream);
@@ -132,7 +168,28 @@ import { DEMO_FRAMES } from '../lib/agent-signals/demo';
 
   button { font: inherit; }
 
-  .validation-page { width: min(1480px, 100%); margin: 0 auto; padding: 28px; }
+  .validation-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(290px, min(22vw, 336px));
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .validation-page {
+    min-width: 0;
+    min-height: 0;
+    padding: 28px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .validation-detail-panel {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    z-index: 2;
+  }
 
   .validation-header {
     margin-bottom: 18px;
@@ -174,6 +231,14 @@ import { DEMO_FRAMES } from '../lib/agent-signals/demo';
   .validation-controls button:hover { transform: scale(1.02, .98); }
   .validation-controls button:active { transform: scale(.97, .94); }
   .validation-controls button:focus-visible { outline: 3px solid var(--ui-graphite); outline-offset: 2px; }
+
+  @media (max-width: 1100px) {
+    html,
+    body { height: auto; overflow: auto; }
+    .validation-shell { grid-template-columns: 1fr; height: auto; overflow: visible; }
+    .validation-page { overflow: visible; }
+    .validation-detail-panel { position: static; }
+  }
 
   @media (max-width: 760px) {
     .validation-page { padding: 18px; }

@@ -135,6 +135,7 @@ async def _generate(
                 used_tools = False
                 for _ in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
+                    round_parts: list[str] = []
                     async for kind, payload in provider.stream(
                         config,
                         prompt,
@@ -142,13 +143,17 @@ async def _generate(
                         tools=CANONICAL_TOOLS,
                     ):
                         if kind == "token":
-                            emitted_tokens = True
                             text = str(payload["text"])
-                            answer_parts.append(text)
-                            yield "token", {"text": text}
+                            round_parts.append(text)
                         elif kind == "tool_calls":
                             tool_calls = list(payload.get("calls") or [])
                     if not tool_calls:
+                        # Tool-planning speech is not the final answer. Never join
+                        # intermediate "one moment" prose to the post-tool response.
+                        answer_parts = round_parts
+                        for text in round_parts:
+                            emitted_tokens = True
+                            yield 'token', {'text': text}
                         break
                     used_tools = True
                     assistant_calls = []

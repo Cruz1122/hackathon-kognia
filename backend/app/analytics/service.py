@@ -9,6 +9,7 @@ from ..db.session import get_session_factory
 from .cache import AnalyticsCache, dashboard_key
 from .repository import AnalyticsRepository, _rate
 from .schemas import (
+    AgentSignalsAggregate,
     AnalyticsPeriod,
     AnalyticsSummary,
     ConversionTrendPoint,
@@ -26,17 +27,98 @@ from .schemas import (
 )
 
 
+_SIGNAL_DEFAULTS = {
+    "satisfaction": "neutral",
+    "frustration": "neutral",
+    "intent": "unknown",
+    "human": "unknown",
+    "schedule_flexibility": "unknown",
+}
+_DISPLAY_SIGNAL_KEYS = {*_SIGNAL_DEFAULTS, "confirmation", "integrity"}
+
+
+def _aggregate_agent_signals(snapshots: list[dict]) -> AgentSignalsAggregate | None:
+    totals: dict[str, dict[str, float]] = {}
+    observations: dict[str, int] = {}
+    sample_count = 0
+    for snapshot in snapshots:
+        signals = snapshot.get("signals")
+        if not isinstance(signals, dict) or not any(key in signals for key in _DISPLAY_SIGNAL_KEYS):
+            continue
+        sample_count += 1
+        for key, raw_signal in signals.items():
+            if key not in _DISPLAY_SIGNAL_KEYS:
+                continue
+            if not isinstance(raw_signal, dict):
+                continue
+            value = raw_signal.get("value")
+            if not isinstance(value, str) or not value:
+                continue
+            if key in {"satisfaction", "frustration"} and value == "unknown":
+                value = "neutral"
+            raw_probabilities = raw_signal.get("probabilities")
+            probabilities = {
+                str(label): float(probability)
+                for label, probability in raw_probabilities.items()
+                if isinstance(raw_probabilities, dict)
+                and isinstance(label, str)
+                and isinstance(probability, (int, float))
+                and probability >= 0
+            } if isinstance(raw_probabilities, dict) else {}
+            if key in {"satisfaction", "frustration"} and "unknown" in probabilities:
+                probabilities["neutral"] = probabilities.get("neutral", 0.0) + probabilities.pop("unknown")
+            mass = sum(probabilities.values())
+            if mass <= 0:
+                probabilities = {value: 1.0}
+                mass = 1.0
+            bucket = totals.setdefault(key, {})
+            for label, probability in probabilities.items():
+                bucket[label] = bucket.get(label, 0.0) + probability / mass
+            observations[key] = observations.get(key, 0) + 1
+
+    if sample_count == 0:
+        return None
+
+    aggregated: dict[str, dict] = {}
+    for key, bucket in totals.items():
+        count = observations[key]
+        probabilities = {label: round(total / count, 6) for label, total in bucket.items()}
+        value = max(probabilities, key=lambda label: (probabilities[label], label))
+        aggregated[key] = {"value": value, "probabilities": probabilities}
+    for key, value in _SIGNAL_DEFAULTS.items():
+        aggregated.setdefault(key, {"value": value, "probabilities": {value: 1.0}})
+    return AgentSignalsAggregate.model_validate({"sample_count": sample_count, "signals": aggregated})
+
+
 class AnalyticsService:
     def __init__(self, cache: AnalyticsCache | None = None, repository: AnalyticsRepository | None = None) -> None:
         self.cache = cache or AnalyticsCache()
         self.repository = repository or AnalyticsRepository()
+
+    async def _agent_signal_aggregate(
+        self,
+        session: AsyncSession,
+        organization_id: uuid.UUID,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> AgentSignalsAggregate | None:
+        if getattr(type(self.repository), "get_final_agent_signals", None) is None:
+            return None
+        snapshots = await self.repository.get_final_agent_signals(
+            session, organization_id, date_from, date_to
+        )
+        return _aggregate_agent_signals(snapshots)
 
     async def dashboard(self, session: AsyncSession, *, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> DashboardResponse:
         version = await self.cache.version(session, organization_id)
         key = dashboard_key(organization_id, version, date_from, date_to)
         cached = await self.cache.get(key)
         if cached is not None:
-            return DashboardResponse.model_validate(cached)
+            response = DashboardResponse.model_validate(cached)
+            response.agent_signals = await self._agent_signal_aggregate(
+                session, organization_id, date_from, date_to
+            )
+            return response
 
         async def build_summary(period_from: datetime, period_to: datetime) -> AnalyticsSummary:
             conversations = await self.repository.get_conversation_count(session, organization_id, period_from, period_to)
@@ -73,6 +155,9 @@ class AnalyticsService:
             for stage, value in funnel_values
         ]
         objection_product_heatmap = await self.repository.get_objection_product_heatmap(session, organization_id, date_from, date_to)
+        agent_signals = await self._agent_signal_aggregate(
+            session, organization_id, date_from, date_to
+        )
 
         def delta(current: float, previous: float) -> MetricDelta:
             absolute = current - previous
@@ -99,6 +184,7 @@ class AnalyticsService:
             metric_trend=[MetricTrendPoint.model_validate(item) for item in metric_trend],
             funnel=[FunnelPoint.model_validate(item) for item in funnel],
             objection_product_heatmap=[ObjectionProductPoint.model_validate(item) for item in objection_product_heatmap],
+            agent_signals=agent_signals,
         )
         await self.cache.set(key, response.model_dump(mode="json", by_alias=True))
         return response

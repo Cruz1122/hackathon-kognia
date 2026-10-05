@@ -73,11 +73,28 @@ class ToolRegistry:
             if turn is None:
                 return ToolResult(False, error_code='CONFIRMATION_REQUIRED', message='A persistent conversation and explicit confirmation are required.')
             store, state = turn.store, turn.store.state
+            if name == 'call_customer':
+                completed = next((item for item in reversed(state.tool_history)
+                    if item['tool'] == name and item['arguments'] == clean
+                    and item['turn_id'] == turn.turn_id and item['ok']), None)
+                if completed:
+                    return ToolResult(True, data=completed['result'])
+            operation_id = fingerprint(state.conversation_id, {'proposal': fingerprint(name, clean)})
+            operation = await store.db.get(AgentOperation, operation_id) if name != 'call_customer' else None
+            if operation and operation.status == 'succeeded':
+                state.pending = None
+                state.authorized = None
+                state.phase = 'completed'
+                state.action('action_result_reused', tool=name, operation_id=operation_id)
+                await store.save()
+                return ToolResult(True, data=operation.result)
             if not authorize(state, name, clean):
                 await store.save()
-                return ToolResult(False, error_code='CONFIRMATION_REQUIRED', message='Present the exact pending proposal and ask the customer to reply: confirmo.')
-            operation_id = fingerprint(state.conversation_id, {'proposal': state.pending.fingerprint})
-            operation = await store.db.get(AgentOperation, operation_id)
+                return ToolResult(False, error_code='CONFIRMATION_REQUIRED', message='Present the exact pending proposal and ask one concise confirmation question. Interpret the reply semantically, never require a specific phrase.')
+            if name == 'call_customer':
+                operation_id = fingerprint(state.conversation_id, {'proposal': state.pending.fingerprint,
+                    'created_at': state.pending.created_at.isoformat()})
+                operation = await store.db.get(AgentOperation, operation_id)
             if operation:
                 if operation.status == 'succeeded':
                     state.pending = None

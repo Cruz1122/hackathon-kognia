@@ -1,6 +1,7 @@
 import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup, toolCallBusyMarkup } from './retrieval-card';
 import { eventMarkIcon, paintCallWave, resizeWave, type WaveMark } from './wave-mark';
+import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
 type TimelineEvent = {
   type: string;
@@ -174,6 +175,8 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
   let disposed = false;
   let previousMs = 0;
   const items: HTMLElement[] = [];
+  let signalEvents: TimelineEvent[] = [];
+  let visibleSignalCount = -1;
   const context = canvas.getContext('2d');
 
   function resize(): void {
@@ -270,6 +273,12 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
         item.querySelector('.tool-status')?.classList.add('loading');
       }
     }
+    const nextSignalCount = signalEvents.filter((event) => event.offset_ms <= timelineMs).length;
+    if (nextSignalCount !== visibleSignalCount) {
+      visibleSignalCount = nextSignalCount;
+      resetCallAgentSignals();
+      signalEvents.slice(0, nextSignalCount).forEach((event) => applyCallAgentSignals(event.payload));
+    }
     if (conversationEmpty) conversationEmpty.hidden = visible;
     previousMs = timelineMs;
     const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
@@ -314,6 +323,8 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
   }
 
   function renderTimeline(events: TimelineEvent[], originMs: number): void {
+    signalEvents = events.filter((event) => event.type === 'agent.signals');
+    visibleSignalCount = -1;
     const tools = new Map<string, { start: number; payload: Record<string, unknown> }>();
     const clock = (offsetMs: number) => formatTime(Math.max(0, offsetMs - originMs) / 1000);
     if (!events.some((event) => event.type === 'lifecycle' && event.payload?.state === 'ACTIVE')) {

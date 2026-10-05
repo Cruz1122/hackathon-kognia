@@ -22,6 +22,8 @@ export interface AgentSignals {
 
 export interface AgentSignalsEnvelope {
   signals: AgentSignals;
+  aggregated?: boolean;
+  sampleCount?: number;
 }
 
 export type ScaleKey = 'satisfaction' | 'tension' | 'fluency' | 'hallucination';

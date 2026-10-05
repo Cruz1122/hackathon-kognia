@@ -1,0 +1,46 @@
+---
+import type { CategorySnapshot } from '../../lib/agent-signals/types';
+
+interface Props {
+  snapshot: CategorySnapshot;
+}
+
+const { snapshot } = Astro.props;
+---
+
+<div
+  class="detail-field compact-category"
+  role="status"
+  aria-label={`${snapshot.title}: ${snapshot.label}`}
+  data-category={snapshot.key}
+  data-value={snapshot.value}
+>
+  <dt>{snapshot.title}</dt>
+  <dd data-category-label>{snapshot.label}</dd>
+</div>
+
+<style>
+  .compact-category dd {
+    opacity: 1;
+    translate: 0 0;
+    transition: opacity 140ms ease, translate 190ms cubic-bezier(.22, 1, .36, 1);
+  }
+
+  .compact-category[data-changing="out"] dd {
+    opacity: 0;
+    translate: 0 4px;
+  }
+
+  .compact-category[data-changing="in"] dd {
+    animation: compact-category-in 210ms cubic-bezier(.22, 1, .36, 1);
+  }
+
+  @keyframes compact-category-in {
+    from { opacity: 0; translate: 0 -4px; }
+    to { opacity: 1; translate: 0 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .compact-category dd { transition-duration: .001ms; animation-duration: .001ms !important; }
+  }
+</style>

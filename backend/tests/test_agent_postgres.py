@@ -3,7 +3,7 @@ import asyncio
 import base64
 import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,7 +11,8 @@ import pytest_asyncio
 from sqlalchemy import func, select
 
 from app.agent import jev
-from app.agent.runtime import SAFE_REPLY, stateful_stream
+from app.agent.runtime import stateful_stream
+from app.agent.phrases import RECOVERY
 from app.agent.state import Signal, now
 from app.agent.store import conversation_state
 from app.agent.tools.contracts import ToolContext
@@ -29,6 +30,8 @@ ARGS = {'date': '2027-10-05', 'time': '19:00', 'party_size': 4, 'customer_name':
 @pytest_asyncio.fixture
 async def fixture(monkeypatch):
     await dispose_engine()
+    from app.agent import dialogue
+    monkeypatch.setattr(dialogue, 'interpret', AsyncMock(return_value=None))
     for name, value in [('WHATSAPP_ACCESS_TOKEN', 'test'), ('WHATSAPP_APP_SECRET', 'secret'),
                         ('WHATSAPP_VERIFY_TOKEN', 'verify'), ('WHATSAPP_PHONE_NUMBER_ID', '123')]:
         monkeypatch.setenv(name, value)
@@ -83,7 +86,7 @@ async def turn(fixture, prompt, request, generate=booking_generator, channel='vo
 
 async def test_persistent_booking_and_old_turn_replay(fixture):
     first = await turn(fixture, 'reserva', 'one')
-    assert 'confirmo' in first[-2][1]['text']
+    assert first[-1][1]['proposal_id'] is not None
     second = await turn(fixture, 'confirmo', 'two')
     assert second[-2][1]['text'] == 'Reserva confirmada.'
     assert (await turn(fixture, 'reserva', 'one'))[-2][1]['text'] == first[-2][1]['text']
@@ -119,7 +122,7 @@ async def test_integrity_blocks_every_token_until_validated(fixture, monkeypatch
     monkeypatch.setattr(jev, 'integrity', reject)
     events = await turn(fixture, 'hello', 'one', generate)
     assert order == ['draft', 'evaluate', 'draft', 'evaluate']
-    assert [data['text'] for kind, data in events if kind == 'token'] == [SAFE_REPLY]
+    assert [data['text'] for kind, data in events if kind == 'token'][0] in RECOVERY
 
 
 async def test_concurrent_turns_do_not_lose_updates(fixture):
@@ -207,6 +210,76 @@ async def test_callback_reuses_conversation_and_is_not_duplicated(fixture, monke
     assert session.organization_id == fixture[0].id
 
 
+async def test_a_new_confirmed_callback_can_dial_again(fixture, monkeypatch):
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+
+    async def generate(prompt, **kwargs):
+        result = await TOOL_REGISTRY.execute('call_customer', {}, kwargs['tool_context'])
+        yield 'token', {'text': 'Llamada solicitada.' if result.ok else '¿Confirmas que te llame?'}
+        yield 'done', {}
+
+    await turn(fixture, 'llámame', 'first-proposal', generate)
+    await turn(fixture, 'confirmo', 'first-confirmation', generate)
+    await turn(fixture, 'llámame', 'second-proposal', generate)
+    await turn(fixture, 'confirmo', 'second-confirmation', generate)
+    assert dial.await_count == 2
+    assert dial.await_args_list[0].kwargs['command_id'] != dial.await_args_list[1].kwargs['command_id']
+
+
+async def test_jev_receives_persisted_history_before_first_turn(fixture, monkeypatch):
+    from app.db.models import MessageRole
+    async with get_session_factory()() as db:
+        db.add(Message(conversation_id=fixture[1].id, role=MessageRole.USER,
+            content='Me llamo Camilo, cuatro personas mañana a las diez.', channel='whatsapp'))
+        await db.commit()
+    observed = []
+
+    async def observe(state, prompt, *args):
+        observed.extend(state.recent)
+        return {}
+
+    async def generate(prompt, **kwargs):
+        assert kwargs['messages'][0]['content'].startswith('Me llamo Camilo')
+        yield 'token', {'text': 'Retomemos la reserva para cuatro.'}
+        yield 'done', {}
+
+    monkeypatch.setattr(jev, 'observe', observe)
+    await turn(fixture, 'Hola', 'voice-resume', generate)
+    assert observed[0]['content'].startswith('Me llamo Camilo')
+
+
+async def test_stt_benchmark_does_not_leak_hidden_clean_utterance(fixture, monkeypatch):
+    from scripts.agent_stt_cases import speech
+    from scripts.benchmark_agent import run_scenario
+    from app.features.agent import service
+
+    hidden = 'Devuélveme la llamada. HIDDEN_ORACLE_ONLY_18_12'
+    heard = 'Me puedes devolver la'
+    observed = []
+
+    async def generate(prompt, **kwargs):
+        observed.append(prompt)
+        assert prompt == heard
+        assert 'HIDDEN_ORACLE_ONLY' not in str(kwargs)
+        yield 'token', {'text': '¿Qué necesitas que te devuelva?'}
+        yield 'done', {'provider': 'fake', 'model': 'test'}
+
+    monkeypatch.setattr(service, '_generate', generate)
+    result = await run_scenario(('oracle_isolation', 'no_write', [speech(hidden, heard, 'deletion')]),
+                               fixture[0].id, fixture[1].created_by)
+    assert observed == [heard]
+    assert result['turns'][0]['clean_utterance'] == hidden
+    assert result['turns'][0]['user'] == heard
+    assert result['writes'] == []
+    assert 'HIDDEN_ORACLE_ONLY' not in str(result['state'])
+    assert result['real_provider'] is False
+    assert result['model_generated_turns'] == 0
+    assert result['policy_turns'] == 0
+
+
 async def test_cancelled_local_write_requires_new_confirmation_and_can_recover(fixture):
     from pydantic import BaseModel
     from app.agent.policy import Turn, active_turn, apply_observations, authorize
@@ -283,3 +356,250 @@ async def test_callback_webhook_reconciles_lost_dial_response(fixture):
         operation = await db.get(AgentOperation, operation_id)
         assert operation.status == 'succeeded'
         assert operation.result['call_control_id'] == restored.telnyx_call_control_id
+
+
+async def test_dropped_call_enqueues_continuation_marker(fixture):
+    from app.whatsapp.service import prepare_continuation
+    source_id = uuid.uuid4().hex
+    await prepare_continuation(fixture[1].id, fixture[0].id, source_id)
+    async with get_session_factory()() as db:
+        event = await db.get(ChannelEvent, event_key('continuation', source_id))
+        assert event is not None and event.status == 'pending'
+        assert event.payload.get('continuation') == {'call_id': source_id}
+        assert 'text' not in event.payload
+
+
+async def test_continuation_event_resolves_text_and_sends(fixture):
+    from app.whatsapp.service import DEFAULT_CONTINUATION_TEXT, prepare_continuation
+    source_id = uuid.uuid4().hex
+    await prepare_continuation(fixture[1].id, fixture[0].id, source_id)
+    client = AsyncMock()
+    client.send.return_value = 'wamid-cont'
+    await process_event(event_key('continuation', source_id), client)
+    client.send.assert_awaited_once()
+    assert client.send.call_args.args[0]['text']['body'] == DEFAULT_CONTINUATION_TEXT
+    async with get_session_factory()() as db:
+        event = await db.get(ChannelEvent, event_key('continuation', source_id))
+        assert event.payload['text'] == DEFAULT_CONTINUATION_TEXT
+
+
+async def new_call_conversation(fixture, *, same_customer=True):
+    async with get_session_factory()() as db:
+        customer_id = fixture[1].customer_id
+        if not same_customer:
+            customer = Customer(organization_id=fixture[0].id, phone='+1555' + str(uuid.uuid4().int)[:7])
+            db.add(customer)
+            await db.flush()
+            customer_id = customer.id
+        conversation = Conversation(organization_id=fixture[0].id, customer_id=customer_id,
+            created_by=fixture[1].created_by, channel='pstn', status='open')
+        db.add(conversation)
+        await db.commit()
+        return conversation.id
+
+
+async def test_guided_whatsapp_callback_keeps_slots_and_restores_requested_conversation(fixture, monkeypatch):
+    from app.agent import dialogue
+    from app.telephony.telnyx_api import TelnyxApi
+    from app.telephony.continuity import restore_outbound
+    cid = await new_call_conversation(fixture)
+    slots = {'date': '2026-10-05', 'time': '08:00', 'time_period': 'morning', 'party_size': 8, 'customer_name': 'Camilo'}
+    async with conversation_state(str(fixture[0].id), str(cid)) as store:
+        store.state.booking_slots = slots
+        store.state.goal = 'create_booking'
+        await store.save()
+    async with get_session_factory()() as db:
+        from app.db.models import MessageRole
+        db.add_all([Message(conversation_id=cid, role=MessageRole.USER, content='Soy Camilo, ocho personas a las ocho de la mañana.', channel='voice'),
+                    Message(conversation_id=fixture[1].id, role=MessageRole.USER, content='OLD_UNRELATED_CONTEXT', channel='voice')])
+        await db.commit()
+    interpret = AsyncMock(return_value=dialogue.Plan(action='callback', callback_requested=True, model='test'))
+    monkeypatch.setattr(dialogue, 'interpret', interpret)
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    control = uuid.uuid4().hex
+    dial = AsyncMock(return_value={'call_control_id': control, 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+    ctx = ToolContext('callback-after-drop', organization_id=str(fixture[0].id), conversation_id=str(cid), channel='whatsapp')
+    async def must_not_generate(*args, **kwargs):
+        raise AssertionError('Guided callback must not use free-form/RAG generation')
+        yield
+    for _ in range(2):
+        events = [item async for item in stateful_stream('Cortó, llámame, por favor', messages=None, llm=None,
+            tool_context=ctx, generate=must_not_generate)]
+        assert 'llamando' in next(data['text'] for kind, data in events if kind == 'token')
+    dial.assert_awaited_once()
+    async with get_session_factory()() as db:
+        snapshot = await db.get(AgentSnapshot, cid)
+        assert snapshot.data['booking_slots'] == slots
+        assert snapshot.data['pending'] is None
+        operation = await db.scalar(select(AgentOperation).where(AgentOperation.conversation_id == cid,
+            AgentOperation.tool == 'call_customer'))
+        assert (await db.get(ChannelBinding, fixture[2].id)).conversation_id == fixture[1].id
+    restored = await restore_outbound({'client_state': base64.b64encode(operation.id.encode()).decode(),
+        'call_control_id': control, 'from': '+10000000000', 'to': '+19999999999'})
+    assert restored.conversation_id == cid
+    assert restored.callee == fixture[2].phone
+    assert not any('OLD_UNRELATED_CONTEXT' in item['content'] for item in restored.history)
+
+
+async def test_guided_booking_success_and_cached_success_never_reask_confirmation(fixture, monkeypatch):
+    from app.agent import dialogue
+    plan = dialogue.Plan(action='booking', updates=dialogue.Slots.model_validate({
+        **ARGS, 'time_period': 'night'}), model='test')
+    async def interpret(state, prompt, *args):
+        return plan.model_copy(update={'confirmation': 'explicit' if prompt == 'confirmo' else 'uncertain'})
+    monkeypatch.setattr(dialogue, 'interpret', interpret)
+    first = await turn(fixture, 'reserva', 'guided-proposal')
+    assert first[-1][1]['proposal_id'] is not None
+    confirmed = await turn(fixture, 'confirmo', 'guided-confirmation')
+    text = next(data['text'] for kind, data in confirmed if kind == 'token')
+    assert text == 'Tu reserva está confirmada.'
+    async with get_session_factory()() as db:
+        state = (await db.get(AgentSnapshot, fixture[1].id)).data
+        assert state['pending'] is None
+        assert state['authorized'] is None
+    # Explicitly recreate the same proposal to exercise the cached operation branch.
+    async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
+        from app.agent.policy import authorize
+        authorize(store.state, 'create_booking', ARGS)
+        store.state.pending.presented = True
+        await store.save()
+    cached = await turn(fixture, 'confirmo', 'guided-cached')
+    assert next(data['text'] for kind, data in cached if kind == 'token') == 'Tu reserva está confirmada.'
+    async with get_session_factory()() as db:
+        assert (await db.get(AgentSnapshot, fixture[1].id)).data['pending'] is None
+        assert await db.scalar(select(func.count()).select_from(AgentOperation).where(
+            AgentOperation.conversation_id == fixture[1].id, AgentOperation.tool == 'create_booking')) == 1
+
+
+async def test_guided_uncertain_execution_does_not_become_a_new_confirmation_question(fixture, monkeypatch):
+    from app.agent import dialogue
+    from app.agent.tools.contracts import ToolResult
+    async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
+        from app.agent.policy import authorize
+        store.state.booking_slots = {**ARGS, 'time_period': 'night'}
+        authorize(store.state, 'create_booking', ARGS)
+        store.state.pending.presented = True
+        await store.save()
+    monkeypatch.setattr(dialogue, 'interpret', AsyncMock(return_value=dialogue.Plan(
+        action='booking', confirmation='explicit', model='test')))
+    execute = AsyncMock(return_value=ToolResult(False, error_code='OPERATION_UNCERTAIN'))
+    monkeypatch.setattr(TOOL_REGISTRY, 'execute', execute)
+    events = await turn(fixture, 'confirmo', 'uncertain-guided')
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert '¿La confirmas?' not in text
+    assert 'duplicados' in text
+    execute.assert_awaited_once()
+
+
+async def test_post_call_rebinds_destination_without_mixing_queued_conversations(fixture, monkeypatch):
+    from app.whatsapp import service
+    from app.features.agent import service as agent_service
+    new_id = await new_call_conversation(fixture)
+    old_key = uuid.uuid4().hex
+    source_id = uuid.uuid4().hex
+    async with get_session_factory()() as db:
+        db.add(ChannelEvent(id=old_key, binding_id=fixture[2].id, kind='inbound', status='pending',
+            payload={'id': old_key, 'type': 'text', 'text': {'body': 'Mensaje anterior'}}))
+        await db.commit()
+    await service.prepare_continuation(new_id, fixture[0].id, source_id)
+    async with get_session_factory()() as db:
+        binding = await db.get(ChannelBinding, fixture[2].id)
+        previous = await db.get(ChannelEvent, old_key)
+        assert binding.conversation_id == new_id
+        assert binding.opt_in is True and binding.last_inbound_at == fixture[2].last_inbound_at
+        assert previous.payload['_conversation_id'] == str(fixture[1].id)
+        assert (await db.get(AgentSnapshot, new_id)) is None
+
+    contexts = []
+    async def respond(prompt, **kwargs):
+        contexts.append(kwargs['tool_context'].conversation_id)
+        yield 'token', {'text': 'Gracias por tu mensaje.'}
+        yield 'done', {}
+    monkeypatch.setattr(agent_service, 'stream_agent', respond)
+    await process_event(old_key, AsyncMock())
+    assert contexts == [str(fixture[1].id)]
+
+    message_id = uuid.uuid4().hex
+    await asyncio.sleep(1.1)  # Outside Meta's seconds-resolution cutover boundary.
+    await receive({'object': 'whatsapp_business_account', 'entry': [{'changes': [{'field': 'messages', 'value': {
+        'metadata': {'phone_number_id': '123'}, 'messages': [{'id': message_id, 'from': fixture[2].wa_id,
+        'timestamp': str(int(now().timestamp())), 'type': 'text', 'text': {'body': 'Seguimos la llamada nueva'}}]
+    }}]}]})
+    await process_event(event_key('123', message_id), AsyncMock())
+    assert contexts[-1] == str(new_id)
+
+    async def recap(cid, *args, **kwargs):
+        assert cid == new_id
+        return 'Continuamos por aquí lo hablado en la llamada.'
+    monkeypatch.setattr(service, 'continuation_message', recap)
+    client = AsyncMock()
+    client.send.return_value = 'wamid-continuation'
+    await process_event(event_key('continuation', source_id), client)
+    client.send.assert_awaited_once()
+    async with get_session_factory()() as db:
+        messages = (await db.scalars(select(Message).where(Message.conversation_id == new_id))).all()
+        assert any(item.content == 'Llamada transferida a WhatsApp' for item in messages)
+        assert not any(item.content == 'Mensaje anterior' for item in messages)
+        old_reply = await db.get(ChannelEvent, event_key('reply', old_key))
+        assert old_reply.payload['_conversation_id'] == str(fixture[1].id)
+
+    third_id = await new_call_conversation(fixture)
+    await service.prepare_continuation(third_id, fixture[0].id, uuid.uuid4().hex)
+    await service.prepare_continuation(new_id, fixture[0].id, source_id)
+    async with get_session_factory()() as db:
+        assert (await db.get(ChannelBinding, fixture[2].id)).conversation_id == third_id
+
+
+async def test_post_call_never_creates_unverified_identity(fixture):
+    from app.whatsapp.service import prepare_continuation
+    cid = await new_call_conversation(fixture, same_customer=False)
+    source_id = uuid.uuid4().hex
+    await prepare_continuation(cid, fixture[0].id, source_id)
+    async with get_session_factory()() as db:
+        assert await db.get(ChannelEvent, event_key('continuation', source_id)) is None
+        assert (await db.get(ChannelBinding, fixture[2].id)).conversation_id == fixture[1].id
+
+
+async def test_delayed_pre_transfer_webhook_keeps_original_conversation(fixture):
+    from app.whatsapp.service import prepare_continuation
+    before_transfer = now() - timedelta(seconds=5)
+    new_id = await new_call_conversation(fixture)
+    source_id = uuid.uuid4().hex
+    await prepare_continuation(new_id, fixture[0].id, source_id)
+    async with get_session_factory()() as db:
+        transfer = await db.get(ChannelEvent, event_key('continuation', source_id))
+        cutover = datetime.fromisoformat(transfer.payload['_route_changed_at'])
+    for timestamp, expected_status in [(before_transfer, 'pending'), (cutover, 'routing_ambiguous')]:
+        message_id = uuid.uuid4().hex
+        await receive({'object': 'whatsapp_business_account', 'entry': [{'changes': [{'field': 'messages', 'value': {
+            'metadata': {'phone_number_id': '123'}, 'messages': [{'id': message_id, 'from': fixture[2].wa_id,
+            'timestamp': str(int(timestamp.timestamp())), 'type': 'text', 'text': {'body': 'Mensaje retrasado'}}]
+        }}]}]})
+        async with get_session_factory()() as db:
+            event = await db.get(ChannelEvent, event_key('123', message_id))
+            assert event.status == expected_status
+            if expected_status == 'pending':
+                assert event.payload['_conversation_id'] == str(fixture[1].id)
+        if expected_status == 'routing_ambiguous':
+            client = AsyncMock()
+            await process_event(event_key('123', message_id), client)
+            client.send.assert_not_awaited()
+            async with get_session_factory()() as db:
+                assert await db.get(AgentSnapshot, new_id) is None
+
+
+async def test_post_call_rebinding_does_not_bypass_meta_window(fixture):
+    from app.whatsapp.service import prepare_continuation
+    async with get_session_factory()() as db:
+        binding = await db.get(ChannelBinding, fixture[2].id)
+        binding.last_inbound_at = now() - timedelta(hours=25)
+        await db.commit()
+    cid = await new_call_conversation(fixture)
+    source_id = uuid.uuid4().hex
+    await prepare_continuation(cid, fixture[0].id, source_id)
+    client = AsyncMock()
+    await process_event(event_key('continuation', source_id), client)
+    client.send.assert_not_awaited()
+    async with get_session_factory()() as db:
+        assert (await db.get(ChannelEvent, event_key('continuation', source_id))).status == 'blocked'

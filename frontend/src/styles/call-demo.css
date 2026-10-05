@@ -136,3 +136,5 @@
 @media (prefers-reduced-motion: reduce) {
   .call-demo-page *, .call-demo-page *::before, .call-demo-page *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+.customer.channel-whatsapp .message { background: #b9edca; color: var(--ui-graphite); }
+.channel-whatsapp .message-meta::after { content: 'WhatsApp'; font-weight: 600; }

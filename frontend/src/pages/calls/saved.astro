@@ -17,30 +17,6 @@ import '../../styles/call-demo.css';
   let cleanup: (() => void | Promise<void>) | null = null;
   let mountedId = '';
 
-  function clearConversation(): void {
-    document.querySelector('#conversation')?.querySelectorAll(':scope > :not(#conversationEmpty)').forEach((node) => node.remove());
-    const empty = document.querySelector<HTMLElement>('#conversationEmpty');
-    if (empty) empty.hidden = false;
-  }
-
-  async function handoffToReplay(callId: string, token: string): Promise<void> {
-    const headers = { Authorization: `Bearer ${token}` };
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (new URLSearchParams(window.location.search).get('id') !== callId) return;
-      const recording = await fetch(`${apiUrl}/calls/${callId}/recording`, { headers });
-      if (recording.ok && new URLSearchParams(window.location.search).get('id') === callId) {
-        const release = cleanup;
-        cleanup = null;
-        await release?.();
-        clearConversation();
-        if (new URLSearchParams(window.location.search).get('id') !== callId) return;
-        cleanup = bootCallReplay(apiUrl, token, callId);
-        return;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
-    }
-  }
-
   async function mountSavedCall(): Promise<void> {
     const root = document.querySelector<HTMLElement>('.call-demo-page');
     const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
@@ -58,7 +34,7 @@ import '../../styles/call-demo.css';
     const live = (list.calls ?? []).some((call) => call.id === callId);
     cleanup?.();
     if (live) {
-      cleanup = bootLiveCall(apiUrl, token, callId, () => { void handoffToReplay(callId, token); });
+      cleanup = bootLiveCall(apiUrl, token, callId);
     } else {
       cleanup = bootCallReplay(apiUrl, token, callId);
     }

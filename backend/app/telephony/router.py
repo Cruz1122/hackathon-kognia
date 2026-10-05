@@ -254,10 +254,56 @@ async def monitor_socket(websocket: WebSocket) -> None:
             return
 
         async def pump_events() -> None:
+            nonlocal queue, subscribed
             assert queue is not None
+            assert subscribed is not None
+            seen_messages: set[str] = set()
+            initial = registry.get(subscribed)
+            assert initial is not None
+            conversation_id = initial.conversation_id
+            latest_started_at = initial.started_at
+            last_poll = 0.0
             while True:
-                message = await queue.get()
-                await websocket.send_json(message)
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=1)
+                    await websocket.send_json({**message, 'call_id': str(subscribed)})
+                except asyncio.TimeoutError:
+                    pass
+                if conversation_id is None:
+                    continue
+                now = asyncio.get_running_loop().time()
+                if now - last_poll < 1:
+                    continue
+                last_poll = now
+                # Durable polling also sees WhatsApp writes from the separate worker.
+                from ..db.models import Message, MessageRole
+                from ..db.session import get_session_factory
+                async with get_session_factory()() as db:
+                    rows = (await db.scalars(select(Message).join(Conversation).where(
+                        Conversation.id == conversation_id,
+                        Conversation.organization_id == organization_id,
+                        Message.channel.in_(['whatsapp', 'system'])
+                    ).order_by(Message.created_at.desc(), Message.id.desc()).limit(100))).all()
+                for row in reversed(rows):
+                    key = str(row.id)
+                    if key in seen_messages:
+                        continue
+                    seen_messages.add(key)
+                    await websocket.send_json({'type': 'conversation.event' if row.channel == 'system' else 'transcript.final',
+                        'message_id': key, 'payload': {'channel': 'whatsapp', 'text': row.content,
+                        'speaker': 'customer' if row.role == MessageRole.USER else 'agent'}})
+                candidates = [item for item in registry.list_for(organization_id)
+                    if item.conversation_id == conversation_id
+                    and item.started_at > latest_started_at]
+                if candidates:
+                    live = max(candidates, key=lambda item: item.started_at)
+                    latest_started_at = live.started_at
+                    monitor_hub.unsubscribe(organization_id, subscribed, queue)
+                    subscribed = live.call_id
+                    queue = monitor_hub.subscribe(organization_id, subscribed)
+                    await websocket.send_json({'type': 'call.snapshot', 'call': live.public_view()})
+                    for event in live.events:
+                        await websocket.send_json({**event, 'call_id': str(subscribed)})
 
         while True:
             incoming = await websocket.receive_json()
@@ -293,7 +339,7 @@ async def monitor_socket(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "call.snapshot", "call": live.public_view()})
             for event in live.events:
                 await websocket.send_json(
-                    {"type": event["type"], "seq": event["seq"], "offset_ms": event["offset_ms"], "payload": event["payload"]}
+                    {"type": event["type"], "call_id": str(call_id), "seq": event["seq"], "offset_ms": event["offset_ms"], "payload": event["payload"]}
                 )
     except WebSocketDisconnect:
         logger.info("Call monitor disconnected")
@@ -343,5 +389,3 @@ async def call_audio(websocket: WebSocket, call_id: str) -> None:
     finally:
         if viewer is not None and organization_id is not None and parsed is not None:
             live_audio_hub.unsubscribe(organization_id, parsed, viewer)
-
-

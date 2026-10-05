@@ -53,6 +53,22 @@ test('uses only the last ten confirmation samples', () => {
   assert.equal(snapshot.scales.fluency.score, 5);
 });
 
+test('projects dashboard aggregates from averaged probabilities without mutating call history', () => {
+  const projector = new AgentSignalsProjector();
+  projector.project(frame({ confirmation: { value: 'explicit', probabilities: { explicit: 1 } } }));
+  const aggregate = projector.project({
+    ...frame({
+      confirmation: { value: 'uncertain', probabilities: { rejected: .25, uncertain: .5, explicit: .25 } },
+      integrity: { value: 'supported', probabilities: { unsupported: .2, uncertain: .2, supported: .6 } },
+    }),
+    aggregated: true,
+  });
+  assert.equal(aggregate.scales.fluency.score, 2.5);
+  assert.equal(aggregate.scales.hallucination.percentage, 30);
+  const live = projector.project(frame());
+  assert.equal(live.scales.fluency.score, 5);
+});
+
 test('shows a lower hallucination percentage when Fleybo is at the top', () => {
   const integrity = (value: IntegrityValue) => ({ value, probabilities: { [value]: 1 } });
   const supported = new AgentSignalsProjector().project(frame({ integrity: integrity('supported') }));

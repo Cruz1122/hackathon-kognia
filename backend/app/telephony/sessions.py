@@ -52,6 +52,12 @@ class CallSession:
     turn_started_at: float = 0.0
     barge_hits: int = 0
     presentation_mark: tuple[str, str] | None = None
+    greet_task: Any = None
+    greeted: bool = False
+    barge_pcm: bytearray = field(default_factory=bytearray)
+    silence_task: Any = None
+    idle_since: float = field(default_factory=time.monotonic)
+    last_silence_prompt: str | None = None
 
     def offset_ms(self) -> int:
         offset = int((time.monotonic() - self.monotonic_zero) * 1000)

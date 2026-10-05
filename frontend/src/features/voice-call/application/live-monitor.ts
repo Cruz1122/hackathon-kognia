@@ -5,6 +5,7 @@ import { redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { showToast } from '../infrastructure/toast';
+import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
@@ -367,6 +368,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     customerShown = '';
     pendingTools.clear();
     pendingRetrievalId = null;
+    resetCallAgentSignals();
     setEmpty(false);
   }
 
@@ -426,6 +428,8 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       finishCustomer(String(data.text ?? ''));
     } else if (type === 'agent.token') {
       appendToken(String(data.text ?? ''));
+    } else if (type === 'agent.signals') {
+      applyCallAgentSignals(data);
     } else if (type === 'tool.started') {
       const toolCallId = String(data.tool_call_id ?? data.id ?? `${String(data.tool ?? 'tool')}-${Date.now()}`);
       const id = `tool-${toolCallId}`;

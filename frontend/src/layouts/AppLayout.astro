@@ -2,6 +2,7 @@
 import { ClientRouter } from 'astro:transitions';
 import AppNav from '../components/navigation/AppNav.astro';
 import InteractiveMascotFace from '../components/mascot/InteractiveMascotFace.astro';
+import AgentSignalsPanel from '../components/agent-signals/AgentSignalsPanel.astro';
 import '../styles/app-shell.css';
 import '../styles/dashboard.css';
 import '../styles/detail-panel.css';
@@ -52,16 +53,23 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
           <i data-lucide="x" aria-hidden="true"></i>
         </button>
         <div class="detail-panel__session" id="sessionPanel">
-          <p class="detail-kicker">Cliente</p>
-          <h2 class="detail-title">Estado de la llamada</h2>
-          <div class="detail-sheet">
-            <section class="detail-group">
-              <dl class="detail-fields">
-                <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
-                <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-                <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
-              </dl>
-            </section>
+          <div id="sessionSummary">
+            <p class="detail-kicker">Cliente</p>
+            <h2 class="detail-title">Estado de la llamada</h2>
+            <div class="detail-sheet">
+              <section class="detail-group">
+                <dl class="detail-fields">
+                  <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
+                  <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
+                  <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
+                </dl>
+              </section>
+            </div>
+          </div>
+          <div class="detail-panel__signals">
+            <p class="detail-kicker">JEV</p>
+            <h2 class="detail-title detail-title--signals">Señales de la conversación</h2>
+            <AgentSignalsPanel id="callAgentSignals" variant="compact" />
           </div>
         </div>
         <div class="detail-panel__body" hidden></div>

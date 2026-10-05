@@ -1,5 +1,6 @@
 import * as echarts from 'echarts';
 import type { ECharts, EChartsOption } from 'echarts';
+import { parseAgentSignalsEnvelope, updateAgentSignals, type AgentSignalsPanelElement } from '../../lib/agent-signals/dom';
 
 type DashboardSummary = {
   conversations: number; opportunities: number; won: number; conversion_rate: number;
@@ -21,6 +22,7 @@ type DashboardPayload = {
   metric_trend: Array<{ date: string; conversations: number; opportunities: number; won: number; revenue_minor: number; recovered_sales: number; recovered_revenue_minor: number }>;
   funnel: Array<{ stage: string; value: number; percentage: number }>;
   objection_product_heatmap: Array<{ category: string; product_name: string; count: number; resolved: number; resolution_rate: number }>;
+  agent_signals?: { sample_count: number; signals: Record<string, unknown> };
 };
 
 const C = { graphite: '#414141', amber: '#f7c974', cream: '#faeccf', paper: '#f8f8f8', white: '#f8f8f8', graphite42: 'rgba(65,65,65,.42)', graphite10: 'rgba(65,65,65,.10)' };
@@ -59,6 +61,9 @@ function parsePayload(value: unknown): DashboardPayload {
     metric_trend: records('metric_trend') as DashboardPayload['metric_trend'],
     funnel: records('funnel') as DashboardPayload['funnel'],
     objection_product_heatmap: records('objection_product_heatmap') as DashboardPayload['objection_product_heatmap'],
+    agent_signals: root.agent_signals && typeof root.agent_signals === 'object' && !Array.isArray(root.agent_signals)
+      ? root.agent_signals as DashboardPayload['agent_signals']
+      : undefined,
   };
 }
 
@@ -251,8 +256,20 @@ function renderDashboard(payload: DashboardPayload): void {
   setDelta('dashboardWonDelta', payload.comparison?.won, (value) => `${value.toFixed(1)}%`);
   setDelta('dashboardConversionDelta', payload.comparison?.conversion_rate, (value) => `${value.toFixed(1)} pp`);
   setDelta('dashboardRecoveredRevenueDelta', payload.comparison?.recovered_revenue_minor, (value) => `${value.toFixed(1)}%`);
+  const agentSignals = parseAgentSignalsEnvelope(payload.agent_signals, true);
+  const signalsSection = element('dashboardAgentSignalsSection');
+  const signalsPanel = element('dashboardAgentSignals') as AgentSignalsPanelElement | null;
+  if (signalsSection) signalsSection.hidden = !agentSignals;
+  if (agentSignals && signalsPanel) {
+    signalsPanel.resetSignalHistory?.();
+    updateAgentSignals(signalsPanel, agentSignals);
+    setText(
+      'dashboardAgentSignalsSample',
+      `${integer.format(agentSignals.sampleCount ?? 0)} ${(agentSignals.sampleCount ?? 0) === 1 ? 'llamada' : 'llamadas'}`,
+    );
+  }
   buildInsights(payload);
-  const hasData = summary.conversations > 0 || summary.opportunities > 0 || payload.lost_reasons.length > 0 || payload.products.length > 0 || payload.objections.total > 0;
+  const hasData = Boolean(agentSignals) || summary.conversations > 0 || summary.opportunities > 0 || payload.lost_reasons.length > 0 || payload.products.length > 0 || payload.objections.total > 0;
   show('dashboardData', hasData); show('dashboardEmpty', !hasData); show('dashboardLoading', false); show('dashboardError', false);
   if (!hasData) {
     window.cancelAnimationFrame(chartMountFrame);

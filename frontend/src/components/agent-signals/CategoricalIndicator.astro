@@ -14,7 +14,7 @@ const gradientCy = base.faceY - base.faceHeight * .32;
 const gradientRadius = Math.max(base.faceWidth, base.faceHeight) * 1.22;
 ---
 
-<article class="categorical" role="img" aria-label={`${snapshot.title}: ${snapshot.label}`} data-category={snapshot.key}>
+<article class="categorical" role="img" aria-label={`${snapshot.title}: ${snapshot.label}`} data-category={snapshot.key} data-value={snapshot.value}>
   <div class="categorical__visual" aria-hidden="true">
     <svg class="categorical__face" viewBox="-180 -180 360 360">
       <defs>

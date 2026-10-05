@@ -1114,7 +1114,7 @@ async def _run_call_turn(
                 break
             if name == 'done':
                 proposal_id = payload.get('proposal_id')
-            if name in {"tool.started", "tool.completed", "rag.started", "rag.completed"}:
+            if name in {"tool.started", "tool.completed", "rag.started", "rag.completed", "agent.signals"}:
                 await _send_call_event(
                     websocket,
                     name,
@@ -1396,6 +1396,20 @@ async def call_socket(
         barge_hits = 0
         turn_task: asyncio.Task[None] | None = None
         stream = await asyncio.to_thread(stt_provider.create_stream)
+        idle_since = time.monotonic()
+        last_silence_prompt = None
+
+        async def _silence_prompt(text: str) -> None:
+            await _send_call_event(websocket, 'agent.token', {'text': text},
+                organization_id=organization_id, conversation_id=conversation_id)
+            history.append({'role': 'assistant', 'content': text})
+            session.add(DbMessage(conversation_id=conversation_id, role=MessageRole.ASSISTANT,
+                content=text, channel='voice'))
+            await session.commit()
+            await _speak_chunk(websocket, text, organization_id=organization_id,
+                conversation_id=conversation_id)
+            await _send_call_event(websocket, 'turn.completed', {},
+                organization_id=organization_id, conversation_id=conversation_id)
 
         async def _reap_turn() -> None:
             nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_armed_at, barge_hits, stream
@@ -1504,6 +1518,15 @@ async def call_socket(
                     now = time.monotonic()
                     busy = turn_task is not None and not turn_task.done()
                     speaking = voiced or rms >= CALL_SPEECH_RMS
+                    if busy or speaking:
+                        idle_since = now
+                    elif first_voice_at <= 0 and now - idle_since > 10:
+                        from .agent.phrases import SILENCE, pick
+                        last_silence_prompt = pick(SILENCE, last_silence_prompt)
+                        idle_since = now
+                        barge_armed_at = now + CALL_BARGE_ARM_SECONDS
+                        turn_task = asyncio.create_task(_silence_prompt(last_silence_prompt))
+                        continue
                     if speaking and not busy and now >= ignore_until:
                         last_voice_at = now
                         if first_voice_at <= 0:
@@ -1618,6 +1641,7 @@ async def call_socket(
                 )
                 continue
             if payload.get("type") == "pcm.start":
+                idle_since = time.monotonic()
                 rate = payload.get("sample_rate")
                 if isinstance(rate, int) and rate > 0:
                     sample_rate = rate

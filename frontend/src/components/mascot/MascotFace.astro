@@ -145,7 +145,7 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
   function interpolateColor(from: string, to: string, progress: number): string {
     const start = parseHex(from);
     const end = parseHex(to);
-    return `rgb(${start.map((channel, index) => Math.round(lerp(channel, end[index], progress))).join(' ')})`;
+    return `#${start.map((channel, index) => Math.round(lerp(channel, end[index], progress)).toString(16).padStart(2, '0')).join('')}`;
   }
 
   function initializeMascots(): void {
@@ -176,6 +176,7 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
       let blinking = false;
       let nextBlinkAt = performance.now() + 3000 + Math.random() * 2000;
       const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      let animationFrame = 0;
       const face = root.querySelector<SVGPathElement>('[data-face]')!;
       const leftEye = root.querySelector<SVGPathElement>('[data-left-eye]')!;
       const rightEye = root.querySelector<SVGPathElement>('[data-right-eye]')!;
@@ -351,12 +352,20 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
         mouth.setAttribute('stroke-width', String(mouthState.mouthStroke));
         features.setAttribute('transform', reducedMotion.matches ? '' : `translate(${trackingX * 6} ${trackingY * 4})`);
         eyes.setAttribute('transform', reducedMotion.matches ? '' : `translate(0 ${trackingY * 8})`);
-        requestAnimationFrame(render);
+        animationFrame = requestAnimationFrame(render);
       }
 
-      window.addEventListener('pointermove', (event) => {
+      const onPointerMove = (event: PointerEvent): void => {
         if (root.dataset.pointerTracking === 'true') lookAt(event.clientX, event.clientY);
-      }, { passive: true });
+      };
+      const cleanup = (): void => {
+        cancelAnimationFrame(animationFrame);
+        window.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('astro:before-swap', cleanup);
+        delete root.dataset.mascotReady;
+      };
+      window.addEventListener('pointermove', onPointerMove, { passive: true });
+      document.addEventListener('astro:before-swap', cleanup, { once: true });
 
       Object.assign(root, {
         setEmotion,
@@ -365,7 +374,7 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
         lookAt,
         lookCenter,
       });
-      requestAnimationFrame(render);
+      animationFrame = requestAnimationFrame(render);
     });
   }
 

@@ -76,7 +76,7 @@ def test_model_catalog_is_hardcoded_by_environment(monkeypatch: pytest.MonkeyPat
     production_chain = get_model_chain(AppEnv.PRODUCTION)
 
     assert [(item.provider, item.model) for item in test_chain] == [
-        (Provider.OPENAI, "gpt-4o-mini"),
+        (Provider.OPENAI, "gpt-4.1"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7"),
         (Provider.GROQ, "llama-3.3-70b-versatile"),
