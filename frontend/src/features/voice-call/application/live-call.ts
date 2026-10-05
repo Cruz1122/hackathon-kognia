@@ -1,5 +1,5 @@
 import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
-import { completeRetrievalCard, createRetrievalCardMarkup, toolCallBusyMarkup } from './retrieval-card';
+import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
@@ -35,7 +35,13 @@ function socketUrl(apiUrl: string, path: string): string {
   return `${apiUrl.replace(/^http/, 'ws')}${path}`;
 }
 
-export function bootLiveCall(apiUrl: string, token: string, callId: string): () => Promise<void> {
+export function bootLiveCall(
+  apiUrl: string,
+  token: string,
+  callId: string,
+  onReady?: () => void,
+  onError?: (reason: string) => void,
+): () => Promise<void> {
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector<HTMLElement>('#conversationEmpty');
   const status = document.querySelector<HTMLElement>('#callConnectionStatus');
@@ -43,6 +49,7 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string): () 
   const player = document.querySelector<HTMLElement>('.player');
   const playBtn = document.querySelector<HTMLButtonElement>('#playBtn');
   if (!(conversation instanceof HTMLElement) || !playBtn) {
+    onError?.('La vista de la llamada en vivo no está disponible en esta página.');
     return async () => undefined;
   }
 
@@ -66,6 +73,18 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string): () 
   void context.resume();
 
   let disposed = false;
+  let readyNotified = false;
+  let errorNotified = false;
+  function notifyReady(): void {
+    if (disposed || readyNotified || errorNotified) return;
+    readyNotified = true;
+    onReady?.();
+  }
+  function notifyError(reason: string): void {
+    if (disposed || readyNotified || errorNotified) return;
+    errorNotified = true;
+    onError?.(reason);
+  }
   let ended = false;
   let silenced = false;
   let nextCustomer = 0;
@@ -234,11 +253,9 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string): () 
       const detail = toolDetailFromEvent(payload, started ? toolDetailFromEvent(started.payload) : undefined);
       const row = appendRow(
         'tool-row',
-        `<button type="button" class="tool-call done" id="tool-${escapeHtml(rawId)}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="false"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status">${escapeHtml(String(payload.status ?? 'Completado'))}</div></div>${toolCallBusyMarkup()}<div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`,
+        `<button type="button" class="tool-call done" id="tool-${escapeHtml(rawId)}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="false"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status">${escapeHtml(String(payload.status ?? 'Completado'))}</div></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`,
         started?.start ?? atMs,
       );
-      const loader = row.querySelector<HTMLElement>('.loader');
-      if (loader) loader.style.display = 'none';
       return;
     }
     if (type === 'rag.completed') {
@@ -313,9 +330,12 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string): () 
       const message = JSON.parse(event.data) as MonitorEvent;
       if (message.type === 'error') {
         if (status) status.classList.add('is-error');
-        if (statusText) statusText.textContent = 'No se pudo escuchar la llamada';
+        const reason = 'El monitor rechazó la conexión con esta llamada.';
+        if (statusText) statusText.textContent = reason;
+        notifyError(reason);
         return;
       }
+      if (message.type === 'call.snapshot') notifyReady();
       handleEvent(message);
     } catch {
       return;
@@ -323,10 +343,20 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string): () 
   });
   monitorSocket.addEventListener('close', (event) => {
     if (disposed || ended) return;
-    if (event.code === 4401 || event.code === 4403) {
+    if (!readyNotified || event.code === 4401 || event.code === 4403) {
       if (status) status.classList.add('is-error');
-      if (statusText) statusText.textContent = 'No se pudo escuchar la llamada';
+      const reason = event.code === 4401 || event.code === 4403
+        ? 'No tienes permiso para escuchar esta llamada en vivo.'
+        : 'El monitor cerró la conexión antes de cargar esta llamada.';
+      if (statusText) statusText.textContent = reason;
+      notifyError(reason);
     }
+  });
+  monitorSocket.addEventListener('error', () => {
+    const reason = 'No se pudo conectar con el monitor de esta llamada.';
+    if (status) status.classList.add('is-error');
+    if (statusText) statusText.textContent = reason;
+    notifyError(reason);
   });
 
   const endWatch = window.setInterval(() => {

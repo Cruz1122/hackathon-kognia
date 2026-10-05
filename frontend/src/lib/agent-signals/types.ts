@@ -13,6 +13,7 @@ export interface Signal<TValue extends string> {
 export interface AgentSignals {
   satisfaction: Signal<OrdinalValue>;
   frustration: Signal<OrdinalValue>;
+  fluency?: Signal<OrdinalValue>;
   confirmation?: Signal<ConfirmationValue>;
   integrity?: Signal<IntegrityValue>;
   intent: Signal<IntentValue>;

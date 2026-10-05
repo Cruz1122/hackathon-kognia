@@ -149,7 +149,7 @@ type SessionState = {
 const session: SessionState = {
   name: '',
   phone: '',
-  status: 'En espera',
+  status: '',
 };
 
 function pendingValue(value: string): string {
@@ -175,7 +175,7 @@ function renderSession(): void {
   const root = document.getElementById('detailPanel');
   const panel = root?.querySelector('#sessionSummary');
   if (!panel) return;
-  panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado de la llamada</h2><div class="detail-sheet"><section class="detail-group">${fieldsMarkup(sessionFields())}</section></div>`;
+  panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado global del cliente</h2><div class="detail-sheet"><section class="detail-group">${fieldsMarkup(sessionFields())}</section></div>`;
 }
 
 function prefersReducedMotion(): boolean {

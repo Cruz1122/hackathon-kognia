@@ -73,6 +73,36 @@ class RollingWindow {
   }
 }
 
+class IntegrityRiskWindow {
+  readonly #values: number[] = [];
+
+  push(value: number): void {
+    this.#values.push(value);
+    if (this.#values.length > 10) this.#values.shift();
+  }
+
+  risk(): number {
+    let current = 0;
+    for (const value of this.#values) {
+      if (value >= 5) current = 5;
+      else if (value >= 2.5) current = Math.max(current * .9, 2.5);
+      else current *= .82;
+    }
+    return clamp(current);
+  }
+
+  clear(): void {
+    this.#values.length = 0;
+  }
+}
+
+function aggregateIntegrityRisk(probabilities: Partial<Record<keyof typeof INTEGRITY_RISK, number>>): number {
+  const unsupported = Math.max(0, Math.min(1, probabilities.unsupported ?? 0));
+  const uncertain = Math.max(0, Math.min(1, probabilities.uncertain ?? 0));
+  const severeRisk = 1 - (1 - unsupported) ** 3;
+  return 5 * Math.min(1, severeRisk + uncertain * .5 * (1 - severeRisk));
+}
+
 function scale(
   key: ScaleKey,
   title: string,
@@ -131,7 +161,7 @@ function category(key: CategoryKey, value: string): CategorySnapshot {
 
 export class AgentSignalsProjector {
   readonly #confirmation = new RollingWindow(10);
-  readonly #integrityRisk = new RollingWindow(10);
+  readonly #integrityRisk = new IntegrityRiskWindow();
 
   reset(): void {
     this.#confirmation.clear();
@@ -148,19 +178,21 @@ export class AgentSignalsProjector {
       if (signals.integrity) this.#integrityRisk.push(INTEGRITY_RISK[signals.integrity.value]);
     }
 
-    const fluency = envelope.aggregated && signals.confirmation
-      ? centroid(signals.confirmation.probabilities, CONFIRMATION)
-      : this.#confirmation.average();
+    const fluency = signals.fluency
+      ? centroid(signals.fluency.probabilities, SATISFACTION)
+      : envelope.aggregated && signals.confirmation
+        ? centroid(signals.confirmation.probabilities, CONFIRMATION)
+        : this.#confirmation.average();
     const integrityRisk = envelope.aggregated && signals.integrity
-      ? centroid(signals.integrity.probabilities, INTEGRITY_RISK)
-      : this.#integrityRisk.average();
+      ? aggregateIntegrityRisk(signals.integrity.probabilities)
+      : this.#integrityRisk.risk();
     const hallucinationDisplay = 5 - integrityRisk;
 
     return {
       scales: {
         satisfaction: scale('satisfaction', 'Satisfacción', satisfaction, 'Muy alta', 'Muy baja'),
-        tension: scale('tension', 'Tensión', tension, 'Calma', 'Tensión'),
-        fluency: scale('fluency', 'Fluidez de conversación', fluency, 'Fluida', 'Trabada', !signals.confirmation),
+        tension: scale('tension', 'Tensión', tension, 'Calma', 'Tensión', false, true),
+        fluency: scale('fluency', 'Fluidez de conversación', fluency, 'Fluida', 'Trabada', !signals.fluency && !signals.confirmation),
         hallucination: scale('hallucination', 'Alucinaciones del agente', hallucinationDisplay, 'Muy bajo', 'Muy alto', !signals.integrity, true),
       },
       categories: {

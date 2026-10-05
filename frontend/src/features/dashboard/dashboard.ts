@@ -1,6 +1,7 @@
 import * as echarts from 'echarts';
 import type { ECharts, EChartsOption } from 'echarts';
 import { parseAgentSignalsEnvelope, updateAgentSignals, type AgentSignalsPanelElement } from '../../lib/agent-signals/dom';
+import { revealLoadedContent, showContentLoader } from '../ui/loading-reveal';
 
 type DashboardSummary = {
   conversations: number; opportunities: number; won: number; conversion_rate: number;
@@ -69,7 +70,10 @@ function parsePayload(value: unknown): DashboardPayload {
 
 function element(id: string): HTMLElement | null { return document.getElementById(id); }
 function setText(id: string, value: string): void { const node = element(id); if (node) node.textContent = value; }
-function show(id: string, visible: boolean): void { const node = element(id); if (node) node.hidden = !visible; }
+function show(target: string | HTMLElement | null, visible: boolean): void {
+  const node = typeof target === 'string' ? element(target) : target;
+  if (node) node.hidden = !visible;
+}
 function setProgress(id: string, value: number): void {
   const node = element(id);
   if (node) node.style.width = `${Math.min(100, Math.max(0, numberValue(value)))}%`;
@@ -248,7 +252,7 @@ function buildInsights(payload: DashboardPayload): void {
     : 'No hay suficiente relación entre objeciones y productos para mostrar concentración.');
 }
 
-function renderDashboard(payload: DashboardPayload): void {
+function renderDashboard(payload: DashboardPayload): boolean {
   const { summary } = payload;
   setText('dashboardRevenue', money.format(summary.revenue_minor)); setText('dashboardWon', integer.format(summary.won)); setText('dashboardConversion', percent(summary.conversion_rate)); setText('dashboardRecoveredRevenue', money.format(summary.recovered_revenue_minor));
   setText('dashboardConversations', integer.format(summary.conversations)); setText('dashboardRecoveredSales', integer.format(summary.recovered_sales)); setText('dashboardRecoveryRate', percent(summary.recovery_rate)); setProgress('dashboardRecoveryMeter', summary.recovery_rate);
@@ -270,13 +274,12 @@ function renderDashboard(payload: DashboardPayload): void {
   }
   buildInsights(payload);
   const hasData = Boolean(agentSignals) || summary.conversations > 0 || summary.opportunities > 0 || payload.lost_reasons.length > 0 || payload.products.length > 0 || payload.objections.total > 0;
-  show('dashboardData', hasData); show('dashboardEmpty', !hasData); show('dashboardLoading', false); show('dashboardError', false);
   if (!hasData) {
     window.cancelAnimationFrame(chartMountFrame);
     chartMountGeneration++;
     charts.forEach((chart) => chart.dispose());
     charts.clear();
-    return;
+    return false;
   }
    mountGradually([
      ['dashboardConversionChart', lineOption(payload.conversion_trend.map((point) => ({ date: point.date, value: point.conversion_rate })), 'Conversión')],
@@ -294,8 +297,9 @@ function renderDashboard(payload: DashboardPayload): void {
    /*
      The charts are intentionally mounted one per frame. ECharts initialization
      is the expensive part of this view; spreading it avoids a main-thread spike
-     while the login wipe is still moving.
+     right after the dashboard boots.
    */
+  return true;
 }
 
 export function bootDashboard(apiUrl: string, token: string): () => void {
@@ -310,17 +314,29 @@ export function bootDashboard(apiUrl: string, token: string): () => void {
     activeController?.abort();
     const controller = new AbortController();
     activeController = controller;
-    show('dashboardLoading', true); show('dashboardData', false); show('dashboardEmpty', false); show('dashboardError', false);
+    const loading = element('dashboardLoading');
+    const content = element('dashboardContent');
+    const data = element('dashboardData');
+    const empty = element('dashboardEmpty');
+    const errorState = element('dashboardError');
+    showContentLoader(loading, content);
     const query = new URLSearchParams(); if (fromInput?.value) query.set('from', fromInput.value); if (toInput?.value) query.set('to', toInput.value);
     try {
       const response = await fetch(`${apiUrl}/analytics/dashboard?${query}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
       if (!response.ok) throw new Error(`dashboard ${response.status}`);
       const payload = parsePayload(await response.json());
       if (disposed || currentRequest !== requestId) return;
-      renderDashboard(payload);
+      const hasData = renderDashboard(payload);
+      show(data, hasData);
+      show(empty, !hasData);
+      show(errorState, false);
+      await revealLoadedContent(loading, content);
     } catch (error) {
       if (controller.signal.aborted || disposed || currentRequest !== requestId) return;
-      show('dashboardLoading', false); show('dashboardData', false); show('dashboardEmpty', false); show('dashboardError', true);
+      show(data, false);
+      show(empty, false);
+      show(errorState, true);
+      await revealLoadedContent(loading, content);
     }
   };
   const applyButton = element('dashboardApply'); const retryButton = element('dashboardRetry');

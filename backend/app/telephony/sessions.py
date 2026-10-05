@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 import time
 import uuid
@@ -52,9 +53,15 @@ class CallSession:
     turn_started_at: float = 0.0
     barge_hits: int = 0
     presentation_mark: tuple[str, str] | None = None
+    hangup_after_mark: str | None = None
+    hangup_requested: bool = False
     greet_task: Any = None
     greeted: bool = False
     barge_pcm: bytearray = field(default_factory=bytearray)
+    barge_pending: bool = False
+    barge_last_voice_at: float = 0.0
+    barge_pause: Any = field(default_factory=asyncio.Event)
+    barge_resume_task: Any = None
     silence_task: Any = None
     idle_since: float = field(default_factory=time.monotonic)
     last_silence_prompt: str | None = None

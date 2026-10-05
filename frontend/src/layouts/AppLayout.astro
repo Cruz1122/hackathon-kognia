@@ -7,6 +7,8 @@ import '../styles/app-shell.css';
 import '../styles/dashboard.css';
 import '../styles/detail-panel.css';
 import '../styles/toast.css';
+import '../styles/loading-reveal.css';
+import '../styles/empty-state.css';
 
 interface Props {
   title?: string;
@@ -32,7 +34,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
     <script src="https://unpkg.com/lucide@latest" is:inline></script>
   </head>
   <body data-api-url={apiUrl}>
-    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel']}>
+    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel', showDetailPanel && 'is-call-loading']}>
       <aside class="app-sidebar" aria-label="Demo" transition:persist transition:name="app-sidebar">
         <div class="app-mobile-topbar">
           <div class="app-sidebar__brand">
@@ -45,7 +47,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
         </div>
         <AppNav mode="route" active={activeRoute} />
       </aside>
-      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="fade">
+      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="none">
         <slot />
       </main>
       {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">
@@ -55,21 +57,20 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
         <div class="detail-panel__session" id="sessionPanel">
           <div id="sessionSummary">
             <p class="detail-kicker">Cliente</p>
-            <h2 class="detail-title">Estado de la llamada</h2>
+            <h2 class="detail-title">Estado global del cliente</h2>
             <div class="detail-sheet">
               <section class="detail-group">
                 <dl class="detail-fields">
                   <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
                   <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-                  <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
+                  <div class="detail-field"><dt>Estado</dt><dd class="is-pending">Pendiente</dd></div>
                 </dl>
               </section>
             </div>
           </div>
+          <div class="detail-client-signals" id="callSignalCategories" aria-label="Estado global del cliente"></div>
           <div class="detail-panel__signals">
-            <p class="detail-kicker">JEV</p>
-            <h2 class="detail-title detail-title--signals">Señales de la conversación</h2>
-            <AgentSignalsPanel id="callAgentSignals" variant="compact" />
+            <AgentSignalsPanel id="callAgentSignals" variant="compact" categoriesTarget="callSignalCategories" />
           </div>
         </div>
         <div class="detail-panel__body" hidden></div>

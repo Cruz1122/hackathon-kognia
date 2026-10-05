@@ -18,19 +18,31 @@ def apply_observations(state: AgentState, prompt: str) -> None:
         state.action('human_requested')
     intent = state.signals.get('intent')
     confirmation = state.signals.get('confirmation')
-    explicit = confirmation is not None and confirmation.value == 'explicit'
-    # Interpret language with the model, not phrase dictionaries. An explicit
-    # verdict about this exact proposal takes precedence over a broad intent label.
-    if ((not explicit and intent and intent.value in {'correct', 'cancel'})
+    frustration = state.signals.get('frustration')
+    explicit_confirmation = confirmation is not None and confirmation.value == 'explicit'
+    high_frustration = frustration is not None and frustration.value in {'high', 'very_high'}
+    # A cancellation always invalidates the old proposal. A "correct" intent only
+    # does so when the turn is not an explicit confirmation: JEV labels broad
+    # affirmations such as "que sí" as corrections at low confidence, and that
+    # must not discard a scoped "yes" to the exact presented proposal. Doing so
+    # withdrew the proposal and made the agent repeat the same confirmation
+    # question forever.
+    conflicts_with_confirmation = intent is not None and (
+        intent.value == 'cancel'
+        or (intent.value == 'correct' and not explicit_confirmation)
+    )
+    explicit = explicit_confirmation and not conflicts_with_confirmation and not high_frustration
+    if (conflicts_with_confirmation or high_frustration
             or (confirmation and confirmation.value == 'rejected')):
         if state.pending:
-            state.action('proposal_withdrawn', proposal=state.pending.fingerprint)
+            state.action('proposal_withdrawn', proposal=state.pending.fingerprint,
+                         reason='high_frustration' if high_frustration else 'customer_rejected_or_changed')
         state.pending = None
         state.phase = 'understanding'
     pending = state.pending
     if (not state.handoff_requested and pending and pending.presented
             and now() - pending.created_at < timedelta(minutes=15)
-            and explicit):
+            and explicit and not conflicts_with_confirmation and not high_frustration):
         state.authorized = pending.fingerprint
         state.action('explicit_confirmation_received', proposal=pending.fingerprint)
 

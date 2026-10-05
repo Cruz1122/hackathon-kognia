@@ -17,6 +17,5 @@ SILENCE = (
     '¿Continuamos? Dime si necesitas un momento.',
 )
 
-
 def pick(pool: tuple[str, ...], previous: str | None = None) -> str:
     return random.choice(tuple(text for text in pool if text != previous) or pool)

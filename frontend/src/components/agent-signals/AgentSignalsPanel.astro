@@ -14,6 +14,7 @@ interface Props {
   demoFrames?: readonly AgentSignalsEnvelope[];
   demoIntervalMs?: number;
   variant?: 'full' | 'compact';
+  categoriesTarget?: string;
   class?: string;
 }
 
@@ -24,6 +25,7 @@ const {
   demoFrames = autoDemo ? DEMO_FRAMES : [],
   demoIntervalMs = 1500,
   variant = 'full',
+  categoriesTarget,
   class: className,
 } = Astro.props;
 
@@ -39,12 +41,12 @@ const initial = projector.project(initialData);
   data-demo={JSON.stringify(demoFrames)}
   data-auto-demo={String(autoDemo)}
   data-demo-interval={String(demoIntervalMs)}
+  data-categories-target={categoriesTarget}
   aria-label="Indicadores del agente"
 >
   {variant === 'compact' ? (
     <>
       <section class="agent-signals__compact-group">
-        <h3>Escalas</h3>
         <div class="agent-signals__scales">
           <CompactSignalScale snapshot={initial.scales.satisfaction} />
           <CompactSignalScale snapshot={initial.scales.tension} />
@@ -52,14 +54,11 @@ const initial = projector.project(initialData);
           <CompactSignalScale snapshot={initial.scales.hallucination} />
         </div>
       </section>
-      <section class="agent-signals__compact-group">
-        <h3>Clasificación</h3>
-        <dl class="agent-signals__categories detail-fields">
+      <dl class="agent-signals__categories detail-fields" data-agent-signal-categories>
           <CompactCategoricalIndicator snapshot={initial.categories.intent} />
           <CompactCategoricalIndicator snapshot={initial.categories.human} />
           <CompactCategoricalIndicator snapshot={initial.categories.schedule} />
-        </dl>
-      </section>
+      </dl>
     </>
   ) : (
     <>
@@ -183,6 +182,10 @@ const initial = projector.project(initialData);
       const initial = parse<AgentSignalsEnvelope | null>(root.dataset.initial, null);
       const demo = parse<AgentSignalsEnvelope[]>(root.dataset.demo, []);
       const demoInterval = Math.max(250, Number(root.dataset.demoInterval) || 1500);
+      const categoriesTarget = root.dataset.categoriesTarget ? document.getElementById(root.dataset.categoriesTarget) : null;
+      const categoryBlock = root.querySelector<HTMLElement>('[data-agent-signal-categories]');
+      if (categoriesTarget && categoryBlock && categoryBlock.parentElement !== categoriesTarget) categoriesTarget.append(categoryBlock);
+      const categoryScope: ParentNode = categoriesTarget ?? root;
       const timers = new Set<number>();
       const categoryTimers = new Map<CategoryKey, Set<number>>();
       const gazeTimers = new Map<MascotElement, Set<number>>();
@@ -275,7 +278,7 @@ const initial = projector.project(initialData);
       };
 
       const updateCategory = (key: CategoryKey, snapshot: AgentSignalsSnapshot['categories'][CategoryKey]): void => {
-        const card = root.querySelector<HTMLElement>(`[data-category="${key}"]`);
+        const card = categoryScope.querySelector<HTMLElement>(`[data-category="${key}"]`);
         if (!card || card.dataset.value === snapshot.value) return;
         card.dataset.value = snapshot.value;
         const label = card.querySelector<HTMLElement>('[data-category-label]');

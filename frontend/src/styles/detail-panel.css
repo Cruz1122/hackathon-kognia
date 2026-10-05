@@ -96,6 +96,21 @@ body.detail-open .demo-switcher {
   border-top: 1px solid rgba(65, 65, 65, .12);
 }
 
+.detail-client-signals {
+  min-width: 0;
+  margin-top: 18px;
+}
+
+.detail-client-signals:empty { display: none; }
+
+.detail-client-signals .detail-fields { gap: 6px; }
+
+.detail-client-signals .compact-category {
+  --detail-row-height: 44px;
+  min-height: var(--detail-row-height);
+  padding-block: 7px;
+}
+
 .detail-title--signals {
   margin-bottom: 18px;
   font-size: 22px;

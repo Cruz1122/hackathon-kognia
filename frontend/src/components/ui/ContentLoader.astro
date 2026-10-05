@@ -1,0 +1,159 @@
+---
+interface Props {
+  id: string;
+  copy: string;
+  class?: string;
+}
+
+const { id, copy, class: className } = Astro.props;
+---
+
+<div class:list={['content-loader', className]} id={id} role="status" aria-live="polite" aria-atomic="true">
+  <svg class="content-loader__filter" width="0" height="0" aria-hidden="true">
+    <defs>
+      <filter id={`${id}-goo`} x="-60%" y="-100%" width="220%" height="300%" color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+        <feColorMatrix in="blur" type="matrix" values="
+          1 0 0 0 0
+          0 1 0 0 0
+          0 0 1 0 0
+          0 0 0 22 -10" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+      </filter>
+    </defs>
+  </svg>
+  <span class="content-loader__motion" aria-hidden="true">
+    <span class="content-loader__dots content-loader__dots--goo" style={`--content-loader-filter: url(#${id}-goo)`}>
+      <span></span>
+      <span></span>
+      <span></span>
+    </span>
+    <span class="content-loader__dots content-loader__dots--crisp">
+      <span></span>
+      <span></span>
+      <span></span>
+    </span>
+    <span class="content-loader__bullets"><span>●</span><span>●</span><span>●</span></span>
+  </span>
+  <p>{copy}</p>
+</div>
+
+<style>
+  .content-loader {
+    display: grid;
+    min-height: 360px;
+    place-content: center;
+    justify-items: center;
+    gap: 13px;
+    color: var(--ui-graphite, #414141);
+    text-align: center;
+    animation: content-loader-fade-in .38s cubic-bezier(.32, .04, .18, 1) both;
+  }
+
+  .content-loader[hidden] { display: none !important; }
+  .content-loader__filter { position: absolute; pointer-events: none; }
+
+  .content-loader__motion {
+    display: grid;
+    width: 58px;
+    height: 24px;
+    place-items: center;
+  }
+
+  .content-loader__motion::after {
+    content: "";
+    grid-area: 1 / 1;
+    width: 11px;
+    height: 11px;
+    justify-self: start;
+    margin-left: 5.5px;
+    border-radius: 50%;
+    background: var(--ui-graphite, #414141);
+    box-shadow: 18px 0 var(--ui-graphite, #414141), 36px 0 var(--ui-graphite, #414141);
+    animation: content-loader-group 1.05s cubic-bezier(.45, .05, .55, .95) infinite;
+  }
+
+  .content-loader__dots {
+    grid-area: 1 / 1;
+    display: flex;
+    width: 58px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+  }
+
+  .content-loader__dots--goo {
+    filter: var(--content-loader-filter);
+    -webkit-filter: var(--content-loader-filter);
+  }
+
+  .content-loader__dots--crisp { opacity: .96; }
+
+  .content-loader__bullets {
+    grid-area: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    color: var(--ui-graphite, #414141);
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .content-loader__bullets > span { animation: content-loader-bullet 1.05s cubic-bezier(.45, .05, .55, .95) infinite; }
+  .content-loader__bullets > span:nth-child(2) { animation-delay: -.92s; }
+  .content-loader__bullets > span:nth-child(3) { animation-delay: -.79s; }
+
+  .content-loader__dots > span {
+    width: 11px;
+    height: 11px;
+    flex: 0 0 11px;
+    border-radius: 50%;
+    background: var(--ui-graphite, #414141);
+    animation: content-loader-dot 1.05s cubic-bezier(.45, .05, .55, .95) infinite;
+    transform-origin: center bottom;
+  }
+
+  .content-loader__dots > span:nth-child(2) { animation-delay: -.92s; }
+  .content-loader__dots > span:nth-child(3) { animation-delay: -.79s; }
+
+  .content-loader p {
+    margin: 0;
+    color: var(--ui-graphite, #414141);
+    font-family: var(--font-ui, "Urbanist", sans-serif);
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1.35;
+    letter-spacing: -.01em;
+  }
+
+  @keyframes content-loader-fade-in {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @keyframes content-loader-dot {
+    0%, 65%, 100% { opacity: .4; transform: translateY(3px) scale(.72, .76); }
+    32% { opacity: 1; transform: translateY(-5px) scale(1.08, .94); }
+    46% { opacity: .84; transform: translateY(-1px) scale(.94, 1.08); }
+  }
+
+  @keyframes content-loader-group {
+    0%, 100% { opacity: .58; transform: translateY(2px) scale(.9); }
+    50% { opacity: .9; transform: translateY(-2px) scale(1); }
+  }
+
+  @keyframes content-loader-bullet {
+    0%, 65%, 100% { opacity: .5; transform: translateY(3px) scale(.76); }
+    32% { opacity: 1; transform: translateY(-5px) scale(1); }
+    46% { opacity: .86; transform: translateY(-1px) scale(.94, 1.08); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .content-loader { animation-duration: .001ms; }
+    .content-loader__dots > span { animation: none; opacity: .72; transform: none; }
+    .content-loader__motion::after { animation: none; opacity: .72; transform: none; }
+    .content-loader__bullets > span { animation: none; opacity: .72; transform: none; }
+  }
+</style>

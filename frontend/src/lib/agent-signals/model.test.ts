@@ -31,7 +31,17 @@ test('projects satisfaction and inverted tension with continuous percentages', (
   assert.equal(snapshot.scales.satisfaction.score, 3.25);
   assert.equal(snapshot.scales.satisfaction.percentage, 65);
   assert.equal(snapshot.scales.tension.score, 0);
+  assert.equal(snapshot.scales.tension.percentage, 100);
   assert.equal(snapScale(snapshot.scales.tension.score).emotion, 'angry');
+});
+
+test('uses the dedicated conversation fluency signal when available', () => {
+  const snapshot = new AgentSignalsProjector().project(frame({
+    fluency: { value: 'high', probabilities: { high: 1 } },
+    confirmation: { value: 'rejected', probabilities: { rejected: 1 } },
+  }));
+  assert.equal(snapshot.scales.fluency.percentage, 75);
+  assert.equal(snapshot.scales.fluency.stale, false);
 });
 
 test('keeps confirmation history unchanged when a cycle omits the signal', () => {
@@ -64,7 +74,7 @@ test('projects dashboard aggregates from averaged probabilities without mutating
     aggregated: true,
   });
   assert.equal(aggregate.scales.fluency.score, 2.5);
-  assert.equal(aggregate.scales.hallucination.percentage, 30);
+  assert.equal(aggregate.scales.hallucination.percentage, 54);
   const live = projector.project(frame());
   assert.equal(live.scales.fluency.score, 5);
 });
@@ -77,6 +87,13 @@ test('shows a lower hallucination percentage when Fleybo is at the top', () => {
   assert.equal(supported.scales.hallucination.percentage, 0);
   assert.equal(unsupported.scales.hallucination.score, 0);
   assert.equal(unsupported.scales.hallucination.percentage, 100);
+});
+
+test('starts hallucination risk at zero and penalizes unsupported claims immediately', () => {
+  const projector = new AgentSignalsProjector();
+  assert.equal(projector.project(frame()).scales.hallucination.percentage, 0);
+  assert.equal(projector.project(frame({ integrity: { value: 'unsupported', probabilities: { unsupported: 1 } } })).scales.hallucination.percentage, 100);
+  assert.equal(projector.project(frame({ integrity: { value: 'supported', probabilities: { supported: 1 } } })).scales.hallucination.percentage, 82);
 });
 
 test('normalizes categorical labels and Lucide icon names', () => {

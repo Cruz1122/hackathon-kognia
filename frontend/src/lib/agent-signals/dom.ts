@@ -39,11 +39,20 @@ function signal<TValue extends string>(
   return { value: selected, probabilities };
 }
 
+function ordinalSignal(value: unknown, fallback: typeof EMPTY_AGENT_SIGNALS.signals.satisfaction.value) {
+  const labels = ['very_low', 'low', 'neutral', 'high', 'very_high'] as const;
+  const parsed = signal(value, labels, fallback);
+  const unknown = record(record(value).probabilities).unknown;
+  if (typeof unknown === 'number' && Number.isFinite(unknown) && unknown >= 0) {
+    parsed.probabilities.neutral = (parsed.probabilities.neutral ?? 0) + unknown;
+  }
+  return parsed;
+}
+
 export function parseAgentSignalsEnvelope(value: unknown, aggregated = false): AgentSignalsEnvelope | null {
   const source = record(value);
   const signals = record(source.signals);
   if (!Object.keys(signals).length) return null;
-  const ordinal = ['very_low', 'low', 'neutral', 'high', 'very_high'] as const;
   const confirmation = signals.confirmation
     ? signal(signals.confirmation, ['rejected', 'uncertain', 'explicit'] as const, 'uncertain')
     : undefined;
@@ -55,8 +64,9 @@ export function parseAgentSignalsEnvelope(value: unknown, aggregated = false): A
     aggregated,
     sampleCount,
     signals: {
-      satisfaction: signal(signals.satisfaction, ordinal, EMPTY_AGENT_SIGNALS.signals.satisfaction.value),
-      frustration: signal(signals.frustration, ordinal, EMPTY_AGENT_SIGNALS.signals.frustration.value),
+      satisfaction: ordinalSignal(signals.satisfaction, EMPTY_AGENT_SIGNALS.signals.satisfaction.value),
+      frustration: ordinalSignal(signals.frustration, EMPTY_AGENT_SIGNALS.signals.frustration.value),
+      fluency: signals.fluency ? ordinalSignal(signals.fluency, 'neutral') : undefined,
       confirmation,
       integrity,
       intent: signal(signals.intent, ['continue', 'correct', 'cancel', 'callback', 'human', 'unknown'] as const, 'unknown'),

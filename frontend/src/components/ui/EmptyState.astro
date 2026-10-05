@@ -1,0 +1,34 @@
+---
+interface Props {
+  icon: string;
+  title: string;
+  description?: string;
+  id?: string;
+  class?: string;
+  hidden?: boolean;
+  role?: string;
+  ariaLive?: 'polite' | 'assertive' | 'off';
+  tone?: 'empty' | 'error';
+}
+
+const {
+  icon,
+  title,
+  description,
+  id,
+  class: className,
+  hidden = false,
+  role,
+  ariaLive,
+  tone = 'empty',
+} = Astro.props;
+
+const rootClass = ['empty-state', tone === 'error' && 'empty-state--error', className].filter(Boolean).join(' ');
+---
+
+<div class={rootClass} id={id} role={role} aria-live={ariaLive} hidden={hidden}>
+  <div class="empty-state__icon" aria-hidden="true"><i data-lucide={icon}></i></div>
+  <p class="empty-state__title">{title}</p>
+  {description && <p class="empty-state__reason">{description}</p>}
+  <slot />
+</div>

@@ -34,7 +34,7 @@ _SIGNAL_DEFAULTS = {
     "human": "unknown",
     "schedule_flexibility": "unknown",
 }
-_DISPLAY_SIGNAL_KEYS = {*_SIGNAL_DEFAULTS, "confirmation", "integrity"}
+_DISPLAY_SIGNAL_KEYS = {*_SIGNAL_DEFAULTS, "confirmation", "integrity", "fluency"}
 
 
 def _aggregate_agent_signals(snapshots: list[dict]) -> AgentSignalsAggregate | None:

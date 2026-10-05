@@ -30,8 +30,6 @@ ARGS = {'date': '2027-10-05', 'time': '19:00', 'party_size': 4, 'customer_name':
 @pytest_asyncio.fixture
 async def fixture(monkeypatch):
     await dispose_engine()
-    from app.agent import dialogue
-    monkeypatch.setattr(dialogue, 'interpret', AsyncMock(return_value=None))
     for name, value in [('WHATSAPP_ACCESS_TOKEN', 'test'), ('WHATSAPP_APP_SECRET', 'secret'),
                         ('WHATSAPP_VERIFY_TOKEN', 'verify'), ('WHATSAPP_PHONE_NUMBER_ID', '123')]:
         monkeypatch.setenv(name, value)
@@ -102,6 +100,60 @@ async def test_persistent_booking_and_old_turn_replay(fixture):
     async with conversation_state(str(org.id), str(conversation.id)) as store:
         assert store.state.phase == 'completed'
         assert len(store.state.recent) == 4
+
+
+async def test_model_receives_booking_intent_across_consecutive_user_fragments(fixture):
+    from app.db.models import MessageRole
+    async with get_session_factory()() as db:
+        db.add_all([
+            Message(conversation_id=fixture[1].id, role=MessageRole.USER,
+                    content='Sí, me gustaría hacer una reserva, pero', channel='voice'),
+            Message(conversation_id=fixture[1].id, role=MessageRole.USER,
+                    content='Mierda', channel='voice'),
+        ])
+        await db.commit()
+
+    async def model_turn(prompt, **kwargs):
+        history = kwargs['messages']
+        assert history[-2:] == [
+            {'role': 'user', 'content': 'Sí, me gustaría hacer una reserva, pero'},
+            {'role': 'user', 'content': 'Mierda'},
+        ]
+        assert prompt == 'Hola'
+        yield 'token', {'text': 'Claro, seguimos con tu reserva. ¿Qué fecha tienes en mente?'}
+        yield 'done', {'provider': 'fake', 'model': 'tool-calling'}
+
+    events = await turn(fixture, 'Hola', 'fragmented-booking-intent', model_turn)
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert 'seguimos con tu reserva' in text
+
+
+async def test_model_receives_hour_clarification_context_for_short_answer(fixture):
+    from app.db.models import MessageRole
+    history = [
+        ('user', 'La quiero para mañana de una vez'),
+        ('assistant', '¿A qué hora quieres la reserva?'),
+        ('user', 'La quiero para las ocho'),
+        ('assistant', '¿A las ocho de la mañana o de la noche?'),
+    ]
+    async with get_session_factory()() as db:
+        db.add_all([Message(conversation_id=fixture[1].id,
+                            role=MessageRole.USER if role == 'user' else MessageRole.ASSISTANT,
+                            content=content, channel='voice') for role, content in history])
+        await db.commit()
+
+    async def model_turn(prompt, **kwargs):
+        assert prompt == 'Mañana'
+        assert [(item['role'], item['content']) for item in kwargs['messages']] == history
+        assert 'una respuesta como \'mañana\' o \'de mañana\' indica la mañana para esa hora' in kwargs['system_context']
+        assert 'No empieces cada turno con \'Perfecto\'' in kwargs['system_context']
+        yield 'token', {'text': 'A las ocho de la mañana. ¿Para cuántas personas será?'}
+        yield 'done', {'provider': 'fake', 'model': 'tool-calling'}
+
+    events = await turn(fixture, 'Mañana', 'short-morning-answer', model_turn)
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert 'ocho de la mañana' in text
+    assert '¿A qué hora' not in text
 
 
 async def test_foreign_tenant_cannot_load_state(fixture):
@@ -398,8 +450,7 @@ async def new_call_conversation(fixture, *, same_customer=True):
         return conversation.id
 
 
-async def test_guided_whatsapp_callback_keeps_slots_and_restores_requested_conversation(fixture, monkeypatch):
-    from app.agent import dialogue
+async def test_model_selected_whatsapp_callback_keeps_slots_and_restores_requested_conversation(fixture, monkeypatch):
     from app.telephony.telnyx_api import TelnyxApi
     from app.telephony.continuity import restore_outbound
     cid = await new_call_conversation(fixture)
@@ -413,19 +464,22 @@ async def test_guided_whatsapp_callback_keeps_slots_and_restores_requested_conve
         db.add_all([Message(conversation_id=cid, role=MessageRole.USER, content='Soy Camilo, ocho personas a las ocho de la mañana.', channel='voice'),
                     Message(conversation_id=fixture[1].id, role=MessageRole.USER, content='OLD_UNRELATED_CONTEXT', channel='voice')])
         await db.commit()
-    interpret = AsyncMock(return_value=dialogue.Plan(action='callback', callback_requested=True, model='test'))
-    monkeypatch.setattr(dialogue, 'interpret', interpret)
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'intent': Signal(value='callback', confidence=.99, turn_id=turn_id, model='fake'),
+                'callback_request': Signal(value='explicit', confidence=.99, turn_id=turn_id, model='fake')}
+    monkeypatch.setattr(jev, 'observe', observe)
     monkeypatch.setenv('TELNYX_ENABLED', 'true')
     control = uuid.uuid4().hex
     dial = AsyncMock(return_value={'call_control_id': control, 'call_leg_id': 'leg', 'call_session_id': 'session'})
     monkeypatch.setattr(TelnyxApi, 'dial', dial)
     ctx = ToolContext('callback-after-drop', organization_id=str(fixture[0].id), conversation_id=str(cid), channel='whatsapp')
-    async def must_not_generate(*args, **kwargs):
-        raise AssertionError('Guided callback must not use free-form/RAG generation')
-        yield
+    async def select_callback(*args, **kwargs):
+        result = await TOOL_REGISTRY.execute('call_customer', {}, kwargs['tool_context'])
+        yield 'token', {'text': 'Te estoy llamando.' if result.ok else 'No se pudo iniciar la llamada.'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
     for _ in range(2):
         events = [item async for item in stateful_stream('Cortó, llámame, por favor', messages=None, llm=None,
-            tool_context=ctx, generate=must_not_generate)]
+            tool_context=ctx, generate=select_callback)]
         assert 'llamando' in next(data['text'] for kind, data in events if kind == 'token')
     dial.assert_awaited_once()
     async with get_session_factory()() as db:
@@ -442,18 +496,20 @@ async def test_guided_whatsapp_callback_keeps_slots_and_restores_requested_conve
     assert not any('OLD_UNRELATED_CONTEXT' in item['content'] for item in restored.history)
 
 
-async def test_guided_booking_success_and_cached_success_never_reask_confirmation(fixture, monkeypatch):
-    from app.agent import dialogue
-    plan = dialogue.Plan(action='booking', updates=dialogue.Slots.model_validate({
-        **ARGS, 'time_period': 'night'}), model='test')
-    async def interpret(state, prompt, *args):
-        return plan.model_copy(update={'confirmation': 'explicit' if prompt == 'confirmo' else 'uncertain'})
-    monkeypatch.setattr(dialogue, 'interpret', interpret)
-    first = await turn(fixture, 'reserva', 'guided-proposal')
+async def test_model_selected_booking_success_and_cached_success_never_reask_confirmation(fixture, monkeypatch):
+    generated_turns = []
+    async def select_booking(prompt, **kwargs):
+        generated_turns.append(prompt)
+        async for event in booking_generator(prompt, **kwargs):
+            yield event
+
+    first = await turn(fixture, 'reserva', 'model-proposal', select_booking)
     assert first[-1][1]['proposal_id'] is not None
-    confirmed = await turn(fixture, 'confirmo', 'guided-confirmation')
+    assert generated_turns == ['reserva']
+    confirmed = await turn(fixture, 'confirmo', 'model-confirmation', select_booking)
     text = next(data['text'] for kind, data in confirmed if kind == 'token')
-    assert text == 'Tu reserva está confirmada.'
+    assert text == 'Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
+    assert generated_turns == ['reserva']
     async with get_session_factory()() as db:
         state = (await db.get(AgentSnapshot, fixture[1].id)).data
         assert state['pending'] is None
@@ -464,16 +520,36 @@ async def test_guided_booking_success_and_cached_success_never_reask_confirmatio
         authorize(store.state, 'create_booking', ARGS)
         store.state.pending.presented = True
         await store.save()
-    cached = await turn(fixture, 'confirmo', 'guided-cached')
-    assert next(data['text'] for kind, data in cached if kind == 'token') == 'Tu reserva está confirmada.'
+    cached = await turn(fixture, 'confirmo', 'model-cached', select_booking)
+    assert next(data['text'] for kind, data in cached if kind == 'token') == 'Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
     async with get_session_factory()() as db:
         assert (await db.get(AgentSnapshot, fixture[1].id)).data['pending'] is None
         assert await db.scalar(select(func.count()).select_from(AgentOperation).where(
             AgentOperation.conversation_id == fixture[1].id, AgentOperation.tool == 'create_booking')) == 1
 
 
-async def test_guided_uncertain_execution_does_not_become_a_new_confirmation_question(fixture, monkeypatch):
-    from app.agent import dialogue
+async def test_noisy_correct_intent_does_not_loop_confirmation(fixture, monkeypatch):
+    """JEV labels "que sí" as intent=correct at low confidence; must still book."""
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        explicit = prompt == 'que sí'
+        return {
+            'confirmation': Signal(value='explicit' if explicit else 'uncertain',
+                confidence=.41, turn_id=turn_id, model='fake'),
+            'intent': Signal(value='correct' if explicit else 'continue',
+                confidence=.42, turn_id=turn_id, model='fake'),
+            'frustration': Signal(value='neutral', confidence=.61, turn_id=turn_id, model='fake'),
+        }
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    first = await turn(fixture, 'reserva', 'noisy-proposal')
+    assert first[-1][1]['proposal_id'] is not None
+    confirmed = await turn(fixture, 'que sí', 'noisy-confirmation')
+    text = next(data['text'] for kind, data in confirmed if kind == 'token')
+    assert text == 'Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
+    assert '¿La confirmas?' not in text
+
+
+async def test_uncertain_execution_does_not_become_a_new_confirmation_question(fixture, monkeypatch):
     from app.agent.tools.contracts import ToolResult
     async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
         from app.agent.policy import authorize
@@ -481,8 +557,6 @@ async def test_guided_uncertain_execution_does_not_become_a_new_confirmation_que
         authorize(store.state, 'create_booking', ARGS)
         store.state.pending.presented = True
         await store.save()
-    monkeypatch.setattr(dialogue, 'interpret', AsyncMock(return_value=dialogue.Plan(
-        action='booking', confirmation='explicit', model='test')))
     execute = AsyncMock(return_value=ToolResult(False, error_code='OPERATION_UNCERTAIN'))
     monkeypatch.setattr(TOOL_REGISTRY, 'execute', execute)
     events = await turn(fixture, 'confirmo', 'uncertain-guided')

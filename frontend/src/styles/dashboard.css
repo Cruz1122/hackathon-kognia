@@ -5,6 +5,8 @@
 .section-view--dashboard::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
 .section-view--dashboard:hover::-webkit-scrollbar-thumb, .section-view--dashboard:focus-within::-webkit-scrollbar-thumb { background: rgba(65,65,65,.28); }
 .dashboard-page { width: min(1480px, 100%); margin: 0 auto; padding: 72px 64px 120px; }
+.dashboard-page:has(> .content-loader:not([hidden])) { display: grid; height: 100%; place-items: center; padding: 0; }
+.dashboard-page > .content-loader { width: 100%; min-height: 100%; }
 .dashboard-topline { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 26px; }
 .dashboard-topline h2 { margin: 0; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.05em; line-height: 1; }
 .dashboard-heading { min-width: 0; }

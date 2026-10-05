@@ -147,6 +147,64 @@ def test_rejected_jev_blocks_exact_affirmative():
     assert memory.authorized is None
 
 
+def test_cancellation_or_correction_vetoes_conflicting_explicit_confirmation():
+    memory = state()
+    authorize(memory, 'create_booking', {'party_size': 7})
+    memory.pending.presented = True
+    memory.signals = {
+        'confirmation': signal('explicit'),
+        'intent': signal('cancel'),
+    }
+    apply_observations(memory, 'No, es que me dio demasiada rabia, te odio')
+    assert memory.pending is None
+    assert memory.authorized is None
+
+
+def test_noisy_correct_intent_does_not_veto_explicit_confirmation():
+    """Regression: JEV labels "que sí" as intent=correct at low confidence.
+
+    That must not withdraw the presented proposal, otherwise the agent repeats
+    the same confirmation question forever instead of executing the booking.
+    """
+    memory = state()
+    authorize(memory, 'create_booking', {'party_size': 6, 'date': '2026-10-06', 'time': '08:00'})
+    memory.pending.presented = True
+    memory.signals = {
+        'confirmation': signal('explicit', confidence=.41),
+        'intent': signal('correct', confidence=.42),
+        'frustration': signal('neutral', confidence=.61),
+    }
+    apply_observations(memory, 'Que sí')
+    assert memory.pending is not None
+    assert memory.authorized == memory.pending.fingerprint
+
+
+def test_correction_without_explicit_confirmation_still_withdraws():
+    memory = state()
+    authorize(memory, 'create_booking', {'party_size': 7})
+    memory.pending.presented = True
+    memory.signals = {
+        'confirmation': signal('uncertain'),
+        'intent': signal('correct'),
+    }
+    apply_observations(memory, 'No, mejor cambia la fecha')
+    assert memory.pending is None
+    assert memory.authorized is None
+
+
+def test_high_frustration_cannot_authorize_a_pending_write():
+    memory = state()
+    authorize(memory, 'create_booking', {'party_size': 7})
+    memory.pending.presented = True
+    memory.signals = {
+        'confirmation': signal('explicit'),
+        'frustration': signal('very_high'),
+    }
+    apply_observations(memory, 'Sí, te odio')
+    assert memory.pending is None
+    assert memory.authorized is None
+
+
 def test_missing_semantic_verdict_never_authorizes():
     memory = state()
     authorize(memory, 'create_booking', {'party_size': 4})
@@ -229,6 +287,21 @@ async def test_jev_observes_conversation_and_cross_channel_evidence(monkeypatch)
     assert payload['recent'] == memory.recent
     assert payload['message'] == 'cuatro'
     assert payload['tool_results'] == memory.tool_history
+    questions = evaluate.call_args.args[1]
+    assert 'ordinary cooperative exchange' in questions['satisfaction'][0]
+    assert 'must repeat information' in questions['frustration'][0]
+    assert 'repetition' in questions['fluency'][0]
+
+
+@pytest.mark.asyncio
+async def test_integrity_marks_fabricated_commercial_outcomes_as_severe(monkeypatch):
+    memory = state()
+    evaluate = AsyncMock(return_value={})
+    monkeypatch.setattr(jev, 'evaluate', evaluate)
+    await jev.integrity(memory, 'Tu reserva está confirmada.', 'turn')
+    questions = evaluate.call_args.args[1]
+    instructions = questions['integrity'][0]
+    assert 'fabricated commercial outcomes as severe unsupported failures' in instructions
 
 
 @pytest.mark.asyncio

@@ -153,6 +153,7 @@ class AgentState(BaseModel):
             'Ambiguous number words such as "dose" may mean "dos" or "doce": ask which count before using a tool. '
             'Read-only tools do not need permission: when their required details are known, execute them rather '
             'than asking if the customer wants you to check. '
+            'Ask for the customer name at the start of a new conversation, before collecting booking details, unless it is already known. '
             'After the customer introduces themselves, acknowledge the name and ask their purpose without assuming a booking. '
             'If a garbled follow-up resembles a repetition of an already known name and adds no clear request, '
             'keep that name and ask how you can help; do not infer a callback from unrelated syllables. '

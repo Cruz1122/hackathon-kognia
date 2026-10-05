@@ -13,6 +13,10 @@ SCENARIOS = [
         speech('Mañana a las ocho y somos ocho.'), speech('Soy Camilo, a las ocho de la mañana.'),
         speech('Es que es muy enredado.', 'Es que es muy enregado', 'phonetic_substitution', 'context_recoverable'),
         whatsapp('Cortó, llámame, por favor')]),
+    ('guided_reported_opening_loop', 'booking', [speech(text) for text in [
+        'Hola.', 'Sí, claro, de una.', 'Sí, hagamos una reserva.',
+        'El cinco de octubre.', 'A las siete.', 'De la noche.',
+        'Cuatro personas.', 'Camilo.', 'Sí, confirmo.']]),
     ('guided_step_by_step', 'booking', [speech(text) for text in [
         'Hola.', 'Necesito reservar.', 'Mañana.', 'A las siete.', 'De la noche.',
         'Cuatro personas.', 'Camilo.', 'Sí, confirmo.']]),

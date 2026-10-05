@@ -154,7 +154,7 @@ services:
       - "127.0.0.1:18473:80"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --spider http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3

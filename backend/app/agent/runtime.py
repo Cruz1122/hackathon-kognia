@@ -9,9 +9,10 @@ from sqlalchemy import select
 
 from . import dialogue, jev
 from .policy import Turn, active_turn, apply_observations
-from .state import Fact, fingerprint
+from .state import Fact, Signal, fingerprint
 from .phrases import RECOVERY, pick
 from .store import conversation_state
+from .tools.contracts import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +55,16 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                     if state.active_channel != context.channel:
                         state.action('channel_switched', previous=state.active_channel, channel=context.channel)
                     state.active_channel = context.channel
-                    signals, plan = await asyncio.gather(
-                        jev.observe(state, prompt, context.request_id, TOOL_REGISTRY.domain_questions),
-                        dialogue.interpret(state, prompt, llm))
+                    signals = await jev.observe(state, prompt, context.request_id, TOOL_REGISTRY.domain_questions)
                     state.signals = signals
-                    if plan:
-                        dialogue.apply(state, plan, context.request_id)
+                    callback_intent = signals.get('callback_request')
+                    if (callback_intent and callback_intent.value == 'explicit' and callback_intent.confidence >= .8
+                            and callback_intent.turn_id == context.request_id):
+                        state.signals['callback_request'] = Signal(
+                            value='explicit', confidence=callback_intent.confidence,
+                            turn_id=context.request_id, model=callback_intent.model)
                     confirmation = state.signals.get('confirmation')
-                    if plan is None and state.pending and state.pending.presented and (confirmation is None or confirmation.value == 'uncertain'):
+                    if state.pending and state.pending.presented and (confirmation is None or confirmation.value == 'uncertain'):
                         fallback = await jev.confirmation_fallback(state, prompt, context.request_id, llm)
                         if fallback is not None:
                             state.signals['confirmation'] = fallback
@@ -85,38 +88,48 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                                 else:
                                     yield kind, value
                         instructions = state.context() + '\n' + '\n'.join(TOOL_REGISTRY.context_instructions)
-                        guided = plan is not None and plan.action != 'other'
                         write_attempted = execution is not None
-                        source = dialogue.respond(state, plan, context, execution) if guided else generate(
-                            prompt, messages=history, llm=llm, tool_context=context, system_context=instructions)
-                        trusted = guided
-                        async for kind, payload in source:
-                            if kind == 'token':
-                                draft += str(payload['text'])
-                                if len(draft) > 16000:
-                                    draft = pick(RECOVERY, state.last_response)
-                                    break
-                            elif kind == 'done':
-                                done = payload
-                            elif kind == 'error':
-                                draft = pick(RECOVERY, state.last_response)
-                                trusted = True
-                                break
+                        if execution is not None:
+                            name, result = execution
+                            if not isinstance(result, ToolResult):
+                                raise TypeError('Tool execution returned an invalid result')
+                            if result.ok:
+                                draft = (('Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
+                                          if context.channel == 'voice' else 'Tu reserva está confirmada.')
+                                         if name == 'create_booking' else
+                                         'Te estoy llamando para retomar lo pendiente. Contesta cuando suene.')
                             else:
-                                if kind == 'tool.completed':
-                                    definition = TOOL_REGISTRY.resolve(payload.get('tool', ''))
-                                    if definition and definition.side_effects == 'write':
-                                        error = payload.get('error_code')
-                                        if error is None and isinstance(payload.get('result'), str):
-                                            import json
-                                            try:
-                                                error = json.loads(payload['result']).get('error_code')
-                                            except (ValueError, AttributeError):
-                                                pass
-                                        if error != 'CONFIRMATION_REQUIRED':
-                                            write_attempted = True
-                                yield kind, payload
-                        if state.pending and not write_attempted and (guided or plan is None):
+                                draft = 'La solicitud está pendiente de confirmación. No voy a repetirla para evitar duplicados.'
+                            trusted = True
+                        else:
+                            async for kind, payload in generate(
+                                prompt, messages=history, llm=llm, tool_context=context, system_context=instructions):
+                                if kind == 'token':
+                                    draft += str(payload['text'])
+                                    if len(draft) > 16000:
+                                        draft = pick(RECOVERY, state.last_response)
+                                        break
+                                elif kind == 'done':
+                                    done = payload
+                                elif kind == 'error':
+                                    draft = pick(RECOVERY, state.last_response)
+                                    trusted = True
+                                    break
+                                else:
+                                    if kind == 'tool.completed':
+                                        definition = TOOL_REGISTRY.resolve(payload.get('tool', ''))
+                                        if definition and definition.side_effects == 'write':
+                                            error = payload.get('error_code')
+                                            if error is None and isinstance(payload.get('result'), str):
+                                                import json
+                                                try:
+                                                    error = json.loads(payload['result']).get('error_code')
+                                                except (ValueError, AttributeError):
+                                                    pass
+                                            if error != 'CONFIRMATION_REQUIRED':
+                                                write_attempted = True
+                                    yield kind, payload
+                        if state.pending and not write_attempted:
                             if not state.pending.presented:
                                 proposal_id = state.pending.fingerprint
                                 state.action('proposal_prepared', proposal=proposal_id)
@@ -125,8 +138,6 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                             if state.pending.tool == 'create_booking':
                                 args = state.pending.arguments
                                 draft = dialogue.reservation_question(args)
-                                if plan and plan.simplify:
-                                    draft = 'Lo hacemos sencillo. ' + draft
                                 trusted = True
                             elif state.pending.tool == 'call_customer':
                                 draft = '¿Confirmas que te llame al teléfono de esta conversación?'
@@ -134,10 +145,10 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                         # Integrity must see the customer's actual words, including
                         # names/details not yet promoted to tool-backed facts.
                         state.recent = [*history, {'role': 'user', 'content': prompt}]
+                        signal = await jev.integrity(state, draft, context.request_id)
+                        if signal:
+                            state.signals['integrity'] = signal
                         if not trusted:
-                            signal = await jev.integrity(state, draft, context.request_id)
-                            if signal:
-                                state.signals['integrity'] = signal
                             # Only an explicit "unsupported" blocks; a missing verdict does not.
                             if signal is not None and signal.value == 'unsupported':
                                 state.action('response_blocked', reason='integrity')

@@ -73,6 +73,15 @@ async def run_agent_turn(
     voice = tts or PiperTTSProvider()
     if session.marks is None:
         session.marks = MarkTracker()
+    customer_turn_offset_ms = next(
+        (
+            int(event.get("offset_ms") or 0)
+            for event in reversed(session.events)
+            if event.get("type") == "transcript.final"
+            and (event.get("payload") or {}).get("speaker") == "customer"
+        ),
+        session.offset_ms(),
+    )
     timeline.record(session, "agent.state", {"state": "thinking"})
     session.agent_state = "thinking"
     tool_context = ToolContext(
@@ -84,6 +93,7 @@ async def run_agent_turn(
     )
     answer: list[str] = []
     proposal_id = None
+    reservation_confirmed = False
     generator = agent(transcript, messages=list(session.history), tool_context=tool_context)
     waiting = _with_holding(generator, session, voice)
     try:
@@ -92,7 +102,16 @@ async def run_agent_turn(
                 break
             if kind == 'done':
                 proposal_id = payload.get('proposal_id')
-            await _publish_agent_event(session, kind, payload, answer)
+            if (kind == 'tool.completed' and payload.get('tool') == 'create_booking'
+                    and payload.get('ok') is True):
+                reservation_confirmed = True
+            await _publish_agent_event(
+                session,
+                kind,
+                payload,
+                answer,
+                customer_turn_offset_ms=customer_turn_offset_ms,
+            )
     except asyncio.CancelledError:
         await _cancel_playback(session)
         raise
@@ -113,6 +132,16 @@ async def run_agent_turn(
                 ])
                 await db.commit()
         await _speak(session, voice, spoken)
+        marks = session.marks
+        if reservation_confirmed and session.websocket and marks is not None:
+            mark = marks.generated()
+            session.hangup_after_mark = mark
+            marks.sent(mark)
+            try:
+                await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
+            except Exception:
+                session.hangup_after_mark = None
+                raise
         if proposal_id and session.websocket and not session.closed:
             mark = session.marks.generated()
             session.presentation_mark = (mark, proposal_id)
@@ -127,6 +156,8 @@ async def _publish_agent_event(
     kind: str,
     payload: dict[str, Any],
     answer: list[str],
+    *,
+    customer_turn_offset_ms: int,
 ) -> None:
     if kind == "token":
         answer.append(str(payload.get("text") or ""))
@@ -141,7 +172,10 @@ async def _publish_agent_event(
         timeline.record(session, kind, payload)
         return
     if kind == "agent.signals":
-        timeline.record(session, kind, payload)
+        # Signals describe the customer message that started this turn. Keeping
+        # that original offset makes replay and seeking update on the message,
+        # even though classification finishes a little later in real time.
+        timeline.record(session, kind, payload, at_offset_ms=customer_turn_offset_ms)
         return
     if kind == "error":
         timeline.record(session, "agent.error", {"message": payload.get("message") or "error"})
@@ -196,6 +230,13 @@ def _agent_heard_ms(session: CallSession) -> int:
 async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:
     if not pcm:
         return
+    # A tentative barge holds the reply instead of discarding it: if the customer
+    # really speaks the turn is cancelled, otherwise playback resumes here.
+    pause = session.barge_pause
+    if pause is not None and pause.is_set():
+        await pause.wait()
+        if session.closed:
+            return
     customer_samples = len(session.customer_pcm) // 2
     agent_samples = len(session.agent_pcm) // 2
     if not session.agent_segment_open and customer_samples > agent_samples:

@@ -10,6 +10,7 @@ import pytest
 from app.agent.phrases import HOLDING, RECOVERY, SILENCE, pick
 from app.telephony import runtime as runtime_module
 from app.telephony.bridge import _with_holding
+from app.telephony.marks import MarkTracker
 from app.telephony.runtime import TelephonyRuntime
 from app.telephony.sessions import CallSession
 
@@ -75,7 +76,7 @@ async def test_fresh_call_onboarding_introduces_role_and_asks_one_question(monke
     text = speak.call_args.args[2]
     assert 'asistente del restaurante' in text
     assert text.count('¿') == 1
-    assert '¿Quieres hacer una reserva?' in text
+    assert '¿cómo te llamas?' in text.lower()
     assert 'continuar' not in text
     assert call.history == [{'role': 'assistant', 'content': text}]
 
@@ -115,6 +116,93 @@ async def test_caller_speech_is_fed_to_stt_while_initial_greeting_speaks(monkeyp
     finally:
         greeting.cancel()
         await asyncio.gather(greeting, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_barge_feeds_pre_roll_and_triggering_frame(monkeypatch):
+    runtime = TelephonyRuntime()
+    runtime.enable_voice = True
+    call = session()
+    call.stt = object()
+    call.turn_task = asyncio.create_task(asyncio.sleep(60))
+    call.turn_started_at = time.monotonic() - 1
+    call.first_voice_at = time.monotonic()
+    fed = []
+
+    async def feed(session, pcm):
+        fed.append(pcm)
+        return '', False
+
+    monkeypatch.setattr(runtime, '_feed_stt', feed)
+    barge = AsyncMock()
+    monkeypatch.setattr(runtime, '_barge_in', barge)
+    loud = (4000).to_bytes(2, 'little', signed=True) * 160
+    try:
+        await runtime._on_customer_pcm(call, loud)
+        barge.assert_awaited_once()
+        assert fed and fed[0].endswith(loud)
+    finally:
+        call.turn_task.cancel()
+        await asyncio.gather(call.turn_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_speaking_barge_holds_then_resumes_without_voice(monkeypatch):
+    """A noise barge while speaking must hold the reply and resume when the caller stays quiet."""
+    runtime = TelephonyRuntime()
+    call = session()
+    call.websocket = AsyncMock()
+    call.marks = MarkTracker()
+    call.agent_state = "speaking"
+    call.turn_task = asyncio.create_task(asyncio.sleep(60))
+    call.turn_started_at = time.monotonic() - 1
+    monkeypatch.setattr(runtime_module, "BARGE_GRACE_SECONDS", 0.05)
+
+    loud = (4000).to_bytes(2, "little", signed=True) * 160
+    try:
+        await runtime._on_customer_pcm(call, loud)
+        assert call.barge_pending is True
+        assert call.barge_pause.is_set()
+        assert not call.turn_task.cancelled()
+
+        await asyncio.sleep(0.1)
+        assert call.barge_pending is False
+        assert not call.barge_pause.is_set()
+        assert not call.turn_task.cancelled()
+    finally:
+        call.turn_task.cancel()
+        await asyncio.gather(call.turn_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_speaking_barge_cancels_when_customer_speaks(monkeypatch):
+    """Once a real utterance starts, the held reply must be dropped."""
+    async def fast_agent(prompt, **kwargs):
+        yield "token", {"text": "ok"}
+        yield "done", {}
+
+    runtime = TelephonyRuntime()
+    runtime.agent = fast_agent
+    call = session()
+    call.websocket = AsyncMock()
+    call.marks = MarkTracker()
+    call.agent_state = "speaking"
+    call.turn_task = asyncio.create_task(asyncio.sleep(60))
+    call.turn_started_at = time.monotonic() - 1
+
+    first = call.turn_task
+    loud = (4000).to_bytes(2, "little", signed=True) * 160
+    await runtime._on_customer_pcm(call, loud)
+    assert call.barge_pending is True
+
+    await runtime._start_turn(call, "quiero reservar")
+    assert first.cancelled()
+    assert call.barge_pending is False
+    assert not call.barge_pause.is_set()
+
+    new_task = call.turn_task
+    if new_task is not None:
+        await asyncio.gather(new_task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

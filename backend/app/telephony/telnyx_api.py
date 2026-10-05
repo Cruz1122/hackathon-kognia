@@ -63,6 +63,12 @@ class TelnyxApi:
             requested.pop("trim")
             await self._post(path, requested)
 
+    async def hangup(self, call_control_id: str, *, command_id: str) -> None:
+        await self._post(
+            f"/v2/calls/{call_control_id}/actions/hangup",
+            {"command_id": command_id},
+        )
+
     async def sync_webhook(self) -> None:
         if not self.settings.connection_id or not self.settings.webhook_host:
             return
