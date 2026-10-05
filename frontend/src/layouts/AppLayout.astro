@@ -44,7 +44,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
         </div>
         <AppNav mode="route" active={activeRoute} />
       </aside>
-      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="slide">
+      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="fade">
         <slot />
       </main>
       {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">

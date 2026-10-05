@@ -95,10 +95,10 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
     if (page > pages) page = pages;
     const start = (page - 1) * PAGE_SIZE;
     const slice = rows.slice(start, start + PAGE_SIZE);
-    body.replaceChildren();
+    body.replaceChildren(renderTestRow());
     slice.forEach((call) => body.append(renderRow(call, liveIds.has(call.id))));
     const hasRows = rows.length > 0;
-    show(table, hasRows);
+    show(table, true);
     show(empty, !hasRows);
     show(pager, hasRows);
     empty.textContent = calls.length === 0 ? 'Aún no hay llamadas.' : 'Ninguna llamada coincide con la búsqueda.';
@@ -190,6 +190,48 @@ function applyStatus(root: HTMLElement, value: string): void {
 
 function sortCalls(calls: ListedCall[]): ListedCall[] {
   return calls.slice().sort((left, right) => Date.parse(right.started_at) - Date.parse(left.started_at));
+}
+
+function renderTestRow(): HTMLTableRowElement {
+  const row = document.createElement('tr');
+  row.className = 'calls-test-row';
+  const status = document.createElement('td');
+  const chip = document.createElement('span');
+  chip.className = 'calls-status';
+  chip.textContent = 'Demo';
+  status.append(chip);
+  row.append(
+    cell('Llamada de prueba', 'calls-name'),
+    cell('Navegador'),
+    cell('—', 'calls-muted'),
+    cell('—', 'calls-muted'),
+    status,
+    callActionCell(),
+  );
+  return row;
+}
+
+function callActionCell(): HTMLTableCellElement {
+  const node = document.createElement('td');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'calls-view';
+  button.setAttribute('aria-label', 'Iniciar llamada de prueba');
+  const icon = document.createElement('i');
+  icon.dataset.lucide = 'phone';
+  icon.setAttribute('aria-hidden', 'true');
+  button.append(icon);
+  button.addEventListener('click', () => {
+    showToast('Iniciando llamada de prueba', 'success');
+    const link = document.createElement('a');
+    link.href = '/calls/demo?autostart=1';
+    link.dataset.route = 'calls-demo';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  });
+  node.append(button);
+  return node;
 }
 
 function renderRow(call: ListedCall, live: boolean): HTMLTableRowElement {

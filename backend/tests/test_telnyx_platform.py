@@ -24,7 +24,7 @@ from app.telephony.bridge import run_agent_turn
 from app.telephony.live_audio import live_audio_hub
 from app.telephony.marks import MarkTracker
 from app.telephony.recording import RecordingRecord, download_recording, recording_store
-from app.telephony.runtime import runtime
+from app.telephony.runtime import BARGE_ARM_SECONDS, runtime
 from app.telephony.sessions import CallSession, registry
 from app.telephony.state import project_state
 from app.telephony.stt import SherpaSTTProvider
@@ -293,6 +293,37 @@ async def test_agent_cancellation_and_tool_failure() -> None:
     await other.turn_task
     assert any(event["type"] == "agent.error" for event in other.events)
     assert any(event["type"] == "tool.started" for event in other.events)
+
+
+@pytest.mark.asyncio
+async def test_customer_energy_barge_cancels_thinking_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def hanging_agent(prompt: str, **kwargs):
+        yield "token", {"text": "pensando"}
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(runtime, "agent", hanging_agent)
+    session = CallSession(
+        call_id=uuid.uuid4(),
+        token="token",
+        telnyx_call_control_id="barge-cc",
+        organization_id=uuid.uuid4(),
+    )
+    session.marks = MarkTracker()
+    await runtime._start_turn(session, "hola")
+    task = session.turn_task
+    assert task is not None
+    await asyncio.sleep(0.05)
+
+    loud = b"\x00\x40" * 160
+    await runtime._on_customer_pcm(session, loud)
+    assert not task.cancelled()
+
+    await asyncio.sleep(BARGE_ARM_SECONDS + 0.1)
+    await runtime._on_customer_pcm(session, loud)
+    await asyncio.sleep(0.05)
+    assert task.cancelled()
 
 
 @pytest.mark.asyncio

@@ -431,7 +431,7 @@ export class AudioCaptureAdapter {
     const merged = new Int16Array(this.pcmTail.length + converted.length);
     merged.set(this.pcmTail);
     merged.set(converted, this.pcmTail.length);
-    const frameSize = 1600;
+    const frameSize = 640;
     let offset = 0;
     while (merged.length - offset >= frameSize) {
       const frame = merged.slice(offset, offset + frameSize);

@@ -37,6 +37,8 @@
 .calls-view { display: inline-grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: var(--radius-full); background: var(--ui-graphite); color: var(--ui-paper); padding: 0; cursor: pointer; }
 .calls-view svg { width: 15px; height: 15px; }
 .calls-table tbody tr:hover { background: rgba(250, 236, 207, .55); }
+.calls-test-row td { background: var(--ui-amber); }
+.calls-table tbody tr.calls-test-row:hover td { background: rgba(247, 201, 116, .72); }
 .calls-name { font-weight: 700; }
 .calls-muted { color: rgba(65, 65, 65, .48); font-weight: 600; }
 .calls-status { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 12px; border-radius: var(--radius-full); background: var(--ui-cream); font-size: 12px; font-weight: 800; }
