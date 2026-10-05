@@ -61,11 +61,14 @@ jobs:
           echo "frontend=${{ steps.filter.outputs.frontend }}" >> "$GITHUB_OUTPUT"
           echo "backend=${{ steps.filter.outputs.backend }}" >> "$GITHUB_OUTPUT"
 
-  # Crea PostgreSQL, Redis y Chroma solo si no existen. No se actualiza una app
-  # existente: Azure Container Apps no monta volúmenes, así que una revisión
-  # nueva reiniciaría el contenedor y borraría los datos.
+  # Redis y Chroma se refrescan siempre: una revisión nueva repara una app
+  # atascada en un estado que no es Running, y no tienen datos que perder.
+  #
+  # PostgreSQL es la excepción: se crea solo si falta y nunca se actualiza.
+  # Container Apps no monta volúmenes, así que cualquier revisión nueva
+  # arrancaría un contenedor con el filesystem vacío y perdería los datos.
   infra:
-    name: Create data services
+    name: Create or refresh data services
     runs-on: ubuntu-latest
     env:
       AZURE_CORE_OUTPUT: none
@@ -110,7 +113,9 @@ jobs:
                 POSTGRES_USER="$POSTGRES_USER" \
                 POSTGRES_PASSWORD=secretref:postgres-password
           else
-            printf '%s\n' "PostgreSQL ($APP) ya existe." >&2
+            # Nunca se actualiza. Una revisión nueva reiniciaría el contenedor
+            # con el filesystem vacío y perdería los datos.
+            printf '%s\n' "PostgreSQL ($APP) ya existe; se deja intacta." >&2
           fi
 
           az containerapp ingress enable \
@@ -120,7 +125,7 @@ jobs:
             --target-port 5432 \
             --transport tcp >/dev/null
 
-      - name: Create Redis when missing
+      - name: Create or refresh Redis
         shell: bash
         env:
           APP: ${{ vars.AZURE_REDIS_APP_NAME }}
@@ -143,7 +148,12 @@ jobs:
               --target-port 6379 \
               --transport tcp
           else
-            printf '%s\n' "Redis ($APP) ya existe." >&2
+            az containerapp update \
+              --name "$APP" \
+              --resource-group "$RESOURCE_GROUP" \
+              --image redis:7.4-alpine \
+              --min-replicas 1 \
+              --max-replicas 1
           fi
 
           az containerapp ingress enable \
@@ -153,7 +163,7 @@ jobs:
             --target-port 6379 \
             --transport tcp >/dev/null
 
-      - name: Create Chroma when missing
+      - name: Create or refresh Chroma
         shell: bash
         env:
           APP: ${{ vars.AZURE_CHROMA_APP_NAME }}
@@ -178,7 +188,13 @@ jobs:
               --allow-insecure true \
               --env-vars IS_PERSISTENT=TRUE
           else
-            printf '%s\n' "Chroma ($APP) ya existe." >&2
+            az containerapp update \
+              --name "$APP" \
+              --resource-group "$RESOURCE_GROUP" \
+              --image chromadb/chroma:1.1.1 \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --set-env-vars IS_PERSISTENT=TRUE
           fi
 
           az containerapp ingress enable \

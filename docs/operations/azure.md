@@ -53,14 +53,23 @@ Los builds siguen siendo condicionales (`dorny/paths-filter`): en un push que so
 toca `frontend/**` no se reconstruye la imagen del backend. Un disparo manual
 fuerza ambos builds.
 
-### Infraestructura sin reinicios
+### Infraestructura: Redis y Chroma se refrescan, Postgres no
 
-PostgreSQL, Redis y Chroma **no montan volúmenes persistentes** en Container
-Apps. Por eso los jobs de infraestructura crean esas apps solo cuando no
-existen y nunca ejecutan `update --image`: una revisión nueva reiniciaría el
-contenedor y **borraría los datos**. Para forzar una imagen nueva en una de ellas,
-usa su workflow manual (`deploy-postgres-azure.yml`, `deploy-redis-azure.yml`,
-`deploy-chroma-azure.yml`).
+| Servicio | Si no existe | Si ya existe |
+| --- | --- | --- |
+| PostgreSQL | se crea | **se deja intacto** |
+| Redis | se crea | revisión nueva |
+| Chroma | se crea | revisión nueva |
+
+Para Redis y Chroma, forzar una revisión nueva es lo que repara una app atascada
+en un estado que no es `Running` (imagen inválida, crash-loop, configuración
+previa equivocada). Antes de esto había que tirar del workflow manual de ese
+servicio.
+
+**PostgreSQL nunca se actualiza**, porque no monta volúmenes en Container Apps:
+cualquier revisión nueva arrancaría un contenedor con el filesystem vacío y
+**perdería los datos**. Si necesitas que sobrevivan, hay que montar Azure Files o
+mover PostgreSQL a un servicio gestionado.
 
 El workflow **no espera ni verifica** que los contenedores queden `Running`: crea,
 despliega y lanza el bootstrap. Si algo no arranca, se ve en los logs de Azure
