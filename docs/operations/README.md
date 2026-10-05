@@ -6,6 +6,7 @@ Arranque, env y comprobación de la demo.
 | --- | --- |
 | [local.md](local.md) | `make setup` / `dev-api` / `dev-web` |
 | [docker.md](docker.md) | Compose, orden de health, puertos |
+| [azure.md](azure.md) | Container Apps, secrets y variables de GitHub |
 | [configuration.md](configuration.md) | Variables de entorno |
 | [verification.md](verification.md) | build, smoke, pytest |
 
