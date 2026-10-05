@@ -1,12 +1,9 @@
 name: Deploy Azure
 
-# Punto de entrada único del despliegue: en un push a `main` asegura TODOS los
-# servicios (PostgreSQL, Redis, Chroma, backend, worker, frontend y el job de
-# migración) y también se puede ejecutar a mano con `workflow_dispatch`.
-#
-# Los workflows `deploy-postgres-azure.yml`, `deploy-redis-azure.yml`,
-# `deploy-chroma-azure.yml` y `setup-demo-db-azure.yml` siguen existiendo como
-# utilidades manuales por servicio.
+# Despliega los servicios y ejecuta el bootstrap. No espera ni verifica que los
+# contenedores queden Running: si algo no arranca, se ve en los logs de Azure.
+# Para reparar un servicio concreto están los workflows manuales por servicio
+# (deploy-postgres-azure.yml, deploy-redis-azure.yml, deploy-chroma-azure.yml).
 
 on:
   push:
@@ -17,8 +14,6 @@ on:
 permissions:
   contents: read
 
-# Un despliegue a la vez: los jobs de infraestructura crean Container Apps y
-# dos ejecuciones solapadas podrían competir por el mismo recurso.
 concurrency:
   group: azure-deploy-all
   cancel-in-progress: false
@@ -29,7 +24,6 @@ jobs:
     name: Detect affected components
     runs-on: ubuntu-latest
     outputs:
-      # dorny/paths-filter expone estos valores como los strings 'true'/'false'.
       frontend: ${{ steps.selection.outputs.frontend }}
       backend: ${{ steps.selection.outputs.backend }}
 
@@ -44,11 +38,9 @@ jobs:
         with:
           base: ${{ github.ref }}
           filters: |
-            # Changes under frontend/** rebuild and deploy the frontend only.
             frontend:
               - 'frontend/**'
               - 'frontend/Dockerfile'
-            # Changes under backend/** rebuild and deploy the backend only.
             backend:
               - 'backend/**'
               - 'backend/Dockerfile'
@@ -69,19 +61,16 @@ jobs:
           echo "frontend=${{ steps.filter.outputs.frontend }}" >> "$GITHUB_OUTPUT"
           echo "backend=${{ steps.filter.outputs.backend }}" >> "$GITHUB_OUTPUT"
 
-  # La infraestructura se asegura en cada ejecución, pero NUNCA se reinicia una
-  # Container App existente: Azure Container Apps no monta volúmenes
-  # persistentes, así que un `update --image` borraría los datos de PostgreSQL y
-  # Chroma. Si la app no existe, se crea.
-
-  infra-postgres:
-    name: Ensure PostgreSQL Container App
+  # Crea PostgreSQL, Redis y Chroma solo si no existen. No se actualiza una app
+  # existente: Azure Container Apps no monta volúmenes, así que una revisión
+  # nueva reiniciaría el contenedor y borraría los datos.
+  infra:
+    name: Create data services
     runs-on: ubuntu-latest
     env:
       AZURE_CORE_OUTPUT: none
       RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
-      DATABASE_APP_NAME: ${{ vars.AZURE_DATABASE_APP_NAME }}
       POSTGRES_DB: ${{ vars.POSTGRES_DB }}
       POSTGRES_USER: ${{ vars.POSTGRES_USER }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -92,23 +81,21 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Create PostgreSQL Container App when missing
+      - name: Create PostgreSQL when missing
         shell: bash
+        env:
+          APP: ${{ vars.AZURE_DATABASE_APP_NAME }}
         run: |
           set -euo pipefail
 
           test -n "$RESOURCE_GROUP"
           test -n "$CONTAINER_APP_ENVIRONMENT"
-          test -n "$DATABASE_APP_NAME"
+          test -n "$APP"
           test -n "$POSTGRES_PASSWORD"
 
-          if az containerapp show \
-            --name "$DATABASE_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
-            printf '%s\n' 'PostgreSQL ya existe: no se actualiza la imagen.' >&2
-          else
+          if ! az containerapp show --name "$APP" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
             az containerapp create \
-              --name "$DATABASE_APP_NAME" \
+              --name "$APP" \
               --resource-group "$RESOURCE_GROUP" \
               --environment "$CONTAINER_APP_ENVIRONMENT" \
               --image postgres:16.4-alpine \
@@ -122,73 +109,31 @@ jobs:
                 POSTGRES_DB="$POSTGRES_DB" \
                 POSTGRES_USER="$POSTGRES_USER" \
                 POSTGRES_PASSWORD=secretref:postgres-password
+          else
+            printf '%s\n' "PostgreSQL ($APP) ya existe." >&2
           fi
 
-      - name: Ensure internal TCP ingress
-        shell: bash
-        run: |
-          set -euo pipefail
-
           az containerapp ingress enable \
-            --name "$DATABASE_APP_NAME" \
+            --name "$APP" \
             --resource-group "$RESOURCE_GROUP" \
             --type internal \
             --target-port 5432 \
             --transport tcp >/dev/null
 
-      - name: Wait for PostgreSQL Container App
+      - name: Create Redis when missing
         shell: bash
-        run: |
-          set -euo pipefail
-
-          for attempt in {1..30}; do
-            state="$(az containerapp show \
-              --name "$DATABASE_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --query properties.runningStatus \
-              --output tsv)"
-
-            if [[ "$state" == "Running" ]]; then
-              exit 0
-            fi
-
-            sleep 10
-          done
-
-          printf '%s\n' 'PostgreSQL no arrancó a tiempo.' >&2
-          exit 1
-
-  infra-redis:
-    name: Ensure Redis Container App
-    runs-on: ubuntu-latest
-    env:
-      AZURE_CORE_OUTPUT: none
-      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-      CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
-      REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
-
-    steps:
-      - name: Azure login
-        uses: azure/login@v3
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Create Redis Container App when missing
-        shell: bash
+        env:
+          APP: ${{ vars.AZURE_REDIS_APP_NAME }}
         run: |
           set -euo pipefail
 
           test -n "$RESOURCE_GROUP"
           test -n "$CONTAINER_APP_ENVIRONMENT"
-          test -n "$REDIS_APP_NAME"
+          test -n "$APP"
 
-          if az containerapp show \
-            --name "$REDIS_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
-            printf '%s\n' 'Redis ya existe: no se actualiza la imagen.' >&2
-          else
+          if ! az containerapp show --name "$APP" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
             az containerapp create \
-              --name "$REDIS_APP_NAME" \
+              --name "$APP" \
               --resource-group "$RESOURCE_GROUP" \
               --environment "$CONTAINER_APP_ENVIRONMENT" \
               --image redis:7.4-alpine \
@@ -197,73 +142,31 @@ jobs:
               --ingress internal \
               --target-port 6379 \
               --transport tcp
+          else
+            printf '%s\n' "Redis ($APP) ya existe." >&2
           fi
 
-      - name: Ensure internal TCP ingress
-        shell: bash
-        run: |
-          set -euo pipefail
-
           az containerapp ingress enable \
-            --name "$REDIS_APP_NAME" \
+            --name "$APP" \
             --resource-group "$RESOURCE_GROUP" \
             --type internal \
             --target-port 6379 \
             --transport tcp >/dev/null
 
-      - name: Wait for Redis Container App
+      - name: Create Chroma when missing
         shell: bash
-        run: |
-          set -euo pipefail
-
-          for attempt in {1..30}; do
-            state="$(az containerapp show \
-              --name "$REDIS_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --query properties.runningStatus \
-              --output tsv)"
-
-            if [[ "$state" == "Running" ]]; then
-              exit 0
-            fi
-
-            sleep 10
-          done
-
-          printf '%s\n' 'Redis no arrancó a tiempo.' >&2
-          exit 1
-
-  infra-chroma:
-    name: Ensure Chroma Container App
-    runs-on: ubuntu-latest
-    env:
-      AZURE_CORE_OUTPUT: none
-      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-      CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
-      CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
-
-    steps:
-      - name: Azure login
-        uses: azure/login@v3
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Create Chroma Container App when missing
-        shell: bash
+        env:
+          APP: ${{ vars.AZURE_CHROMA_APP_NAME }}
         run: |
           set -euo pipefail
 
           test -n "$RESOURCE_GROUP"
           test -n "$CONTAINER_APP_ENVIRONMENT"
-          test -n "$CHROMA_APP_NAME"
+          test -n "$APP"
 
-          if az containerapp show \
-            --name "$CHROMA_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
-            printf '%s\n' 'Chroma ya existe: no se actualiza la imagen.' >&2
-          else
+          if ! az containerapp show --name "$APP" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
             az containerapp create \
-              --name "$CHROMA_APP_NAME" \
+              --name "$APP" \
               --resource-group "$RESOURCE_GROUP" \
               --environment "$CONTAINER_APP_ENVIRONMENT" \
               --image chromadb/chroma:1.1.1 \
@@ -274,44 +177,17 @@ jobs:
               --transport http \
               --allow-insecure true \
               --env-vars IS_PERSISTENT=TRUE
+          else
+            printf '%s\n' "Chroma ($APP) ya existe." >&2
           fi
 
-      - name: Ensure internal HTTP ingress
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # El backend conecta en claro a http://<fqdn>:80; el targetPort 8000
-          # es interno del contenedor.
           az containerapp ingress enable \
-            --name "$CHROMA_APP_NAME" \
+            --name "$APP" \
             --resource-group "$RESOURCE_GROUP" \
             --type internal \
             --target-port 8000 \
             --transport http \
             --allow-insecure true >/dev/null
-
-      - name: Wait for Chroma Container App
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          for attempt in {1..30}; do
-            state="$(az containerapp show \
-              --name "$CHROMA_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --query properties.runningStatus \
-              --output tsv)"
-
-            if [[ "$state" == "Running" ]]; then
-              exit 0
-            fi
-
-            sleep 10
-          done
-
-          printf '%s\n' 'Chroma no arrancó a tiempo.' >&2
-          exit 1
 
   build-backend:
     name: Build backend image
@@ -337,16 +213,14 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
-          # Reutiliza capas (torch, modelos Sherpa/Piper/E5) entre builds.
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
 
-  # La imagen del frontend lleva la URL del backend como build-arg. Se espera a
-  # `deploy-backend` cuando el backend también cambia, para que el primer
-  # despliegue (donde el backend aún no existe) tenga un FQDN válido.
+  # El frontend lleva la URL del backend como build-arg, así que espera al
+  # despliegue del backend cuando este también cambió.
   build-frontend:
     name: Build frontend image
     needs: [detect-affected-components, deploy-backend]
@@ -406,23 +280,15 @@ jobs:
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
             ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
 
-  # The backend is deployed only when its image was rebuilt successfully.
   deploy-backend:
     name: Deploy backend
-    needs:
-      - detect-affected-components
-      - build-backend
-      - infra-postgres
-      - infra-redis
-      - infra-chroma
+    needs: [detect-affected-components, build-backend, infra]
     if: >-
       always() &&
       !cancelled() &&
       needs.detect-affected-components.outputs.backend == 'true' &&
       needs.build-backend.result == 'success' &&
-      needs.infra-postgres.result == 'success' &&
-      needs.infra-redis.result == 'success' &&
-      needs.infra-chroma.result == 'success'
+      needs.infra.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
@@ -448,6 +314,12 @@ jobs:
       - name: Configure backend runtime
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          DATABASE_APP_NAME: ${{ vars.AZURE_DATABASE_APP_NAME }}
+          CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
+          CHROMA_RAG_COLLECTION: ${{ vars.CHROMA_RAG_COLLECTION }}
+          REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
+          ANALYTICS_CACHE_TTL_SECONDS: ${{ vars.ANALYTICS_CACHE_TTL_SECONDS }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -456,63 +328,45 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
-          CHROMA_RAG_COLLECTION: ${{ vars.CHROMA_RAG_COLLECTION }}
-          REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
-          ANALYTICS_CACHE_TTL_SECONDS: ${{ vars.ANALYTICS_CACHE_TTL_SECONDS }}
-          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
           TELNYX_ENABLED: ${{ vars.TELNYX_ENABLED }}
           TELNYX_WEBHOOK_HOST: ${{ vars.TELNYX_WEBHOOK_HOST }}
           TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
           TELNYX_PUBLIC_KEY: ${{ vars.TELNYX_PUBLIC_KEY }}
           TELNYX_CONNECTION_ID: ${{ vars.TELNYX_CONNECTION_ID }}
           TELNYX_PHONE_NUMBER: ${{ vars.TELNYX_PHONE_NUMBER }}
-          # La cadena de `production` (gpt-5.6-luna) no está verificada; `test`
-          # usa gpt-4o-mini + fallbacks y es la que funciona en la demo.
           LLM_ENV: ${{ vars.APP_ENV || 'test' }}
         shell: bash
         run: |
           set -euo pipefail
 
-          test -n "$POSTGRES_PASSWORD"
-          test -n "$POSTGRES_DB"
-          test -n "$POSTGRES_USER"
-          test -n "$JWT_SECRET_KEY"
-          test -n "$BACKEND_APP_NAME"
           test -n "$RESOURCE_GROUP"
+          test -n "$BACKEND_APP_NAME"
+          test -n "$DATABASE_APP_NAME"
+          test -n "$POSTGRES_PASSWORD"
+          test -n "$JWT_SECRET_KEY"
 
-          database_host="${{ vars.AZURE_DATABASE_APP_NAME }}"
-          test -n "$database_host"
-
-          database_url="$(DATABASE_HOST="$database_host" python - <<'PY'
+          database_url="$(DATABASE_HOST="$DATABASE_APP_NAME" python - <<'PY'
           import os
           import urllib.parse
 
           user = urllib.parse.quote(os.environ["POSTGRES_USER"], safe="")
           password = urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe="")
           database = urllib.parse.quote(os.environ["POSTGRES_DB"], safe="")
-          host = os.environ["DATABASE_HOST"]
-          print(f"postgresql+asyncpg://{user}:{password}@{host}:5432/{database}")
+          print(f"postgresql+asyncpg://{user}:{password}@{os.environ['DATABASE_HOST']}:5432/{database}")
           PY
           )"
           echo "::add-mask::$database_url"
 
-          # Chroma: ingress HTTP interno. El cliente Chroma debe usar el FQDN
-          # interno y el puerto 80; el targetPort 8000 solo aplica dentro del
-          # contenedor (el ingress HTTP de ACA escucha en 80/443).
           chroma_args=()
           if [[ -n "${CHROMA_APP_NAME:-}" ]] && az containerapp show \
-            --name "$CHROMA_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
             chroma_host="$(az containerapp show \
-              --name "$CHROMA_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
+              --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
               --query properties.configuration.ingress.fqdn -o tsv)"
             test -n "$chroma_host"
 
             az containerapp ingress update \
-              --name "$CHROMA_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
+              --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
               --allow-insecure true >/dev/null
 
             chroma_args=(
@@ -521,18 +375,20 @@ jobs:
               "CHROMA_SSL=false"
               "CHROMA_RAG_COLLECTION=${CHROMA_RAG_COLLECTION:-rag_documents}"
             )
-          else
-            printf '%s\n' 'Chroma no está desplegado; se omite su configuración.' >&2
           fi
 
           redis_args=()
           if [[ -n "${REDIS_APP_NAME:-}" ]] && az containerapp show \
-            --name "$REDIS_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            --name "$REDIS_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
             redis_args=("REDIS_URL=redis://${REDIS_APP_NAME}:6379/0")
-          else
-            printf '%s\n' 'Redis no está desplegado; se omite su configuración.' >&2
           fi
+
+          # Telnyx entrega los webhooks y abre el WebSocket de audio contra este
+          # mismo backend, así que el host se deriva del ingress externo. Sin esto
+          # el código usaría el host de ngrok hardcodeado en settings.py.
+          backend_fqdn="$(az containerapp show \
+            --name "$BACKEND_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
 
           secret_args=(
             "database-url=$database_url"
@@ -546,6 +402,8 @@ jobs:
             "AGENT_TOOL_MODULES=app.domains.demo_booking.tools,app.domains.business_analytics.tools"
             "TELNYX_RECORDINGS_DIR=/var/lib/kognia/recordings"
             "TELNYX_CAPTURE_DIR=/tmp/telnyx-captures"
+            "TELNYX_ENABLED=${TELNYX_ENABLED:-false}"
+            "TELNYX_WEBHOOK_HOST=${TELNYX_WEBHOOK_HOST:-$backend_fqdn}"
           )
           env_args+=("${chroma_args[@]}")
           env_args+=("${redis_args[@]}")
@@ -566,24 +424,8 @@ jobs:
           add_secret GEMINI_API_KEY gemini-api-key "${GEMINI_API_KEY:-}"
           add_secret OPENROUTER_API_KEY openrouter-api-key "${OPENROUTER_API_KEY:-}"
           add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
-
-          # Telnyx entrega los webhooks de voz y abre el WebSocket de audio
-          # (`wss://<host>/ws/telnyx/stream/...`) contra este mismo backend, así
-          # que el host se deriva del ingress externo de la Container App. Sin
-          # esto el código caería al host de ngrok hardcodeado en
-          # `backend/app/telephony/settings.py` y apuntaría Telnyx al túnel local.
-          # `TELNYX_WEBHOOK_HOST` gana cuando hay un dominio personalizado.
-          backend_fqdn="$(az containerapp show \
-            --name "$BACKEND_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query properties.configuration.ingress.fqdn -o tsv)"
-          test -n "$backend_fqdn"
-          printf '%s\n' "Telnyx webhook host: ${TELNYX_WEBHOOK_HOST:-$backend_fqdn}"
-
-          env_args+=("TELNYX_ENABLED=${TELNYX_ENABLED:-false}")
-          env_args+=("TELNYX_WEBHOOK_HOST=${TELNYX_WEBHOOK_HOST:-$backend_fqdn}")
           add_secret TELNYX_API_KEY telnyx-api-key "${TELNYX_API_KEY:-}"
-          # La clave pública de Telnyx no es un secreto: viaja como env var.
+
           if [[ -n "${TELNYX_PUBLIC_KEY:-}" ]]; then
             env_args+=("TELNYX_PUBLIC_KEY=$TELNYX_PUBLIC_KEY")
           fi
@@ -595,37 +437,20 @@ jobs:
           fi
 
           az containerapp secret set \
-            --name "$BACKEND_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
+            --name "$BACKEND_APP_NAME" --resource-group "$RESOURCE_GROUP" \
             --secrets "${secret_args[@]}"
 
           az containerapp update \
-            --name "$BACKEND_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
+            --name "$BACKEND_APP_NAME" --resource-group "$RESOURCE_GROUP" \
             --min-replicas 1 \
             --set-env-vars "${env_args[@]}"
 
   # El worker comparte la imagen del backend y cambia solo el comando. Se
-  # despliega en cada ejecución para que exista también en un push que solo toca
-  # el frontend: si `backend` no cambió, `build-backend` queda skipped y se
-  # reutiliza la imagen `:latest` ya publicada.
+  # despliega en cada ejecución; si `backend` no cambió se reutiliza la imagen
+  # `:latest` ya publicada.
   deploy-worker:
     name: Deploy worker
-    needs:
-      - detect-affected-components
-      - build-backend
-      - infra-postgres
-      - infra-redis
-      - infra-chroma
-    if: >-
-      always() &&
-      !cancelled() &&
-      needs.detect-affected-components.result == 'success' &&
-      needs.build-backend.result != 'failure' &&
-      needs.build-backend.result != 'cancelled' &&
-      needs.infra-postgres.result == 'success' &&
-      needs.infra-redis.result == 'success' &&
-      needs.infra-chroma.result == 'success'
+    needs: infra
     runs-on: ubuntu-latest
     env:
       AZURE_CORE_OUTPUT: none
@@ -654,7 +479,7 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Check worker configuration
+      - name: Resolve worker connections
         shell: bash
         run: |
           set -euo pipefail
@@ -673,11 +498,6 @@ jobs:
           test -n "$DOCKERHUB_USERNAME"
           test -n "$DOCKERHUB_TOKEN"
 
-      - name: Resolve worker connections
-        shell: bash
-        run: |
-          set -euo pipefail
-
           database_url="$(DATABASE_HOST="$DATABASE_APP_NAME" python - <<'PY'
           import os
           import urllib.parse
@@ -685,17 +505,14 @@ jobs:
           user = urllib.parse.quote(os.environ["POSTGRES_USER"], safe="")
           password = urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe="")
           database = urllib.parse.quote(os.environ["POSTGRES_DB"], safe="")
-          host = os.environ["DATABASE_HOST"]
-          print(f"postgresql+asyncpg://{user}:{password}@{host}:5432/{database}")
+          print(f"postgresql+asyncpg://{user}:{password}@{os.environ['DATABASE_HOST']}:5432/{database}")
           PY
           )"
           echo "::add-mask::$database_url"
 
           chroma_host="$(az containerapp show \
-            --name "$CHROMA_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
+            --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
             --query properties.configuration.ingress.fqdn -o tsv)"
-          test -n "$chroma_host"
 
           echo "DATABASE_URL=$database_url" >> "$GITHUB_ENV"
           echo "REDIS_URL=redis://${REDIS_APP_NAME}:6379/0" >> "$GITHUB_ENV"
@@ -708,9 +525,7 @@ jobs:
 
           image="docker.io/${DOCKERHUB_USERNAME}/hackathon-kognia-api:latest"
 
-          secret_args=(
-            "database-url=$DATABASE_URL"
-          )
+          secret_args=("database-url=$DATABASE_URL")
           env_args=(
             "APP_ENV=${APP_ENV:-test}"
             "DATABASE_URL=secretref:database-url"
@@ -721,8 +536,7 @@ jobs:
             "CHROMA_RAG_COLLECTION=${CHROMA_RAG_COLLECTION:-rag_documents}"
             "AGENT_TOOL_MODULES=app.domains.demo_booking.tools,app.domains.business_analytics.tools"
             # El worker solo persiste grabaciones: `download_recording` usa la URL
-            # pre-firmada que trae la fila de la BD, no la API key de Telnyx, y no
-            # registra webhooks. `TELNYX_RECORDINGS_DIR` es lo único que necesita.
+            # pre-firmada de la fila en la BD, no la API key de Telnyx.
             "TELNYX_RECORDINGS_DIR=/var/lib/kognia/recordings"
             # El paquete `app` vive en /app/backend/app y ACA no admite
             # working-dir, así que se resuelve con PYTHONPATH.
@@ -748,24 +562,18 @@ jobs:
           add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
 
           # `--args="-m"` con `=` evita que la CLI interprete `-m` como opción.
-          # min/max replicas 1: el worker hace polling a Redis y con 0 no
-          # consumiría la cola.
+          # min/max replicas 1: el worker hace polling a Redis.
           if az containerapp show \
-            --name "$WORKER_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            --name "$WORKER_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
             az containerapp secret set \
-              --name "$WORKER_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
+              --name "$WORKER_APP_NAME" --resource-group "$RESOURCE_GROUP" \
               --secrets "${secret_args[@]}"
 
             az containerapp update \
-              --name "$WORKER_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
+              --name "$WORKER_APP_NAME" --resource-group "$RESOURCE_GROUP" \
               --image "$image" \
-              --min-replicas 1 \
-              --max-replicas 1 \
-              --command "python" \
-              --args="-m" "app.worker" \
+              --min-replicas 1 --max-replicas 1 \
+              --command "python" --args="-m" "app.worker" \
               --set-env-vars "${env_args[@]}"
           else
             az containerapp create \
@@ -776,55 +584,17 @@ jobs:
               --registry-server docker.io \
               --registry-username "$DOCKERHUB_USERNAME" \
               --registry-password "$DOCKERHUB_TOKEN" \
-              --min-replicas 1 \
-              --max-replicas 1 \
-              --command "python" \
-              --args="-m" "app.worker" \
+              --min-replicas 1 --max-replicas 1 \
+              --command "python" --args="-m" "app.worker" \
               --secrets "${secret_args[@]}" \
               --env-vars "${env_args[@]}"
           fi
 
-      - name: Wait for worker Container App
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          for attempt in {1..30}; do
-            state="$(az containerapp show \
-              --name "$WORKER_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --query properties.runningStatus \
-              --output tsv)"
-
-            if [[ "$state" == "Running" ]]; then
-              exit 0
-            fi
-
-            sleep 10
-          done
-
-          printf '%s\n' 'Worker no arrancó a tiempo.' >&2
-          az containerapp logs show \
-            --name "$WORKER_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --tail 100 >&2 || true
-          exit 1
-
-  # Sustituye al servicio `migrate` de Compose: un Job one-shot que migra el
-  # esquema y crea el admin de demo. Corre en cada ejecución.
+  # Sustituye al servicio `migrate` de Compose: Job one-shot con las
+  # migraciones de Alembic y el admin de demo.
   migrate-bootstrap:
     name: Migrate database and bootstrap demo admin
-    needs:
-      - detect-affected-components
-      - build-backend
-      - infra-postgres
-    if: >-
-      always() &&
-      !cancelled() &&
-      needs.detect-affected-components.result == 'success' &&
-      needs.build-backend.result != 'failure' &&
-      needs.build-backend.result != 'cancelled' &&
-      needs.infra-postgres.result == 'success'
+    needs: infra
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
@@ -854,18 +624,13 @@ jobs:
 
           test -n "$CONTAINER_ENVIRONMENT"
           test -n "$DATABASE_APP_NAME"
-          test -n "$POSTGRES_DB"
-          test -n "$POSTGRES_USER"
           test -n "$POSTGRES_PASSWORD"
           test -n "$DOCKERHUB_USERNAME"
           test -n "$DOCKERHUB_TOKEN"
           test -n "$RESOURCE_GROUP"
-          test -n "$APP_ENV"
 
           job_name="${JOB_NAME:-hackathon-kognia-bootstrap}"
           image="docker.io/${DOCKERHUB_USERNAME}/hackathon-kognia-api:latest"
-          demo_org_name="${DEMO_ORG_NAME:-Demo Kognia}"
-          demo_org_slug="${DEMO_ORG_SLUG:-demo-kognia}"
 
           database_url="$(DATABASE_HOST="$DATABASE_APP_NAME" python - <<'PY'
           import os
@@ -874,19 +639,17 @@ jobs:
           user = urllib.parse.quote(os.environ["POSTGRES_USER"], safe="")
           password = urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe="")
           database = urllib.parse.quote(os.environ["POSTGRES_DB"], safe="")
-          host = os.environ["DATABASE_HOST"]
-          print(f"postgresql+asyncpg://{user}:{password}@{host}:5432/{database}")
+          print(f"postgresql+asyncpg://{user}:{password}@{os.environ['DATABASE_HOST']}:5432/{database}")
           PY
           )"
           echo "::add-mask::$database_url"
 
-          # Las migraciones se ejecutan siempre; el admin de demo es opcional.
           secret_args=("database-url=$database_url")
           env_args=(
             "APP_ENV=$APP_ENV"
             "DATABASE_URL=secretref:database-url"
-            "DEMO_ORG_NAME=$demo_org_name"
-            "DEMO_ORG_SLUG=$demo_org_slug"
+            "DEMO_ORG_NAME=${DEMO_ORG_NAME:-Demo Kognia}"
+            "DEMO_ORG_SLUG=${DEMO_ORG_SLUG:-demo-kognia}"
           )
           if [[ -n "${DEMO_ADMIN_EMAIL:-}" && -n "${DEMO_ADMIN_PASSWORD:-}" ]]; then
             secret_args+=("demo-admin-password=$DEMO_ADMIN_PASSWORD")
@@ -900,14 +663,12 @@ jobs:
 
           if az containerapp job show -n "$job_name" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
             az containerapp job secret set \
-              -n "$job_name" -g "$RESOURCE_GROUP" \
-              --secrets "${secret_args[@]}"
+              -n "$job_name" -g "$RESOURCE_GROUP" --secrets "${secret_args[@]}"
 
             az containerapp job update \
               -n "$job_name" -g "$RESOURCE_GROUP" \
               --image "$image" \
-              --command "/bin/sh" \
-              --args "/app/backend/scripts/bootstrap-demo-admin.sh" \
+              --command "/bin/sh" --args "/app/backend/scripts/bootstrap-demo-admin.sh" \
               --set-env-vars "${env_args[@]}"
           else
             az containerapp job create \
@@ -925,8 +686,7 @@ jobs:
               --cpu 0.5 --memory 1.0Gi \
               --secrets "${secret_args[@]}" \
               --env-vars "${env_args[@]}" \
-              --command "/bin/sh" \
-              --args "/app/backend/scripts/bootstrap-demo-admin.sh"
+              --command "/bin/sh" --args "/app/backend/scripts/bootstrap-demo-admin.sh"
           fi
 
           execution_name="$(az containerapp job start \
@@ -937,37 +697,7 @@ jobs:
               --query "sort_by(@, &properties.startTime)[-1].name" -o tsv)"
           fi
           test -n "$execution_name"
-
-          for attempt in {1..60}; do
-            status="$(az containerapp job execution show \
-              -n "$job_name" -g "$RESOURCE_GROUP" \
-              --job-execution-name "$execution_name" \
-              --query properties.status -o tsv)"
-
-            case "$status" in
-              Succeeded)
-                printf '%s\n' "Base de datos lista: migración + admin de demo ($execution_name)."
-                exit 0
-                ;;
-              Failed|Degraded)
-                printf '%s\n' "La migración/bootstrap de la base de datos falló ($execution_name)." >&2
-                printf '%s\n' '--- logs de la ejecución del job ---' >&2
-                az containerapp job logs show \
-                  --name "$job_name" \
-                  --resource-group "$RESOURCE_GROUP" \
-                  --execution "$execution_name" \
-                  --container "$job_name" \
-                  --tail 200 >&2 || true
-                printf '%s\n' '--- fin de logs ---' >&2
-                exit 1
-                ;;
-            esac
-
-            sleep 5
-          done
-
-          printf '%s\n' "Migración/bootstrap sin confirmar tras 300s ($execution_name)." >&2
-          exit 1
+          printf '%s\n' "Bootstrap ejecutado: $execution_name"
 
   deploy-frontend:
     name: Deploy frontend
@@ -997,10 +727,7 @@ jobs:
           ingress: external
           disableTelemetry: true
 
-  # CORS updates the backend environment, so run it after both deployments
-  # when both components changed. For frontend-only changes, the skipped
-  # backend deployment is explicitly allowed and the existing backend is
-  # updated after the frontend becomes available.
+  # CORS apunta al FQDN del frontend recién desplegado.
   configure-backend-cors:
     name: Configure backend CORS
     needs: [detect-affected-components, deploy-backend, deploy-frontend]

@@ -43,7 +43,7 @@ que el push).
 ### Orden
 
 ```text
-detect → infra (postgres | redis | chroma) en paralelo
+detect → infra (postgres + redis + chroma)
        → build-backend → deploy-backend → build-frontend → deploy-frontend → CORS
        → deploy-worker
        → migrate-bootstrap
@@ -56,11 +56,15 @@ fuerza ambos builds.
 ### Infraestructura sin reinicios
 
 PostgreSQL, Redis y Chroma **no montan volúmenes persistentes** en Container
-Apps. Por eso los jobs de infraestructura solo crean la app cuando falta y, si ya
-existe, únicamente aseguran el ingress: nunca ejecutan `update --image`. Un
-`update` crearía una revisión nueva, reiniciaría el contenedor y **borraría los
-datos**. Si necesitas persistir, hay que montar Azure Files o mover PostgreSQL a
-un servicio gestionado; está fuera del alcance actual.
+Apps. Por eso los jobs de infraestructura crean esas apps solo cuando no
+existen y nunca ejecutan `update --image`: una revisión nueva reiniciaría el
+contenedor y **borraría los datos**. Para forzar una imagen nueva en una de ellas,
+usa su workflow manual (`deploy-postgres-azure.yml`, `deploy-redis-azure.yml`,
+`deploy-chroma-azure.yml`).
+
+El workflow **no espera ni verifica** que los contenedores queden `Running`: crea,
+despliega y lanza el bootstrap. Si algo no arranca, se ve en los logs de Azure
+(`az containerapp logs show -n <app> -g <rg>`) o en la pestaña Logs del portal.
 
 El `RealtimeHub` es in-memory, así que el backend se queda en `min-replicas 1`.
 
