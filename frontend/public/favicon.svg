@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-124 -124 248 248" role="img" aria-label="Carita de Demo">
+  <circle cx="0" cy="0" r="100" fill="#f7c974" />
+  <g fill="#414141">
+    <rect x="18.5" y="-51" width="11" height="34" rx="5.5" transform="rotate(-12 24 -34)" />
+    <rect x="57.5" y="-50" width="11" height="34" rx="5.5" transform="rotate(-12 63 -33)" />
+  </g>
+  <path d="M -7 10 C 10.48 40 67.52 43 85 13" fill="none" stroke="#414141" stroke-width="8" stroke-linecap="round" transform="rotate(7 39 10)" />
+</svg>

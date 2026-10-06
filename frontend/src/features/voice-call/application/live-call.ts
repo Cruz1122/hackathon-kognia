@@ -1,12 +1,28 @@
-import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
-import { completeRetrievalCard, createRetrievalCardMarkup, toolCallBusyMarkup } from './retrieval-card';
+import {
+  bindDetailClicks,
+  mountSessionPanel,
+  patchSession,
+  patchSessionFromAgentState,
+  toolDetailFromEvent,
+} from './detail-panel';
+import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { showToast } from '../infrastructure/toast';
+import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
 type MonitorEvent = {
   type?: string;
   seq?: number;
   offset_ms?: number;
   payload?: Record<string, unknown>;
+  call_id?: string;
+  message_id?: string;
+  call?: {
+    id: string;
+    conversation_id?: string;
+    lifecycle?: string;
+    caller?: string;
+    customer_name?: string;
+  };
 };
 
 const SAMPLE_RATE = 16000;
@@ -31,7 +47,13 @@ function socketUrl(apiUrl: string, path: string): string {
   return `${apiUrl.replace(/^http/, 'ws')}${path}`;
 }
 
-export function bootLiveCall(apiUrl: string, token: string, callId: string, onEnded: () => void): () => Promise<void> {
+export function bootLiveCall(
+  apiUrl: string,
+  token: string,
+  callId: string,
+  onReady?: () => void,
+  onError?: (reason: string) => void,
+): () => Promise<void> {
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector<HTMLElement>('#conversationEmpty');
   const status = document.querySelector<HTMLElement>('#callConnectionStatus');
@@ -39,10 +61,13 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
   const player = document.querySelector<HTMLElement>('.player');
   const playBtn = document.querySelector<HTMLButtonElement>('#playBtn');
   if (!(conversation instanceof HTMLElement) || !playBtn) {
+    onError?.('La vista de la llamada en vivo no está disponible en esta página.');
     return async () => undefined;
   }
 
   bindDetailClicks(conversation);
+  mountSessionPanel();
+  patchSession({ status: 'En vivo' });
   const emptyCopy = conversationEmpty?.innerHTML ?? '';
   if (conversationEmpty) {
     conversationEmpty.hidden = false;
@@ -62,6 +87,18 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
   void context.resume();
 
   let disposed = false;
+  let readyNotified = false;
+  let errorNotified = false;
+  function notifyReady(): void {
+    if (disposed || readyNotified || errorNotified) return;
+    readyNotified = true;
+    onReady?.();
+  }
+  function notifyError(reason: string): void {
+    if (disposed || readyNotified || errorNotified) return;
+    errorNotified = true;
+    onError?.(reason);
+  }
   let ended = false;
   let silenced = false;
   let nextCustomer = 0;
@@ -69,9 +106,21 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
   const customerSources: AudioBufferSourceNode[] = [];
   const agentSources: AudioBufferSourceNode[] = [];
   let customerBubble: HTMLElement | null = null;
-  const seen = new Set<number>();
+  const seen = new Set<string>();
+  let activeCallId = callId;
+  let activeConversationId = '';
   const tools = new Map<string, { start: number; payload: Record<string, unknown> }>();
   const startedAt = performance.now();
+
+  function loadAgentState(conversationId: string): void {
+    if (!conversationId) return;
+    void fetch(`${apiUrl}/conversations/${conversationId}/agent-state`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async (response) => {
+      if (!response.ok || disposed) return;
+      patchSessionFromAgentState(await response.json());
+    }).catch(() => undefined);
+  }
 
   function stopList(list: AudioBufferSourceNode[]): void {
     list.forEach((source) => {
@@ -151,18 +200,54 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
       atMs,
     );
     row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    showToast('La llamada terminó', 'info');
-    onEnded();
+    if (statusText) statusText.textContent = 'Conversación abierta';
+    showToast('Terminó el tramo de voz. La conversación sigue abierta.', 'info');
   }
 
   function handleEvent(event: MonitorEvent): void {
     if (disposed) return;
+    if (event.type === 'call.snapshot' && event.call) {
+      const resumed = event.call.id !== activeCallId;
+      activeCallId = event.call.id;
+      activeConversationId = event.call.conversation_id ?? activeConversationId;
+      patchSession({
+        name: event.call.customer_name ?? '',
+        phone: event.call.caller ?? '',
+        status: 'En vivo',
+      });
+      loadAgentState(activeConversationId);
+      if (resumed) {
+        ended = false;
+        customerBubble = null;
+        stopList(customerSources);
+        stopAgentPlayback();
+        nextCustomer = 0;
+        resetCallAgentSignals();
+        connectAudio(activeCallId);
+        if (statusText) statusText.textContent = 'En vivo';
+        showToast('Llamada retomada en la misma conversación', 'success');
+      }
+      return;
+    }
     const seq = Number(event.seq ?? 0);
-    if (seq && seen.has(seq)) return;
-    if (seq) seen.add(seq);
+    const key = event.message_id ?? (seq ? `${event.call_id ?? activeCallId}:${seq}` : '');
+    if (key && seen.has(key)) return;
+    if (key) seen.add(key);
     const type = String(event.type ?? '');
     const payload = event.payload ?? {};
     const atMs = Number(event.offset_ms ?? 0);
+    if (type === 'conversation.event') {
+      const text = String(payload.text ?? '');
+      appendRow('system-event', `<span class="call-ended-label">${escapeHtml(text)}</span>`, atMs);
+      if (statusText) statusText.textContent = 'Conversación abierta · WhatsApp';
+      showToast(text, 'info');
+      return;
+    }
+    if (type === 'agent.signals') {
+      applyCallAgentSignals(payload);
+      patchSessionFromAgentState(payload);
+      return;
+    }
     if (type === 'transcript.partial' && payload.speaker !== 'agent') {
       const text = String(payload.text ?? '').trim();
       if (!text) return;
@@ -181,13 +266,13 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
         customerBubble.innerHTML = `${escapeHtml(text)}<span class="message-time">${formatTime(atMs / 1000)}</span>`;
         customerBubble = null;
       } else {
-        appendRow('message-row customer', messageHtml('customer', text, atMs), atMs);
+        appendRow(`message-row customer${payload.channel === 'whatsapp' ? ' channel-whatsapp' : ''}`, messageHtml('customer', text, atMs), atMs);
       }
       return;
     }
     if (type === 'transcript.final' && payload.speaker === 'agent') {
       customerBubble = null;
-      appendRow('message-row agent', messageHtml('agent', String(payload.text ?? ''), atMs), atMs);
+      appendRow(`message-row agent${payload.channel === 'whatsapp' ? ' channel-whatsapp' : ''}`, messageHtml('agent', String(payload.text ?? ''), atMs), atMs);
       return;
     }
     if (type === 'tool.started') {
@@ -201,11 +286,9 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
       const detail = toolDetailFromEvent(payload, started ? toolDetailFromEvent(started.payload) : undefined);
       const row = appendRow(
         'tool-row',
-        `<button type="button" class="tool-call done" id="tool-${escapeHtml(rawId)}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="false"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status">${escapeHtml(String(payload.status ?? 'Completado'))}</div></div>${toolCallBusyMarkup()}<div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`,
+        `<button type="button" class="tool-call done" id="tool-${escapeHtml(rawId)}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="false"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status">${escapeHtml(String(payload.status ?? 'Completado'))}</div></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`,
         started?.start ?? atMs,
       );
-      const loader = row.querySelector<HTMLElement>('.loader');
-      if (loader) loader.style.display = 'none';
       return;
     }
     if (type === 'rag.completed') {
@@ -256,14 +339,32 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
     setControl(!silenced);
   }, { signal });
 
-  const audioSocket = new WebSocket(socketUrl(apiUrl, `/ws/calls/${callId}/audio`));
-  audioSocket.binaryType = 'arraybuffer';
-  audioSocket.addEventListener('open', () => {
-    audioSocket.send(JSON.stringify({ type: 'auth', token }));
-  });
-  audioSocket.addEventListener('message', (event) => {
-    if (event.data instanceof ArrayBuffer) playFrame(event.data);
-  });
+  let audioSocket: WebSocket;
+  function connectAudio(id: string): void {
+    audioSocket?.close();
+    const socket = new WebSocket(socketUrl(apiUrl, `/ws/calls/${id}/audio`));
+    audioSocket = socket;
+    socket.binaryType = 'arraybuffer';
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'auth', token })));
+    socket.addEventListener('message', (event) => {
+      if (socket === audioSocket && event.data instanceof ArrayBuffer) playFrame(event.data);
+    });
+  }
+  connectAudio(callId);
+
+  void fetch(`${apiUrl}/calls/${callId}`, { headers: { Authorization: `Bearer ${token}` } })
+    .then(async (response) => {
+      if (!response.ok || disposed) return;
+      const call = await response.json() as {
+        caller?: string;
+        customer_name?: string;
+        conversation_id?: string;
+      };
+      activeConversationId = call.conversation_id ?? '';
+      patchSession({ name: call.customer_name ?? '', phone: call.caller ?? '', status: 'En vivo' });
+      loadAgentState(activeConversationId);
+    })
+    .catch(() => undefined);
 
   const monitorSocket = new WebSocket(socketUrl(apiUrl, '/ws/calls/monitor'));
   monitorSocket.addEventListener('open', () => {
@@ -276,9 +377,12 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
       const message = JSON.parse(event.data) as MonitorEvent;
       if (message.type === 'error') {
         if (status) status.classList.add('is-error');
-        if (statusText) statusText.textContent = 'No se pudo escuchar la llamada';
+        const reason = 'El monitor rechazó la conexión con esta llamada.';
+        if (statusText) statusText.textContent = reason;
+        notifyError(reason);
         return;
       }
+      if (message.type === 'call.snapshot') notifyReady();
       handleEvent(message);
     } catch {
       return;
@@ -286,10 +390,20 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
   });
   monitorSocket.addEventListener('close', (event) => {
     if (disposed || ended) return;
-    if (event.code === 4401 || event.code === 4403) {
+    if (!readyNotified || event.code === 4401 || event.code === 4403) {
       if (status) status.classList.add('is-error');
-      if (statusText) statusText.textContent = 'No se pudo escuchar la llamada';
+      const reason = event.code === 4401 || event.code === 4403
+        ? 'No tienes permiso para escuchar esta llamada en vivo.'
+        : 'El monitor cerró la conexión antes de cargar esta llamada.';
+      if (statusText) statusText.textContent = reason;
+      notifyError(reason);
     }
+  });
+  monitorSocket.addEventListener('error', () => {
+    const reason = 'No se pudo conectar con el monitor de esta llamada.';
+    if (status) status.classList.add('is-error');
+    if (statusText) statusText.textContent = reason;
+    notifyError(reason);
   });
 
   const endWatch = window.setInterval(() => {
@@ -298,7 +412,7 @@ export function bootLiveCall(apiUrl: string, token: string, callId: string, onEn
       .then(async (response) => {
         if (!response.ok || ended || disposed) return;
         const body = await response.json() as { calls?: Array<{ id: string }> };
-        if (!(body.calls ?? []).some((call) => call.id === callId)) showEnded(performance.now() - startedAt);
+        if (!(body.calls ?? []).some((call) => call.id === activeCallId)) showEnded(performance.now() - startedAt);
       })
       .catch(() => undefined);
   }, 2000);

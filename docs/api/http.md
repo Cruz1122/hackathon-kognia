@@ -82,6 +82,12 @@ data: {"message":"..."}
 
 Códigos HTTP documentados: 200 stream, 401, 404, 422, 500 (`APP_ENV` inválido), 502 (fallo pre-token), 503 (sin keys o DB).
 
+`/ask` y `/ws/call` mantienen sus formatos de evento; los tokens de conversaciones persistidas se liberan tras la comprobación de integridad. El stream puede tener mayor latencia por esa verificación.
+
+## WhatsApp y memoria operacional
+
+Ver [contrato y configuración del backend stateful omnichannel](../backend/stateful-agent.md) para `GET/POST /webhooks/whatsapp`, identidad enlazada, `/conversations/{id}/agent-state`, `/agent-resume`, firma Meta, ventana/template, procesamiento de audio y recuperación del worker.
+
 ## Audio HTTP (legacy / utilidades)
 
 | Método | Ruta | In | Out |

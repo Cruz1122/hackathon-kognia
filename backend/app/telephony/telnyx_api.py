@@ -21,6 +21,13 @@ class TelnyxApi:
     async def answer(self, call_control_id: str) -> None:
         await self._post(f"/v2/calls/{call_control_id}/actions/answer", {})
 
+    async def dial(self, to: str, *, command_id: str, client_state: str) -> dict:
+        result = await self._send('POST', '/v2/calls', {
+            'to': to, 'from': self.settings.phone_number, 'connection_id': self.settings.connection_id,
+            'command_id': command_id, 'client_state': client_state,
+        })
+        return result['data']
+
     async def streaming_start(self, call_control_id: str, media_url: str) -> None:
         path = f"/v2/calls/{call_control_id}/actions/streaming_start"
         negotiated = {
@@ -56,6 +63,12 @@ class TelnyxApi:
             requested.pop("trim")
             await self._post(path, requested)
 
+    async def hangup(self, call_control_id: str, *, command_id: str) -> None:
+        await self._post(
+            f"/v2/calls/{call_control_id}/actions/hangup",
+            {"command_id": command_id},
+        )
+
     async def sync_webhook(self) -> None:
         if not self.settings.connection_id or not self.settings.webhook_host:
             return
@@ -76,10 +89,9 @@ class TelnyxApi:
     async def _patch(self, path: str, body: dict[str, Any]) -> None:
         await self._send("PATCH", path, body)
 
-    async def _send(self, method: str, path: str, body: dict[str, Any]) -> None:
+    async def _send(self, method: str, path: str, body: dict[str, Any]) -> Any:
         if self._transport is not None:
-            await self._transport(method, path, body)
-            return
+            return await self._transport(method, path, body)
         if not self.settings.api_key:
             raise RuntimeError("Telnyx API key is missing")
         async with httpx.AsyncClient(timeout=10) as client:
@@ -91,3 +103,4 @@ class TelnyxApi:
             )
             response.raise_for_status()
             logger.info("Telnyx %s %s -> %s", method, path.split("/actions/")[-1], response.status_code)
+            return response.json() if response.content else {}

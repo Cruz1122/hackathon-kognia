@@ -11,6 +11,7 @@ import '../../styles/call-demo.css';
 <script>
   import { bootLiveMonitor } from '../../features/voice-call/application/live-monitor';
   import { accessTokenKey, checkSession, conversationIdKey, redirectToLogin } from '../../features/auth/session-guard';
+  import { revealLoadedContent, waitForRouteSettle } from '../../features/ui/loading-reveal';
   import { mountCallDemoWave } from '../../features/voice-call/ui/call-demo-wave';
 
   const apiUrl = document.body.dataset.apiUrl ?? '';
@@ -28,27 +29,53 @@ import '../../styles/call-demo.css';
     const root = document.querySelector<HTMLElement>('.call-demo-page');
     if (!root || mountedRoot === root || pendingRoot === root) return;
     pendingRoot = root;
-    const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
-    const conversationId = sessionStorage.getItem(conversationIdKey)?.trim() ?? '';
-    const sessionState = await checkSession(apiUrl);
-    if (sessionState === 'invalid' || !token || !conversationId) {
-      redirectToLogin();
-      return;
+    await waitForRouteSettle();
+    if (!root.isConnected || pendingRoot !== root) return;
+    try {
+      const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
+      const conversationId = sessionStorage.getItem(conversationIdKey)?.trim() ?? '';
+      const sessionState = await checkSession(apiUrl);
+      if (sessionState === 'invalid' || !token || !conversationId) {
+        redirectToLogin();
+        return;
+      }
+      cleanup?.();
+      waveCleanup?.();
+      waveCleanup = mountCallDemoWave();
+      const autoStart = new URLSearchParams(window.location.search).get('autostart') === '1';
+      cleanup = bootLiveMonitor(apiUrl, token, conversationId, autoStart);
+      if (autoStart) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('autostart');
+        const suffix = `${url.search}${url.hash}`;
+        window.history.replaceState(window.history.state, '', `${url.pathname}${suffix}`);
+      }
+      mountedRoot = root;
+      pendingRoot = null;
+      lucideRefresh();
+      await revealLoadedContent(
+        document.getElementById('callLoading'),
+        document.getElementById('appContent'),
+        () => document.querySelector('.app-shell')?.classList.remove('is-call-loading'),
+      );
+      window.dispatchEvent(new Event('resize'));
+    } catch (error) {
+      pendingRoot = null;
+      const reason = error instanceof TypeError
+        ? 'No se pudo conectar con el servidor para iniciar esta llamada.'
+        : error instanceof Error && error.message.trim()
+        ? error.message
+        : 'El servidor no respondió al iniciar esta llamada.';
+      const status = document.getElementById('callConnectionStatus');
+      const reasonElement = document.getElementById('callErrorReason');
+      if (status) status.hidden = true;
+      if (reasonElement) reasonElement.textContent = reason;
+      lucideRefresh();
+      await revealLoadedContent(
+        document.getElementById('callLoading'),
+        document.getElementById('callError'),
+      );
     }
-    cleanup?.();
-    waveCleanup?.();
-    waveCleanup = mountCallDemoWave();
-    const autoStart = new URLSearchParams(window.location.search).get('autostart') === '1';
-    cleanup = bootLiveMonitor(apiUrl, token, conversationId, autoStart);
-    if (autoStart) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('autostart');
-      const suffix = `${url.search}${url.hash}`;
-      window.history.replaceState(window.history.state, '', `${url.pathname}${suffix}`);
-    }
-    mountedRoot = root;
-    pendingRoot = null;
-    lucideRefresh();
   }
 
   function unmountCallDemo(): void {

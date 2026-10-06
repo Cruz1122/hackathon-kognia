@@ -10,7 +10,7 @@ import httpx
 from app.analytics.repository import _rate
 from app.analytics.cache import AnalyticsCache, bump_version
 from app.analytics.schemas import DashboardResponse
-from app.analytics.service import AnalyticsService
+from app.analytics.service import AnalyticsService, _aggregate_agent_signals
 import app.analytics.router as analytics_router_module
 from app import main
 from app.auth.tokens import create_access_token
@@ -139,6 +139,30 @@ async def test_dashboard_cache_hit_skips_repository() -> None:
 def test_rates_are_zero_for_empty_denominators() -> None:
     assert _rate(4, 10) == 40.0
     assert _rate(0, 0) == 0.0
+
+
+def test_final_jev_probabilities_are_averaged_per_conversation() -> None:
+    aggregate = _aggregate_agent_signals([
+        {"signals": {
+            "satisfaction": {"value": "high", "probabilities": {"high": .8, "neutral": .2}},
+            "fluency": {"value": "high", "probabilities": {"high": .75, "neutral": .25}},
+            "confirmation": {"value": "explicit", "probabilities": {"explicit": 1}},
+            "intent": {"value": "continue", "probabilities": {"continue": 1}},
+        }},
+        {"signals": {
+            "satisfaction": {"value": "low", "probabilities": {"low": .6, "neutral": .4}},
+            "fluency": {"value": "low", "probabilities": {"low": .5, "neutral": .5}},
+            "confirmation": {"value": "uncertain", "probabilities": {"uncertain": 1}},
+            "intent": {"value": "correct", "probabilities": {"correct": 1}},
+        }},
+    ])
+
+    assert aggregate is not None
+    assert aggregate.sample_count == 2
+    assert aggregate.signals["satisfaction"].probabilities == {"high": .4, "neutral": .3, "low": .3}
+    assert aggregate.signals["fluency"].probabilities == {"high": .375, "neutral": .375, "low": .25}
+    assert aggregate.signals["confirmation"].probabilities == {"explicit": .5, "uncertain": .5}
+    assert aggregate.signals["human"].value == "unknown"
 
 
 @pytest.mark.asyncio

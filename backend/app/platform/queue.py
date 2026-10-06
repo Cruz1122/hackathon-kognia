@@ -47,7 +47,7 @@ def parse_job(raw: str | bytes) -> Job:
     if not isinstance(payload, dict):
         raise ValueError("Unsupported job")
     kind = payload.get("type")
-    if kind not in {"enrich_conversation", "download_recording"}:
+    if kind not in {"enrich_conversation", "download_recording", "channel_work"}:
         raise ValueError("Unsupported job")
     attempts = payload.get("attempts", 0)
     if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
@@ -74,6 +74,14 @@ async def enqueue_enrichment(organization_id: uuid.UUID, conversation_id: uuid.U
         return True
     except Exception:
         return False
+
+
+async def enqueue_channel_work() -> bool:
+    try:
+        await redis_push(JOB_QUEUE_KEY, Job('channel_work', uuid.UUID(int=0), uuid.UUID(int=0)).to_json())
+        return True
+    except Exception:
+        return False  # PostgreSQL pending rows are recovered by the worker sweep.
 
 
 async def enqueue_recording(
