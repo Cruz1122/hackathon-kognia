@@ -16,7 +16,7 @@ imágenes se publican en **Docker Hub**, no en ACR.
 | `redis` | Container App | interno TCP 6379 | `AZURE_REDIS_APP_NAME` |
 | `chroma` | Container App | interno HTTP 8000 | `AZURE_CHROMA_APP_NAME`, cliente en `:80` |
 | `backend` | Container App | externo 18474 | `AZURE_BACKEND_APP_NAME` |
-| `worker` | Container App | **ninguno** | `AZURE_WORKER_APP_NAME`, `python -m app.worker` |
+| `worker` | Container App | **ninguno** | `AZURE_WORKER_APP_NAME`, `/app/backend/scripts/run-worker.sh` |
 | `frontend` | Container App | externo 80 | `AZURE_FRONTEND_APP_NAME`, nginx estático |
 | `migrate` | Container Apps Job | ninguno | `AZURE_BOOTSTRAP_JOB_NAME`, one-shot |
 
@@ -24,6 +24,12 @@ El **worker** comparte la imagen del backend y solo cambia el comando. Como ACA
 no admite `working-dir`, el paquete `app` (que vive en `/app/backend/app`) se
 resuelve con `PYTHONPATH=/app/backend`. Corre con `min-replicas 1`: hace polling
 a Redis y con 0 no consumiría la cola.
+
+El comando es `/bin/sh /app/backend/scripts/run-worker.sh` en lugar de
+`python -m app.worker`. No es capricho: `--args` del CLI está declarado
+`nargs='*'` y argparse rechaza los tokens que empiezan por guion, así que no hay
+forma de pasar `-m` y `app.worker` como dos argumentos separados. El wrapper
+(`backend/scripts/run-worker.sh`) hace `exec python -m app.worker`.
 
 ## Workflows
 
