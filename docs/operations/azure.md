@@ -41,6 +41,7 @@ forma de pasar `-m` y `app.worker` como dos argumentos separados. El wrapper
 | `deploy-chroma-azure.yml` | manual | Chroma |
 | `deploy-aplication-azure.yml` | `push` a `main` | backend + frontend (anterior) |
 | `setup-demo-db-azure.yml` | manual | migración + admin demo |
+| [bootstrap-backend-azure.yml](../../.github/workflows/bootstrap-backend-azure.yml) | `Deploy Azure` completado + manual | migración + admin demo dentro del contenedor del backend |
 
 `deploy-azure.yml` es el punto de entrada: en cada push asegura los siete
 servicios y se puede ejecutar a mano con **Run workflow** (despliega todo igual
@@ -82,6 +83,19 @@ despliega y lanza el bootstrap. Si algo no arranca, se ve en los logs de Azure
 (`az containerapp logs show -n <app> -g <rg>`) o en la pestaña Logs del portal.
 
 El `RealtimeHub` es in-memory, así que el backend se queda en `min-replicas 1`.
+
+### Recuperar la base de datos sin esquema
+
+Como PostgreSQL no tiene volumen, un reinicio del contenedor lo deja con el
+clúster vacío: `SELECT 1` de `/health/ready` pasa, pero `/auth/login` responde
+`503 (relation "users" does not exist)`. Para eso está
+[`bootstrap-backend-azure.yml`](../../.github/workflows/bootstrap-backend-azure.yml):
+se dispara solo cuando `Deploy Azure` termina con éxito (y también a mano desde
+Actions), espera a que el backend tenga una réplica viva, entra en el contenedor
+con `az containerapp exec` y ejecuta `alembic upgrade head` +
+`python -m app.auth.bootstrap --demo-only`. Es idempotente y termina comprobando
+que `/auth/login` devuelve `200` (o `401` si no hay credenciales demo, que
+confirma igualmente que el esquema existe).
 
 ## Secrets de GitHub
 
