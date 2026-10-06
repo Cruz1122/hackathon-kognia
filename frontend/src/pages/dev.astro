@@ -1,0 +1,101 @@
+---
+import AppLayout from '../layouts/AppLayout.astro';
+import ContentLoader from '../components/ui/ContentLoader.astro';
+import '../styles/dev.css';
+---
+
+<AppLayout title="Kognia — Modo dev">
+  <section class="section-view section-view--dashboard analytics-dashboard" aria-label="Modo dev">
+    <div class="dashboard-page dev-page">
+      <ContentLoader id="devLoading" copy="Cargando trazas…" class="dashboard-state" />
+      <div id="devContent" hidden inert aria-hidden="true">
+        <header class="dashboard-topline">
+          <div class="dashboard-heading">
+            <h2>Modo dev</h2>
+            <p class="dev-subtitle">Traza completa de cada llamada: transcripción, razonamiento del modelo y tools.</p>
+          </div>
+          <div class="dashboard-filters">
+            <label class="dev-search">
+              <span class="sr-only">Buscar</span>
+              <i class="dev-search__icon" data-lucide="search" aria-hidden="true"></i>
+              <input id="devSearch" type="search" placeholder="Buscar por texto, modelo o llamada" autocomplete="off" />
+            </label>
+            <button id="devRefresh" type="button" class="dev-refresh">
+              <i data-lucide="refresh-cw" aria-hidden="true"></i>
+              <span>Actualizar</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="dashboard-state" id="devError" hidden role="alert">
+          <div>
+            <p>No pudimos cargar las trazas.</p>
+            <button id="devRetry" type="button">Reintentar</button>
+          </div>
+        </div>
+
+        <div class="dev-board" id="devBoard" hidden>
+          <aside class="dev-calls" aria-label="Llamadas con trazas">
+            <div class="dev-calls__head">
+              <span>Llamadas</span>
+              <span class="dev-calls__count" id="devCallsCount">0</span>
+            </div>
+            <div class="dev-calls__list" id="devCallsList"></div>
+            <p class="dev-empty" id="devCallsEmpty" hidden>Aún no hay trazas.</p>
+          </aside>
+
+          <section class="dev-detail" id="devDetail" aria-label="Detalle de la traza">
+            <div class="dev-detail__empty" id="devDetailEmpty">
+              <div class="dev-detail__empty-copy">
+                <i data-lucide="activity" aria-hidden="true"></i>
+                <p>Selecciona una llamada para ver su trazabilidad.</p>
+              </div>
+            </div>
+            <div class="dev-detail__body" id="devDetailBody" hidden></div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+</AppLayout>
+
+<script>
+  import { bootDev } from '../features/dev/dev';
+  import { accessTokenKey, checkSession, redirectToLogin } from '../features/auth/session-guard';
+  import { waitForRouteSettle } from '../features/ui/loading-reveal';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+  let mounted = false;
+  let mountGeneration = 0;
+
+  async function mountDev(): Promise<void> {
+    if (mounted) return;
+    const generation = ++mountGeneration;
+    const token = sessionStorage.getItem(accessTokenKey)?.trim();
+    if (!token) {
+      window.location.replace('/');
+      return;
+    }
+    await waitForRouteSettle();
+    if (generation !== mountGeneration || !document.getElementById('devLoading')) return;
+    if (await checkSession(apiUrl) === 'invalid') {
+      redirectToLogin();
+      return;
+    }
+    cleanup?.();
+    cleanup = bootDev(apiUrl, token);
+    mounted = true;
+  }
+
+  function unmountDev(): void {
+    cleanup?.();
+    cleanup = null;
+    mounted = false;
+    mountGeneration += 1;
+  }
+
+  document.addEventListener('astro:before-swap', unmountDev);
+  document.addEventListener('astro:page-load', () => { void mountDev(); });
+  void mountDev();
+</script>

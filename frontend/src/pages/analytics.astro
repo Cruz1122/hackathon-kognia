@@ -10,6 +10,7 @@ import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
 <script>
   import { bootDashboard } from '../features/dashboard/dashboard';
   import { accessTokenKey, checkSession, conversationIdKey, redirectToLogin } from '../features/auth/session-guard';
+  import { waitForRouteSettle } from '../features/ui/loading-reveal';
 
   const apiUrl = document.body.dataset.apiUrl ?? '';
   let cleanup: (() => void) | null = null;
@@ -33,6 +34,8 @@ import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
     }
     pendingRoot = root;
     const generation = ++mountGeneration;
+    await waitForRouteSettle();
+    if (generation !== mountGeneration || !root.isConnected) return;
     if (await checkSession(apiUrl) === 'invalid') {
       redirectToLogin();
       return;

@@ -8,6 +8,7 @@ import time
 import uuid
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -24,10 +25,12 @@ from app.telephony.bridge import run_agent_turn
 from app.telephony.live_audio import live_audio_hub
 from app.telephony.marks import MarkTracker
 from app.telephony.recording import RecordingRecord, download_recording, recording_store
-from app.telephony.runtime import BARGE_ARM_SECONDS, runtime
+from app.telephony.runtime import BARGE_ARM_SECONDS, TelephonyRuntime, runtime
 from app.telephony.sessions import CallSession, registry
+from app.telephony.settings import load_settings
 from app.telephony.state import project_state
 from app.telephony.stt import SherpaSTTProvider
+from app.telephony.telnyx_api import TelnyxApi
 from vendor.patter.transport import stream_url
 
 
@@ -236,6 +239,99 @@ def test_marks_clear_reconciles_unplayed() -> None:
     assert marks.state(second) == "cancelled"
 
 
+@pytest.mark.asyncio
+async def test_telnyx_hangup_uses_call_control_action_and_idempotency_key() -> None:
+    transport = AsyncMock(return_value={"data": {"result": "ok"}})
+    api = TelnyxApi(load_settings(), transport=transport)
+    await api.hangup("control-123", command_id="booking-complete-test")
+    transport.assert_awaited_once_with(
+        "POST", "/v2/calls/control-123/actions/hangup", {"command_id": "booking-complete-test"})
+
+
+@pytest.mark.asyncio
+async def test_successful_booking_hangs_up_telnyx_only_after_final_playback_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def confirmed_agent(_prompt: str, **_kwargs):
+        yield "tool.completed", {"tool": "create_booking", "ok": True}
+        yield "token", {"text": "Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!"}
+        yield "done", {}
+
+    class FakeTTS:
+        def sample_rate(self) -> int:
+            return 16000
+
+        def stream_audio(self, _text: str):
+            yield b"\x00\x00" * 160
+
+    session = CallSession(uuid.uuid4(), "token", "booking-control", organization_id=uuid.uuid4())
+    session.websocket = AsyncMock()
+    session.marks = MarkTracker()
+    await run_agent_turn(session, "confirmo", agent=confirmed_agent, tts=FakeTTS())
+
+    terminal_mark = session.hangup_after_mark
+    assert terminal_mark is not None
+    assert session.marks.state(terminal_mark) == "sent"
+    api = SimpleNamespace(hangup=AsyncMock())
+    media_runtime = TelephonyRuntime()
+    monkeypatch.setattr(media_runtime, "api", lambda: api)
+    mark_event = {"event": "mark", "mark": {"name": terminal_mark}}
+
+    await media_runtime._on_media_event(session, mark_event)
+    assert session.hangup_requested is True
+    api.hangup.assert_awaited_once_with(
+        "booking-control", command_id=str(session.call_id))
+    await media_runtime._on_media_event(session, mark_event)
+    api.hangup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_booking_does_not_schedule_call_hangup() -> None:
+    async def failed_agent(_prompt: str, **_kwargs):
+        yield "tool.completed", {"tool": "create_booking", "ok": False}
+        yield "token", {"text": "No se pudo confirmar la reserva."}
+        yield "done", {}
+
+    class FakeTTS:
+        def sample_rate(self) -> int:
+            return 16000
+
+        def stream_audio(self, _text: str):
+            yield b"\x00\x00" * 160
+
+    session = CallSession(uuid.uuid4(), "token", "failed-control")
+    session.websocket = AsyncMock()
+    session.marks = MarkTracker()
+    await run_agent_turn(session, "confirma", agent=failed_agent, tts=FakeTTS())
+    assert session.hangup_after_mark is None
+
+
+@pytest.mark.asyncio
+async def test_failed_final_mark_send_clears_pending_hangup() -> None:
+    async def confirmed_agent(_prompt: str, **_kwargs):
+        yield "tool.completed", {"tool": "create_booking", "ok": True}
+        yield "token", {"text": "Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!"}
+        yield "done", {}
+
+    class FakeTTS:
+        def sample_rate(self) -> int:
+            return 16000
+
+        def stream_audio(self, _text: str):
+            yield b"\x00\x00" * 160
+
+    session = CallSession(uuid.uuid4(), "token", "booking-control")
+    session.marks = MarkTracker()
+
+    class FailingSocket:
+        async def send_json(self, payload: dict) -> None:
+            if payload.get("event") == "mark" and session.hangup_after_mark == payload["mark"]["name"]:
+                raise ConnectionError("final mark was not sent")
+
+    session.websocket = FailingSocket()
+    with pytest.raises(ConnectionError, match="final mark was not sent"):
+        await run_agent_turn(session, "confirmo", agent=confirmed_agent, tts=FakeTTS())
+    assert session.hangup_after_mark is None
+
+
 def test_project_state_is_stable() -> None:
     events = [
         {"type": "lifecycle", "offset_ms": 0, "payload": {"state": "ACTIVE"}},
@@ -282,16 +378,28 @@ async def test_agent_cancellation_and_tool_failure() -> None:
     assert closed is True
 
     async def failing_agent(prompt: str, **kwargs):
+        yield "agent.signals", {
+            "signals": {
+                "satisfaction": {"value": "high", "probabilities": {"high": 1.0}},
+            }
+        }
         yield "tool.started", {"tool": "demo", "tool_call_id": "1"}
         raise RuntimeError("tool failed")
 
     runtime.agent = failing_agent
     other = CallSession(call_id=uuid.uuid4(), token="token", telnyx_call_control_id="cc2", organization_id=uuid.uuid4())
     other.marks = MarkTracker()
+    other.events.append({
+        "type": "transcript.final",
+        "offset_ms": 1234,
+        "payload": {"speaker": "customer", "text": "hola"},
+    })
     await runtime._start_turn(other, "hola")
     assert other.turn_task is not None
     await other.turn_task
     assert any(event["type"] == "agent.error" for event in other.events)
+    signal_event = next(event for event in other.events if event["type"] == "agent.signals")
+    assert signal_event["offset_ms"] == 1234
     assert any(event["type"] == "tool.started" for event in other.events)
 
 

@@ -2,10 +2,13 @@
 import { ClientRouter } from 'astro:transitions';
 import AppNav from '../components/navigation/AppNav.astro';
 import InteractiveMascotFace from '../components/mascot/InteractiveMascotFace.astro';
+import AgentSignalsPanel from '../components/agent-signals/AgentSignalsPanel.astro';
 import '../styles/app-shell.css';
 import '../styles/dashboard.css';
 import '../styles/detail-panel.css';
 import '../styles/toast.css';
+import '../styles/loading-reveal.css';
+import '../styles/empty-state.css';
 
 interface Props {
   title?: string;
@@ -14,7 +17,11 @@ interface Props {
 const { title = 'Kognia — Analíticas' } = Astro.props;
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 const path = Astro.url.pathname;
-const activeRoute = path === '/calls' || path.startsWith('/calls/') ? 'calls' : 'analytics';
+const activeRoute = path === '/dev' || path.startsWith('/dev/')
+  ? 'dev'
+  : path === '/calls' || path.startsWith('/calls/')
+    ? 'calls'
+    : 'analytics';
 const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved');
 ---
 
@@ -24,6 +31,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <ClientRouter fallback="swap" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -31,7 +39,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
     <script src="https://unpkg.com/lucide@latest" is:inline></script>
   </head>
   <body data-api-url={apiUrl}>
-    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel']}>
+    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel', showDetailPanel && 'is-call-loading']}>
       <aside class="app-sidebar" aria-label="Demo" transition:persist transition:name="app-sidebar">
         <div class="app-mobile-topbar">
           <div class="app-sidebar__brand">
@@ -44,7 +52,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
         </div>
         <AppNav mode="route" active={activeRoute} />
       </aside>
-      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="fade">
+      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="none">
         <slot />
       </main>
       {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">
@@ -52,16 +60,22 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
           <i data-lucide="x" aria-hidden="true"></i>
         </button>
         <div class="detail-panel__session" id="sessionPanel">
-          <p class="detail-kicker">Cliente</p>
-          <h2 class="detail-title">Estado de la llamada</h2>
-          <div class="detail-sheet">
-            <section class="detail-group">
-              <dl class="detail-fields">
-                <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
-                <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-                <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
-              </dl>
-            </section>
+          <div id="sessionSummary">
+            <p class="detail-kicker">Cliente</p>
+            <h2 class="detail-title">Estado global del cliente</h2>
+            <div class="detail-sheet">
+              <section class="detail-group">
+                <dl class="detail-fields">
+                  <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
+                  <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
+                  <div class="detail-field"><dt>Estado</dt><dd class="is-pending">Pendiente</dd></div>
+                </dl>
+              </section>
+            </div>
+          </div>
+          <div class="detail-client-signals" id="callSignalCategories" aria-label="Estado global del cliente"></div>
+          <div class="detail-panel__signals">
+            <AgentSignalsPanel id="callAgentSignals" variant="compact" categoriesTarget="callSignalCategories" />
           </div>
         </div>
         <div class="detail-panel__body" hidden></div>
@@ -112,11 +126,15 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
       }
 
       function syncNavActive(): void {
-        const calls = window.location.pathname === '/calls' || window.location.pathname.startsWith('/calls/');
+        const path = window.location.pathname;
+        const route = path === '/dev' || path.startsWith('/dev/')
+          ? 'dev'
+          : path === '/calls' || path.startsWith('/calls/')
+            ? 'calls'
+            : 'analytics';
         document.querySelectorAll<HTMLElement>('#appNav [data-route], #appNav [data-view="dashboard"]').forEach((item) => {
-          const isCalls = item.dataset.route === 'calls';
-          const isDashboard = item.dataset.route === 'analytics' || item.dataset.view === 'dashboard';
-          const active = (calls && isCalls) || (!calls && isDashboard);
+          const itemRoute = item.dataset.route === 'calls' ? 'calls' : item.dataset.route === 'dev' ? 'dev' : 'analytics';
+          const active = itemRoute === route;
           item.classList.toggle('is-active', active);
           if (active) item.setAttribute('aria-current', 'page');
           else item.removeAttribute('aria-current');
@@ -130,7 +148,8 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
           const target = event.target;
           if (!(target instanceof Element)) return;
           const dashboard = target.closest('[data-view="dashboard"]');
-          if (!dashboard || !window.location.pathname.startsWith('/calls')) return;
+          const path = window.location.pathname;
+          if (!dashboard || path === '/analytics' || path.startsWith('/analytics/')) return;
           event.preventDefault();
           const link = document.createElement('a');
           link.href = '/analytics';

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
 from ..agent.tools.contracts import ToolContext
 from ..features.agent.service import stream_agent
+from ..platform.tracing import TraceRecorder, save_trace
 from .audio import CANONICAL_RATE, pcm16le_to_wire, resample_pcm16le, timeline_ms
 from .frames import CHANNEL_AGENT, encode_audio_frame
 from .live_audio import live_audio_hub
@@ -19,41 +22,149 @@ from .tts import PiperTTSProvider
 logger = logging.getLogger("hackathon.telnyx.bridge")
 
 
+async def _with_holding(generator, session: CallSession, voice):
+    from ..agent.phrases import HOLDING, pick
+
+    held = False
+    queue = asyncio.Queue(maxsize=32)
+    end = object()
+
+    async def produce():
+        try:
+            # One task owns the entire generator lifetime, including ContextVar tokens.
+            async for event in generator:
+                await queue.put(event)
+        except Exception as exc:
+            await queue.put(exc)
+        finally:
+            await generator.aclose()
+            # A cancelled consumer will never drain a full queue.
+            if not asyncio.current_task().cancelling():
+                await queue.put(end)
+
+    producer = asyncio.create_task(produce())
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=4)
+            except asyncio.TimeoutError:
+                if producer.done():
+                    producer.result()
+                    return
+                if not held:
+                    held = True
+                    await _speak(session, voice, pick(HOLDING))
+                continue
+            if event is end:
+                return
+            if isinstance(event, Exception):
+                raise event
+            yield event
+    finally:
+        producer.cancel()
+        await asyncio.gather(producer, return_exceptions=True)
+
+
 async def run_agent_turn(
     session: CallSession,
     transcript: str,
     *,
     agent: Any = stream_agent,
     tts: PiperTTSProvider | None = None,
+    system_initiated: bool = False,
 ) -> None:
     voice = tts or PiperTTSProvider()
     if session.marks is None:
         session.marks = MarkTracker()
+    customer_turn_offset_ms = next(
+        (
+            int(event.get("offset_ms") or 0)
+            for event in reversed(session.events)
+            if event.get("type") == "transcript.final"
+            and (event.get("payload") or {}).get("speaker") == "customer"
+        ),
+        session.offset_ms(),
+    )
     timeline.record(session, "agent.state", {"state": "thinking"})
     session.agent_state = "thinking"
     tool_context = ToolContext(
-        request_id=f"telnyx-{session.call_id}",
+        request_id=f"telnyx-{session.call_id}-{uuid.uuid4()}",
         conversation_id=str(session.conversation_id) if session.conversation_id else None,
         organization_id=str(session.organization_id) if session.organization_id else None,
         user_id=str(session.system_user_id) if session.system_user_id else None,
+        channel='voice',
+        system_initiated=system_initiated,
     )
     answer: list[str] = []
-    generator = agent(transcript, messages=list(session.history), tool_context=tool_context)
+    recorder = TraceRecorder(
+        call_id=str(session.call_id),
+        conversation_id=str(session.conversation_id) if session.conversation_id else None,
+        organization_id=str(session.organization_id) if session.organization_id else None,
+    )
+    agent_kwargs: dict[str, Any] = {
+        "messages": list(session.history),
+        "tool_context": tool_context,
+    }
+    if "trace" in inspect.signature(agent).parameters:
+        agent_kwargs["trace"] = recorder
+    generator = agent(transcript, **agent_kwargs)
+    proposal_id = None
+    reservation_confirmed = False
+    session.awaiting_agent_reply = True
+    waiting = _with_holding(generator, session, voice)
     try:
-        async for kind, payload in generator:
+        async for kind, payload in waiting:
             if session.closed:
                 break
-            await _publish_agent_event(session, kind, payload, answer)
+            if kind == 'done':
+                proposal_id = payload.get('proposal_id')
+            if (kind == 'tool.completed' and payload.get('tool') == 'create_booking'
+                    and payload.get('ok') is True):
+                reservation_confirmed = True
+            await _publish_agent_event(
+                session,
+                kind,
+                payload,
+                answer,
+                customer_turn_offset_ms=customer_turn_offset_ms,
+            )
     except asyncio.CancelledError:
         await _cancel_playback(session)
         raise
     finally:
+        await waiting.aclose()
         await generator.aclose()
+        await save_trace(recorder)
     spoken = "".join(answer).strip()
     session.history.append({"role": "user", "content": transcript})
     if spoken:
         session.history.append({"role": "assistant", "content": spoken})
+        if agent is stream_agent and session.conversation_id and session.organization_id:
+            from ..db.models import Message, MessageRole
+            from ..db.session import get_session_factory
+            async with get_session_factory()() as db:
+                db.add_all([
+                    Message(conversation_id=session.conversation_id, role=MessageRole.USER, content=transcript, channel='voice'),
+                    Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT, content=spoken, channel='voice'),
+                ])
+                await db.commit()
         await _speak(session, voice, spoken)
+        session.awaiting_agent_reply = False
+        marks = session.marks
+        if reservation_confirmed and session.websocket and marks is not None:
+            mark = marks.generated()
+            session.hangup_after_mark = mark
+            marks.sent(mark)
+            try:
+                await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
+            except Exception:
+                session.hangup_after_mark = None
+                raise
+        if proposal_id and session.websocket and not session.closed:
+            mark = session.marks.generated()
+            session.presentation_mark = (mark, proposal_id)
+            session.marks.sent(mark)
+            await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
     session.agent_state = "listening"
     timeline.record(session, "agent.state", {"state": "listening"})
 
@@ -63,6 +174,8 @@ async def _publish_agent_event(
     kind: str,
     payload: dict[str, Any],
     answer: list[str],
+    *,
+    customer_turn_offset_ms: int,
 ) -> None:
     if kind == "token":
         answer.append(str(payload.get("text") or ""))
@@ -75,6 +188,12 @@ async def _publish_agent_event(
         return
     if kind in {"rag.started", "rag.completed"}:
         timeline.record(session, kind, payload)
+        return
+    if kind == "agent.signals":
+        # Signals describe the customer message that started this turn. Keeping
+        # that original offset makes replay and seeking update on the message,
+        # even though classification finishes a little later in real time.
+        timeline.record(session, kind, payload, at_offset_ms=customer_turn_offset_ms)
         return
     if kind == "error":
         timeline.record(session, "agent.error", {"message": payload.get("message") or "error"})
@@ -129,6 +248,13 @@ def _agent_heard_ms(session: CallSession) -> int:
 async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:
     if not pcm:
         return
+    # A tentative barge holds the reply instead of discarding it: if the customer
+    # really speaks the turn is cancelled, otherwise playback resumes here.
+    pause = session.barge_pause
+    if pause is not None and pause.is_set():
+        await pause.wait()
+        if session.closed:
+            return
     customer_samples = len(session.customer_pcm) // 2
     agent_samples = len(session.agent_pcm) // 2
     if not session.agent_segment_open and customer_samples > agent_samples:

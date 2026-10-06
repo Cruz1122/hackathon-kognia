@@ -1,13 +1,14 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
-import { backendMessage, errorMessage } from '../infrastructure/backend-error';
+import { backendErrorFromResponse, backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
-import { redirectToLogin } from '../../auth/session-guard';
+import { conversationIdKey, redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
-import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { showToast } from '../infrastructure/toast';
+import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
 type CallMonitorAudio = {
-  pushAmplitude: (value: number) => void;
+  setLevels: (customer: number, agent: number) => void;
   connectAnalyser: (analyser: AnalyserNode, sampleRate?: number) => void;
   connectPlaybackAnalyser?: (analyser: AnalyserNode, sampleRate?: number) => void;
   disconnectPlaybackAnalyser?: () => void;
@@ -98,7 +99,14 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const pcm = new PcmAudioQueue();
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/call`;
   const authToken = typeof token === 'string' ? token.trim() : '';
-  const attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+  let attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+  if (authToken && attachedConversationId) {
+    void fetch(`${apiUrl}/conversations/${attachedConversationId}/agent-state`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    }).then(async (response) => {
+      if (response.ok) patchSessionFromAgentState(await response.json());
+    }).catch(() => undefined);
+  }
   const pendingTools = new Map<string, string>();
   let pendingRetrievalId: string | null = null;
 
@@ -119,6 +127,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   let ttsRate = 24000;
   let bargeHits = 0;
   let bargeArmedAt = 0;
+  let bargePending = false;
   let noiseFloor = 0.08;
   let reconnectTimer = 0;
   let connectionHideTimer = 0;
@@ -213,16 +222,21 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     return true;
   }
 
-  function handleLocalBarge(): void {
+  function holdPlayback(): void {
     bargeHits = 0;
-    bargeArmedAt = performance.now() + 400;
-    pcm.cancel();
-    pcmReady = false;
-    ignoreTts = true;
+    bargePending = true;
+    ignoreTts = false;
     processing = false;
+    pcm.pause();
     unhookTtsWave();
     hookMicWave();
-    finishAgent();
+    showToast('Te escucho…', 'info');
+  }
+
+  function handleLocalBarge(): void {
+    if (bargePending) return;
+    bargeArmedAt = performance.now() + 400;
+    holdPlayback();
     sendSocketCommand({ type: 'barge' });
   }
 
@@ -285,7 +299,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (agentBubble) return agentBubble;
     const row = appendRow(
       'message-row agent',
-      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message"></div></div>`,
+      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message"></div></div>`,
     );
     agentBubble = row.querySelector('.message');
     return agentBubble as HTMLElement;
@@ -367,6 +381,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     customerShown = '';
     pendingTools.clear();
     pendingRetrievalId = null;
+    resetCallAgentSignals();
     setEmpty(false);
   }
 
@@ -376,14 +391,16 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     capture.onLevel((level) => {
       if (!live || paused) return;
       waveApi?.setPlaying?.(true);
-      waveApi?.pushAmplitude(Math.max(level, pcm.voiceLevel()));
+      waveApi?.setLevels(level, pcm.voiceLevel());
     });
     const started = await capture.startPcmStream((frame) => {
       if (!live || paused || !connected || !socket || socket.readyState !== WebSocket.OPEN) return;
       const now = performance.now();
       const level = capture.voiceLevel();
       const audioPlaying = pcmReady || pcm.size > 0;
-      if (audioPlaying) {
+      if (bargePending) {
+        bargeHits = 0;
+      } else if (audioPlaying) {
         if (now >= bargeArmedAt) {
           const floor = Math.max(0.08, noiseFloor);
           const voiced = capture.isVoiced();
@@ -397,7 +414,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         if (level < noiseFloor + 0.04) noiseFloor = Math.max(0.06, noiseFloor * 0.94 + level * 0.06);
       }
       waveApi?.setPlaying?.(true);
-      waveApi?.pushAmplitude(Math.max(level, pcm.voiceLevel()));
+      waveApi?.setLevels(level, pcm.voiceLevel());
       socket.send(frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength));
     });
     if (!started) {
@@ -412,6 +429,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (type === 'call.connected') {
       if (connected) return;
       connected = true;
+      // A fresh socket has no held barge, so make sure playback is not stuck paused.
+      bargePending = false;
+      pcm.resume();
       reconnectAttempts = 0;
       setConnectionStatus('connected', 'Llamada conectada');
       connectionHideTimer = window.setTimeout(() => setConnectionStatus('hidden'), 1400);
@@ -426,6 +446,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       finishCustomer(String(data.text ?? ''));
     } else if (type === 'agent.token') {
       appendToken(String(data.text ?? ''));
+    } else if (type === 'agent.signals') {
+      applyCallAgentSignals(data);
+      patchSessionFromAgentState(data);
     } else if (type === 'tool.started') {
       const toolCallId = String(data.tool_call_id ?? data.id ?? `${String(data.tool ?? 'tool')}-${Date.now()}`);
       const id = `tool-${toolCallId}`;
@@ -447,7 +470,14 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     } else if (type === 'tts.format') {
       if (ignoreTts) return;
       ttsRate = Number(data.sample_rate) || 24000;
+    } else if (type === 'tts.pause') {
+      if (!bargePending) holdPlayback();
+    } else if (type === 'tts.resume') {
+      bargePending = false;
+      pcm.resume();
+      hookTtsWave();
     } else if (type === 'tts.cancel' || type === 'turn.cancelled') {
+      bargePending = false;
       if (type === 'tts.cancel') showToast('Te escucho…', 'info');
       cancelPendingRetrieval();
       ignoreTts = true;
@@ -458,13 +488,16 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       hookMicWave();
       finishAgent();
     } else if (type === 'turn.completed') {
+      bargePending = false;
       cancelPendingRetrieval();
       finishAgent();
       processing = false;
       pcmReady = false;
+      const endCallAfterPlayback = data.end_call === true;
       pcm.finish(() => {
         unhookTtsWave();
         hookMicWave();
+        if (endCallAfterPlayback) void hangup();
       });
     } else if (type === 'transcript.empty') {
       processing = false;
@@ -509,7 +542,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         pcm.enqueue(bytes, () => undefined, () => undefined);
         hookTtsWave();
         waveApi?.setPlaying?.(true);
-        waveApi?.pushAmplitude(Math.max(capture.voiceLevel(), pcm.voiceLevel()));
+        waveApi?.setLevels(capture.voiceLevel(), pcm.voiceLevel());
         return;
       }
       try {
@@ -547,9 +580,30 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     });
   }
 
+  async function openCallConversation(): Promise<string> {
+    const response = await fetch(`${apiUrl}/conversations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ channel: 'voice-demo' }),
+    });
+    if (!response.ok) {
+      throw await backendErrorFromResponse(response, 'No se pudo abrir una conversación nueva.');
+    }
+    const payload: unknown = await response.json();
+    const record = payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {};
+    const nextId = typeof record.id === 'string' ? record.id.trim() : '';
+    if (!nextId) throw new Error('La API no devolvió una conversación válida.');
+    return nextId;
+  }
+
   async function startCall(): Promise<void> {
     if (live && !paused) return;
-    if (!authToken || !attachedConversationId) {
+    if (!authToken) {
       showTransportError('No se puede iniciar la llamada: faltan credenciales.');
       return;
     }
@@ -557,6 +611,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       await resumeCall();
       return;
     }
+    const nextConversationId = await openCallConversation();
+    attachedConversationId = nextConversationId;
+    sessionStorage.setItem(conversationIdKey, nextConversationId);
     capture.primeContext();
     pcm.prime();
     live = true;
@@ -564,6 +621,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     connected = false;
     processing = false;
     pcmReady = false;
+    bargePending = false;
     closing = false;
     reconnectAttempts = 0;
     setConnectionStatus('connecting', 'Conectando llamada…');
@@ -589,6 +647,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     paused = false;
     processing = false;
     pcmReady = false;
+    bargePending = false;
     waveApi?.setPlaying?.(true);
     syncControls();
     if (connected && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
@@ -599,6 +658,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     paused = true;
     processing = false;
     pcmReady = false;
+    bargePending = false;
     capture.stopPcmStream();
     capture.cancelRecording();
     sendSocketCommand({ type: 'pcm.stop' });
@@ -617,6 +677,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     live = false;
     paused = false;
     processing = false;
+    bargePending = false;
     capture.stopPcmStream();
     capture.abort();
     sendSocketCommand({ type: 'pcm.stop' });
@@ -653,6 +714,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
+      showToast(message, 'error');
     });
   });
   pauseBtn.addEventListener('click', () => {
@@ -660,7 +722,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   });
   restartBtn.addEventListener('click', () => {
     void restartCall().catch((error) => {
-      note(errorMessage(error, 'No se pudo reiniciar la llamada.'), 'phone-off');
+      const message = errorMessage(error, 'No se pudo reiniciar la llamada.');
+      note(message, 'phone-off');
+      showToast(message, 'error');
     });
   });
   syncControls();
@@ -674,6 +738,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
+      showToast(message, 'error');
     });
   }
 

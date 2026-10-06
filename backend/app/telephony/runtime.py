@@ -13,8 +13,9 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from ..agent.state import ASSISTANT_NAME, greeting
 from .audio import mixed_call_wav, pcm16le_rms, resolve_byte_order, timeline_ms, wire_to_pcm16le
-from .bridge import run_agent_turn
+from .bridge import _speak, run_agent_turn
 from .frames import CHANNEL_CUSTOMER, encode_audio_frame
 from .live_audio import live_audio_hub
 from .marks import MarkTracker
@@ -25,13 +26,15 @@ from .signatures import SignatureError, verify_telnyx_signature
 from .stt import SherpaSTTProvider
 from .telnyx_api import TelnyxApi
 from .timeline import timeline
+from .tts import PiperTTSProvider
 
 logger = logging.getLogger("hackathon.telnyx")
-BARGE_RMS = 0.05
-BARGE_STRONG_RMS = 0.08
+BARGE_RMS = 0.02
+BARGE_STRONG_RMS = 0.04
 BARGE_ARM_SECONDS = 0.2
 BARGE_HITS = 2
-SPEECH_RMS = 0.02
+BARGE_GRACE_SECONDS = 3.0
+SPEECH_RMS = 0.008
 SILENCE_SECONDS = 0.8
 MAX_UTTERANCE_SECONDS = 8.0
 
@@ -120,6 +123,15 @@ class TelephonyRuntime:
             await self._answer_inbound(body, occurred_at if isinstance(occurred_at, str) else None)
             return
         session = registry.by_control(control_id) if control_id else None
+        if session is None and body.get('client_state'):
+            from .continuity import restore_outbound
+            session = await restore_outbound(body)
+        if event_type == 'call.answered' and session is not None and not session.answered and not session.closed:
+            await self.api().streaming_start(control_id, self.api().media_url(str(session.call_id), session.token))
+            session.answered = True
+            session.lifecycle_state = 'ACTIVE'
+            timeline.record(session, 'lifecycle', {'state': 'ACTIVE'})
+            return
         if event_type == "call.hangup" and session is not None:
             await self.finish_call(session, occurred_at if isinstance(occurred_at, str) else None)
             return
@@ -224,13 +236,11 @@ class TelephonyRuntime:
                         customer = Customer(organization_id=session.organization_id, phone=phone)
                         db.add(customer)
                         await db.flush()
+                # This path is inbound-only. Even a matching phone or stale attachment
+                # must start a fresh thread; outbound callbacks use restore_outbound.
                 conversation = await create_conversation(
-                    db,
-                    organization_id=session.organization_id,
-                    created_by=session.system_user_id,
-                    channel="pstn",
-                    status="open",
-                )
+                    db, organization_id=session.organization_id,
+                    created_by=session.system_user_id, channel="pstn", status="open")
                 if customer is not None:
                     conversation.customer_id = customer.id
                 db.add(
@@ -248,6 +258,7 @@ class TelephonyRuntime:
                 )
                 await db.commit()
                 session.conversation_id = conversation.id
+                session.history = []
         except Exception:
             logger.exception("Telnyx call persistence failed")
 
@@ -308,9 +319,10 @@ class TelephonyRuntime:
             await enqueue_recording(session.organization_id, session.conversation_id, record.id)
 
     async def finish_call(self, session: CallSession, occurred_at: str | None) -> None:
-        task = session.turn_task
-        if task is not None and not task.done():
-            task.cancel()
+        apologize_for_unanswered_turn = session.awaiting_agent_reply
+        for task in (session.turn_task, session.greet_task, session.silence_task, session.barge_resume_task):
+            if task is not None and not task.done():
+                task.cancel()
         if session.stt is not None:
             session.stt.close()
             session.stt = None
@@ -319,9 +331,9 @@ class TelephonyRuntime:
         session.lifecycle_state = "ENDED"
         timeline.record(session, "lifecycle", {"state": "ENDED"}, provider_occurred_at=occurred_at)
         registry.end(session)
-        await self._close_db_call(session)
+        await self._close_db_call(session, apologize=apologize_for_unanswered_turn)
 
-    async def _close_db_call(self, session: CallSession) -> None:
+    async def _close_db_call(self, session: CallSession, *, apologize: bool = False) -> None:
         if session.organization_id is None or session.conversation_id is None:
             return
         try:
@@ -338,6 +350,13 @@ class TelephonyRuntime:
                     .values(status=CallStatus.ENDED, ended_at=datetime.now(UTC), lifecycle_state="ENDED")
                 )
                 await db.commit()
+            from ..whatsapp.service import prepare_continuation
+            await prepare_continuation(
+                session.conversation_id,
+                session.organization_id,
+                str(session.call_id),
+                apologize=apologize,
+            )
             await enqueue_enrichment(session.organization_id, session.conversation_id)
         except Exception:
             logger.exception("Telnyx hangup persistence failed")
@@ -423,7 +442,11 @@ class TelephonyRuntime:
                     event = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                await self._on_media_event(session, event)
+                try:
+                    await self._on_media_event(session, event)
+                except Exception:
+                    # One bad frame must never kill the media session for the whole call.
+                    logger.exception("Telnyx media event failed")
         finally:
             if session.websocket is websocket:
                 session.websocket = None
@@ -444,6 +467,11 @@ class TelephonyRuntime:
                     "byte_order": resolve_byte_order(media_format),
                 },
             )
+            if self.enable_voice and session.greet_task is None:
+                session.greet_task = asyncio.create_task(self._greet(session))
+            if self.enable_voice and session.silence_task is None:
+                session.idle_since = time.monotonic()
+                session.silence_task = asyncio.create_task(self._watch_silence(session))
             return
         if kind == "media":
             media = event.get("media") if isinstance(event.get("media"), dict) else {}
@@ -461,6 +489,20 @@ class TelephonyRuntime:
             name = str(mark.get("name") or "")
             if session.marks.played(name) == "played":
                 timeline.record(session, "audio.played", {"name": name})
+                if session.hangup_after_mark == name and not session.hangup_requested:
+                    session.hangup_requested = True
+                    try:
+                        await self.api().hangup(
+                            session.telnyx_call_control_id,
+                            command_id=str(session.call_id),
+                        )
+                    except Exception:
+                        session.hangup_requested = False
+                        logger.exception("Post-booking Telnyx hangup failed")
+                if session.presentation_mark and session.presentation_mark[0] == name:
+                    from ..agent.store import mark_presented
+                    await mark_presented(str(session.organization_id), str(session.conversation_id), session.presentation_mark[1])
+                    session.presentation_mark = None
             return
         if kind == "stop":
             self.write_capture(session)
@@ -486,9 +528,15 @@ class TelephonyRuntime:
                 ),
             )
         rms = pcm16le_rms(pcm)
+        if rms >= SPEECH_RMS:
+            session.idle_since = time.monotonic()
         busy = session.turn_task is not None and not session.turn_task.done()
-        if busy:
+        initial_greeting = busy and session.turn_task is session.greet_task
+        if busy and not initial_greeting and not session.barge_pending:
             now = time.monotonic()
+            if rms >= SPEECH_RMS or session.barge_pcm:
+                session.barge_pcm.extend(pcm)
+                del session.barge_pcm[:-64000]  # Bounded two-second pre-roll at 16 kHz.
             armed = now >= session.turn_started_at + BARGE_ARM_SECONDS
             if armed and rms >= BARGE_RMS:
                 session.barge_hits += 1
@@ -496,8 +544,22 @@ class TelephonyRuntime:
                 session.barge_hits = 0
             if armed and (rms >= BARGE_STRONG_RMS or session.barge_hits >= BARGE_HITS):
                 session.barge_hits = 0
-                await self._barge_in(session)
-            return
+                # Only an actually-speaking reply can be resumed; a thinking turn is dropped.
+                if session.agent_state == "speaking":
+                    await self._soft_barge(session)
+                else:
+                    await self._barge_in(session)
+            else:
+                return
+        if session.barge_pcm:
+            buffered = bytes(session.barge_pcm)
+            session.barge_pcm.clear()
+            sample_start = max(0, sample_start - len(buffered) // 2 + len(pcm) // 2)
+            # Include the triggering frame: after a barge the turn is already
+            # cancelled, so the previous `busy` value is stale and must not drop it.
+            pcm = buffered + pcm
+            session.first_voice_at = session.first_voice_at or time.monotonic() - len(buffered) / 32000
+            session.last_voice_at = time.monotonic()
         if session.stt is None:
             return
         now = time.monotonic()
@@ -506,7 +568,10 @@ class TelephonyRuntime:
             if session.first_voice_at <= 0:
                 session.first_voice_at = now
                 session.utterance_offset_ms = timeline_ms(session.recording_offset_ms, sample_start)
-        text, endpoint = await session.stt.feed(pcm)
+        text, endpoint = await self._feed_stt(session, pcm)
+        # Only recognized words extend the grace window; sustained noise must time out.
+        if session.barge_pending and usable_transcript(text):
+            session.barge_last_voice_at = time.monotonic()
         if text and session.utterance_offset_ms is None:
             session.utterance_offset_ms = timeline_ms(session.recording_offset_ms, sample_start)
             timeline.record(session, "transcript.partial", {"speaker": "customer", "text": text}, persist=False)
@@ -533,7 +598,141 @@ class TelephonyRuntime:
                 )
                 await self._start_turn(session, final)
 
+    async def _feed_stt(self, session: CallSession, pcm: bytes) -> tuple[str, bool]:
+        """Feed PCM, rebuilding the recognizer stream if a decode fails."""
+        try:
+            return await session.stt.feed(pcm)
+        except Exception:
+            logger.exception("Sherpa feed failed; resetting the recognition stream")
+            try:
+                session.stt.close()
+            except Exception:
+                pass
+            session.stt = self.stt_factory().clone() if self.enable_voice else None
+            return "", False
+
+    async def _greet(self, session: CallSession) -> None:
+        if session.closed or session.websocket is None or session.greeted:
+            return
+        if session.history:
+            session.greeted = True
+            session.turn_task = asyncio.current_task()
+            text = 'Hola. Retomemos exactamente donde se interrumpió la conversación.'
+            proposal_id = None
+            if session.conversation_id and session.organization_id:
+                try:
+                    from ..agent import dialogue
+                    from ..agent.state import AgentState
+                    from ..db.models import AgentSnapshot, Message, MessageRole
+                    from ..db.session import get_session_factory
+                    async with get_session_factory()() as db:
+                        snapshot = await db.get(AgentSnapshot, session.conversation_id)
+                        if snapshot is not None:
+                            text, proposal_id = dialogue.resume_message(AgentState.model_validate(snapshot.data))
+                        db.add(Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT,
+                                       content=text, channel='voice'))
+                        await db.commit()
+                except Exception:
+                    logger.exception('Could not build the callback resume greeting')
+            session.history.append({'role': 'assistant', 'content': text})
+            await _speak(session, PiperTTSProvider(), text)
+            session.awaiting_agent_reply = False
+            if proposal_id and session.websocket and session.marks is not None and not session.closed:
+                mark = session.marks.generated()
+                session.presentation_mark = (mark, proposal_id)
+                session.marks.sent(mark)
+                await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
+            session.idle_since = time.monotonic()
+            return
+        text = f'{greeting()}. Soy {ASSISTANT_NAME}, tu asistente del restaurante. Para empezar, ¿cómo te llamas?'
+        session.greeted = True
+        session.turn_task = asyncio.current_task()  # barge-in can cancel the greeting
+        session.history.append({'role': 'assistant', 'content': text})
+        if session.conversation_id and session.organization_id:
+            try:
+                from ..db.models import Message, MessageRole
+                from ..db.session import get_session_factory
+                async with get_session_factory()() as db:
+                    db.add(Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT,
+                                   content=text, channel='voice'))
+                    await db.commit()
+            except Exception:
+                logger.exception("Greeting persist failed")
+        await _speak(session, PiperTTSProvider(), text)
+        session.idle_since = time.monotonic()
+
+    async def _watch_silence(self, session: CallSession) -> None:
+        from ..agent.phrases import SILENCE, pick
+
+        while not session.closed:
+            await asyncio.sleep(1)
+            busy = session.turn_task is not None and not session.turn_task.done()
+            playing = session.marks is not None and any(value == 'sent' for value in session.marks.snapshot().values())
+            if not session.greeted or busy or playing or session.first_voice_at > 0 or session.websocket is None:
+                session.idle_since = time.monotonic()
+                continue
+            if time.monotonic() - session.idle_since <= 10:
+                continue
+            text = pick(SILENCE, session.last_silence_prompt)
+            session.last_silence_prompt = text
+
+            async def speak_prompt(message: str = text) -> None:
+                try:
+                    session.history.append({'role': 'assistant', 'content': message})
+                    if session.conversation_id:
+                        from ..db.models import Message, MessageRole
+                        from ..db.session import get_session_factory
+                        async with get_session_factory()() as db:
+                            db.add(Message(conversation_id=session.conversation_id,
+                                role=MessageRole.ASSISTANT, content=message, channel='voice'))
+                            await db.commit()
+                    await _speak(session, PiperTTSProvider(), message)
+                finally:
+                    session.idle_since = time.monotonic()
+
+            session.turn_started_at = time.monotonic()
+            session.turn_task = asyncio.create_task(speak_prompt())
+
+    async def _soft_barge(self, session: CallSession) -> None:
+        """Hold playback instead of cancelling: the barge may just be noise."""
+        if session.barge_pending or session.turn_task is None or session.turn_task.done():
+            return
+        session.barge_hits = 0
+        session.barge_pending = True
+        session.barge_last_voice_at = time.monotonic()
+        session.barge_pause.set()
+        session.agent_state = "listening"
+        session.barge_resume_task = asyncio.create_task(self._resume_after_barge_silence(session))
+
+    async def _resume_after_barge_silence(self, session: CallSession) -> None:
+        """Resume the held reply only after the grace window passes without customer voice."""
+        while session.barge_pending:
+            await asyncio.sleep(BARGE_GRACE_SECONDS)
+            if not session.barge_pending:
+                return
+            if time.monotonic() - session.barge_last_voice_at >= BARGE_GRACE_SECONDS:
+                break
+        if session.barge_pending:
+            self._resume_barge(session)
+
+    def _resume_barge(self, session: CallSession) -> None:
+        session.barge_pending = False
+        session.barge_pause.clear()
+        task = session.barge_resume_task
+        session.barge_resume_task = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+        if session.turn_task is not None and not session.turn_task.done():
+            session.agent_state = "speaking"
+
     async def _barge_in(self, session: CallSession) -> None:
+        session.barge_pending = False
+        session.barge_pause.clear()
+        resume_task = session.barge_resume_task
+        session.barge_resume_task = None
+        if resume_task is not None and not resume_task.done():
+            resume_task.cancel()
+        session.presentation_mark = None
         cancelled = session.marks.clear_unplayed() if session.marks is not None else []
         for name in cancelled:
             timeline.record(session, "audio.cancelled", {"name": name})
@@ -542,25 +741,38 @@ class TelephonyRuntime:
                 await session.websocket.send_json({"event": "clear"})
             except Exception:
                 logger.info("Telnyx clear failed")
-        task = session.turn_task
-        if task is not None and not task.done():
-            task.cancel()
+        await self._cancel_turn(session)
         session.barge_hits = 0
         session.agent_state = "listening"
 
-    async def _start_turn(self, session: CallSession, transcript: str) -> None:
-        current = session.turn_task
-        if current is not None and not current.done():
-            current.cancel()
+    async def _cancel_turn(self, session: CallSession) -> None:
+        """Cancel the in-flight turn and wait for its cleanup so the conversation lock is released."""
+        task = session.turn_task
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.wait({task}, timeout=10)
+        if task.done() and not task.cancelled():
+            task.exception()  # retrieve to avoid 'exception was never retrieved'
+
+    async def _start_turn(self, session: CallSession, transcript: str, *, system_initiated: bool = False) -> None:
+        if session.barge_pending:
+            # The customer really spoke: the held reply loses to their utterance.
+            await self._barge_in(session)
+        if session.greet_task and not session.greet_task.done() and session.greet_task is not asyncio.current_task():
+            await asyncio.shield(session.greet_task)
+        await self._cancel_turn(session)
 
         async def _guarded() -> None:
             try:
-                await run_agent_turn(session, transcript, agent=self._agent())
+                await run_agent_turn(session, transcript, agent=self._agent(), system_initiated=system_initiated)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Telnyx agent turn failed")
                 timeline.record(session, "agent.error", {"message": "turn failed"})
+            finally:
+                session.idle_since = time.monotonic()
 
         session.turn_started_at = time.monotonic()
         session.barge_hits = 0

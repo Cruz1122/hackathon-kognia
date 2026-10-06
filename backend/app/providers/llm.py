@@ -125,10 +125,24 @@ def _with_system(messages: Sequence[dict[str, Any]] | None, prompt: str) -> list
     return [{"role": "system", "content": system}, *rest]
 
 
+def _usage_totals(usage: dict[str, Any]) -> dict[str, int]:
+    prompt_tokens = int(usage.get("prompt_tokens") or usage.get("promptTokenCount") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or usage.get("candidatesTokenCount") or 0)
+    total_tokens = int(usage.get("total_tokens") or usage.get("totalTokenCount") or 0)
+    if not total_tokens:
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
 async def _stream_openai_chat(
     response: httpx.Response,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     calls: dict[int, dict[str, str]] = {}
+    usage: dict[str, int] | None = None
     async for line in response.aiter_lines():
         data = _sse_data(line)
         if not data or data == "[DONE]":
@@ -137,6 +151,9 @@ async def _stream_openai_chat(
             payload = json.loads(data)
         except json.JSONDecodeError as exc:
             raise ProviderError("Provider returned malformed streaming data") from exc
+        raw_usage = payload.get("usage")
+        if isinstance(raw_usage, dict):
+            usage = _usage_totals(raw_usage)
         text = _openai_text(payload)
         if text:
             yield "token", {"text": text}
@@ -161,12 +178,15 @@ async def _stream_openai_chat(
                     slot["arguments"] += function["arguments"]
     if calls:
         yield "tool_calls", {"calls": [calls[index] for index in sorted(calls)]}
+    if usage is not None:
+        yield "usage", usage
 
 
 async def _stream_gemini_chat(
     response: httpx.Response,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     calls: list[dict[str, str]] = []
+    usage: dict[str, int] | None = None
     async for line in response.aiter_lines():
         data = _sse_data(line)
         if not data or data == "[DONE]":
@@ -175,6 +195,11 @@ async def _stream_gemini_chat(
             payload = json.loads(data)
         except json.JSONDecodeError as exc:
             raise ProviderError("Provider returned malformed streaming data") from exc
+        raw_usage = payload.get("usageMetadata")
+        if isinstance(raw_usage, dict):
+            totals = _usage_totals(raw_usage)
+            if usage is None or totals["total_tokens"] >= usage["total_tokens"]:
+                usage = totals
         text = _gemini_text(payload)
         if text:
             yield "token", {"text": text}
@@ -196,6 +221,8 @@ async def _stream_gemini_chat(
             calls.append({"id": f"call_{len(calls) + 1}", "name": name, "arguments": json.dumps(args)})
     if calls:
         yield "tool_calls", {"calls": calls}
+    if usage is not None:
+        yield "usage", usage
 
 
 async def _post_stream(
@@ -220,6 +247,7 @@ async def _post_stream(
                 "model": config.model,
                 "messages": source_messages,
                 "stream": True,
+                "stream_options": {"include_usage": True},
             }
             if tools:
                 body["tools"] = to_openai_tools(tools)
@@ -239,18 +267,33 @@ async def _post_stream(
             headers = {"Content-Type": "application/json", "x-goog-api-key": config.api_key}
             stream_events = _stream_gemini_chat
 
+        # Reasoning models (for example gpt-6-luna) reject function tools on
+        # /chat/completions unless reasoning is explicitly disabled. The API
+        # names the fix in the 400 body, so retry once with reasoning_effort
+        # instead of keeping a per-model capability list. Non-reasoning models
+        # never receive the argument because their first request succeeds.
+        reasoned_tools_retry = False
         try:
-            async with http_client.stream(
-                "POST", url, params=params, headers=headers, json=body
-            ) as response:
-                if response.status_code >= 400:
-                    retryable = response.status_code not in {400, 401, 403, 404}
-                    raise ProviderError(
-                        f"{config.provider.value} returned HTTP {response.status_code}",
-                        retryable=retryable,
-                    )
-                async for event in stream_events(response):
-                    yield event
+            while True:
+                async with http_client.stream(
+                    "POST", url, params=params, headers=headers, json=body
+                ) as response:
+                    if (response.status_code == 400 and openai_compatible and tools
+                            and not reasoned_tools_retry):
+                        detail = (await response.aread()).decode("utf-8", "ignore")
+                        if "reasoning_effort" in detail:
+                            body["reasoning_effort"] = "none"
+                            reasoned_tools_retry = True
+                            continue
+                    if response.status_code >= 400:
+                        retryable = response.status_code not in {400, 401, 403, 404}
+                        raise ProviderError(
+                            f"{config.provider.value} returned HTTP {response.status_code}",
+                            retryable=retryable,
+                        )
+                    async for event in stream_events(response):
+                        yield event
+                    return
         except ProviderError:
             raise
         except (httpx.HTTPError, OSError) as exc:

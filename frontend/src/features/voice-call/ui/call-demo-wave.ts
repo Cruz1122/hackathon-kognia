@@ -1,10 +1,12 @@
+import { paintCallWave, resizeWave } from '../application/wave-mark';
+
 type WaveAnalyser = {
   analyser: AnalyserNode;
   sampleRate: number;
 };
 
 type CallDemoWaveApi = {
-  pushAmplitude: (value: number) => void;
+  setLevels: (customer: number, agent: number) => void;
   connectAnalyser: (analyser: AnalyserNode, sampleRate?: number) => void;
   connectPlaybackAnalyser: (analyser: AnalyserNode, sampleRate?: number) => void;
   disconnectPlaybackAnalyser: () => void;
@@ -36,76 +38,65 @@ export function mountCallDemoWave(): () => void {
   if (!context) return () => undefined;
   const waveShell = document.getElementById('waveShell');
 
-  const samples: number[] = [.04];
+  const customerPeaks: number[] = [.04];
+  const agentPeaks: number[] = [0];
   let mic: WaveAnalyser | null = null;
   let playback: WaveAnalyser | null = null;
   let micBins: Uint8Array | null = null;
   let playbackBins: Uint8Array | null = null;
+  let latestCustomer = .04;
+  let latestAgent = 0;
   let playing = true;
   let frame = 0;
   let disposed = false;
-  let width = 1;
-  let height = 1;
-  let dpr = 1;
   let elapsed = 0;
   let lastFrame = performance.now();
   let lastSample = lastFrame;
 
   function resize(): void {
-    const rect = canvas.getBoundingClientRect();
-    width = Math.max(1, rect.width);
-    height = Math.max(1, rect.height);
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    resizeWave(canvas, context);
   }
 
-  function pushAmplitude(value: number): void {
+  function setLevels(customer: number, agent: number): void {
     if (disposed) return;
-    samples.push(clamp(value));
-    if (samples.length > 180) samples.shift();
+    latestCustomer = clamp(customer);
+    latestAgent = clamp(agent);
     waveShell?.style.setProperty('--progress', '100%');
     waveShell?.classList.add('at-live-edge');
   }
 
-  function drawWave(from: number, to: number, fillStyle: string): void {
-    if (to <= from) return;
-    context.beginPath();
-    const baseline = height - 1;
-    const span = Math.max(1, samples.length - 1);
-    const start = Math.floor(from * span);
-    const end = Math.min(span, Math.ceil(to * span));
-    context.moveTo(start / span * width, baseline);
-    for (let index = start; index <= end; index += 1) {
-      const x = index / span * width;
-      const amplitude = 5 + Math.pow(samples[index] ?? .04, 1.25) * height * .5;
-      context.lineTo(x, baseline - amplitude);
-    }
-    context.lineTo(end / span * width, baseline);
-    context.closePath();
-    context.fillStyle = fillStyle;
-    context.fill();
+  function appendSample(customer: number, agent: number): void {
+    customerPeaks.push(clamp(customer));
+    agentPeaks.push(clamp(agent));
+    if (customerPeaks.length > 180) customerPeaks.shift();
+    if (agentPeaks.length > 180) agentPeaks.shift();
+  }
+
+  function appendLiveSample(): void {
+    const measuredCustomer = analyserLevel(mic, micBins);
+    const measuredAgent = analyserLevel(playback, playbackBins);
+    const hasAnalyser = Boolean(mic || playback);
+    const simulated = .04 + Math.max(0, Math.sin(elapsed * 7.8) * .045 + Math.sin(elapsed * 3.7 + .8) * .028);
+    appendSample(
+      hasAnalyser ? Math.max(latestCustomer, measuredCustomer) : simulated,
+      hasAnalyser ? Math.max(latestAgent, measuredAgent) : 0,
+    );
   }
 
   function draw(now: number): void {
     const delta = Math.min(.05, (now - lastFrame) / 1000);
     lastFrame = now;
     elapsed += delta;
-    const measured = Math.max(analyserLevel(mic, micBins), analyserLevel(playback, playbackBins));
     if (playing && now - lastSample >= 33) {
-      const simulated = .04 + Math.max(0, Math.sin(elapsed * 7.8) * .045 + Math.sin(elapsed * 3.7 + .8) * .028);
-      pushAmplitude(mic || playback ? measured : simulated);
+      appendLiveSample();
       lastSample = now;
     }
-    context.clearRect(0, 0, width, height);
-    drawWave(0, 1, 'rgba(65,65,65,.14)');
-    drawWave(0, 1, '#f7c974');
+    paintCallWave(context, canvas, customerPeaks, agentPeaks, 1, []);
     frame = window.requestAnimationFrame(draw);
   }
 
   const api: CallDemoWaveApi = {
-    pushAmplitude,
+    setLevels,
     connectAnalyser(analyser, sampleRate = 16000) {
       mic = { analyser, sampleRate };
       micBins = new Uint8Array(analyser.frequencyBinCount);
@@ -128,8 +119,12 @@ export function mountCallDemoWave(): () => void {
       playing = next;
     },
     resetLiveWave() {
-      samples.length = 0;
-      samples.push(.04);
+      customerPeaks.length = 0;
+      customerPeaks.push(.04);
+      agentPeaks.length = 0;
+      agentPeaks.push(0);
+      latestCustomer = .04;
+      latestAgent = 0;
       waveShell?.style.setProperty('--progress', '100%');
       waveShell?.classList.add('at-live-edge');
     },

@@ -1,6 +1,7 @@
 ---
 import { ClientRouter } from 'astro:transitions';
 import InteractiveMascotFace from '../components/mascot/InteractiveMascotFace.astro';
+import EmptyState from '../components/ui/EmptyState.astro';
 
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
  import AppNav from '../components/navigation/AppNav.astro';
@@ -8,6 +9,8 @@ import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
 import '../styles/toast.css';
 import '../styles/detail-panel.css';
 import '../styles/dashboard.css';
+import '../styles/loading-reveal.css';
+import '../styles/empty-state.css';
 ---
 <html lang="es" transition:animate="none">
   <head>
@@ -15,6 +18,7 @@ import '../styles/dashboard.css';
   <meta charset="utf-8" />
    <meta name="viewport" content="width=device-width, initial-scale=1" />
    <title>Monitoreo de llamadas — Demo</title>
+   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
    <ClientRouter fallback="swap" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -265,7 +269,10 @@ import '../styles/dashboard.css';
 
     .auth-panel.is-app .login-face-wrap {
       width: 48px;
-      flex-shrink: 0;
+      /* Keep width (not flex-basis) as the animated main size so the face
+         shrinks together with the label during the login wipe. */
+      flex: 0 0 auto;
+      align-self: center;
     }
 
     .auth-panel.is-app .login-material {
@@ -362,6 +369,21 @@ import '../styles/dashboard.css';
     .app-nav__label span {
       min-width: 0;
       white-space: nowrap;
+    }
+
+    .app-nav__icon {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      align-self: center;
+      line-height: 0;
+    }
+
+    .app-nav__icon svg {
+      display: block;
+      width: 100%;
+      height: 100%;
     }
 
     .app-nav__label {
@@ -993,27 +1015,6 @@ import '../styles/dashboard.css';
 
     .conversation-empty[hidden] { display: none !important; }
 
-    .conversation-empty__copy {
-      display: grid;
-      justify-items: center;
-      gap: 11px;
-      text-align: center;
-      color: rgba(65,65,65,.62);
-    }
-
-    .conversation-empty__copy svg {
-      width: 38px;
-      height: 38px;
-      stroke-width: 1.9;
-    }
-
-    .conversation-empty__copy p {
-      margin: 0;
-      font-size: 14px;
-      line-height: 1.35;
-      font-weight: 600;
-    }
-
     .timeline-item {
       opacity: 0;
       visibility: hidden;
@@ -1150,7 +1151,7 @@ import '../styles/dashboard.css';
       border-radius: var(--radius-ui);
       background: var(--ui-graphite);
       color: var(--ui-paper);
-      padding: 15px 76px 15px 18px;
+      padding: 15px 68px 15px 18px;
       display: flex;
       align-items: center;
       gap: 14px;
@@ -1194,7 +1195,7 @@ import '../styles/dashboard.css';
     }
 
     .tool-icon i, .tool-icon svg { width: 20px; height: 20px; stroke-width: 2.5; }
-    .tool-copy, .loader, .done-mark { position: relative; z-index: 2; }
+    .tool-copy, .done-mark { position: relative; z-index: 2; }
     .tool-copy { min-width: 0; flex: 1; }
 
     .tool-label {
@@ -1229,63 +1230,6 @@ import '../styles/dashboard.css';
     .tool-call:not(.done) .tool-icon {
       box-shadow: 0 0 0 4px rgba(247, 201, 116, .22);
     }
-
-    .loader {
-      position: absolute;
-      right: 10px;
-      top: 50%;
-      margin-top: -29px;
-      flex: 0 0 auto;
-      width: 58px;
-      height: 58px;
-      filter: url(#ui-goo);
-      -webkit-filter: url(#ui-goo);
-      animation: ring-drift 15s linear infinite;
-    }
-
-    .loader-dot, .loader-runner, .loader-core {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      border-radius: 50%;
-      background: var(--ui-amber);
-    }
-
-    .loader-dot {
-      width: 10px;
-      height: 10px;
-      margin: -5px;
-      transform-origin: center;
-      opacity: .84;
-    }
-
-    .loader-core {
-      width: 16px;
-      height: 16px;
-      margin: -8px;
-      animation: loader-core-breathe 2.6s cubic-bezier(.55, .02, .45, .98) infinite;
-    }
-
-    .loader-runner {
-      width: 14px;
-      height: 14px;
-      margin: -7px;
-      transform-origin: center;
-      animation: runner-orbit 7.8s cubic-bezier(.55,.02,.45,.98) infinite;
-    }
-
-    @keyframes ring-drift { to { transform: rotate(360deg); } }
-    @keyframes runner-orbit {
-      from { transform: rotate(0deg) translateY(-20px); }
-      to { transform: rotate(360deg) translateY(-20px); }
-    }
-    @keyframes loader-core-breathe {
-      0%, 100% { transform: scale(.78); }
-      50% { transform: scale(1.12); }
-    }
-
-    .tool-call.done .loader { animation: loader-out .34s ease forwards; }
-    @keyframes loader-out { to { opacity: 0; transform: scale(.35); } }
 
     .done-mark {
       position: absolute;
@@ -1347,30 +1291,6 @@ import '../styles/dashboard.css';
       min-height: calc(100vh - 116px);
       display: grid;
       place-items: center;
-    }
-
-    .state-copy {
-      display: grid;
-      justify-items: center;
-      gap: 12px;
-      text-align: center;
-      max-width: 360px;
-      padding: 24px;
-    }
-
-    .state-copy svg {
-      width: 46px;
-      height: 46px;
-      stroke-width: 1.8;
-      color: var(--ui-graphite);
-    }
-
-    .state-copy p {
-      margin: 0;
-      font-size: 15px;
-      line-height: 1.4;
-      font-weight: 600;
-      color: rgba(65,65,65,.70);
     }
 
     .demo-switcher {
@@ -1653,31 +1573,31 @@ import '../styles/dashboard.css';
 
       <section class="conversation" id="conversation" aria-label="Transcripción de la llamada">
         <div class="conversation-empty" id="conversationEmpty" role="status">
-          <div class="conversation-empty__copy"><i data-lucide="message-circle" aria-hidden="true"></i><p>Aún no hay mensajes.</p></div>
+          <EmptyState icon="message-circle" title="Aún no hay mensajes." />
         </div>
       </section>
     </div>
 
     <section class="state-view" id="emptyState" hidden aria-label="Sin llamadas">
-      <div class="state-copy"><i data-lucide="phone-off" aria-hidden="true"></i><p>No hay llamadas para monitorear.</p></div>
+      <EmptyState icon="phone-off" title="No hay llamadas para monitorear." />
     </section>
 
     <section class="state-view" id="errorState" hidden aria-label="Error de monitoreo">
-      <div class="state-copy"><i data-lucide="triangle-alert" aria-hidden="true"></i><p>No pudimos cargar el monitoreo de la llamada.</p></div>
+      <EmptyState tone="error" icon="triangle-alert" title="No pudimos cargar el monitoreo de la llamada." />
     </section>
 
     <AnalyticsContent />
     <section class="section-view" data-section="call-1" aria-label="Llamada 1" aria-hidden="true">
-      <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
+      <EmptyState icon="phone" title="Esta llamada aún no está disponible." />
     </section>
     <section class="section-view" data-section="call-2" aria-label="Llamada 2" aria-hidden="true">
-      <div class="state-copy"><i data-lucide="phone" aria-hidden="true"></i><p>Esta llamada aún no está disponible.</p></div>
+      <EmptyState icon="phone" title="Esta llamada aún no está disponible." />
     </section>
     <section class="section-view" data-section="sales" aria-label="Ventas" aria-hidden="true">
-      <div class="state-copy"><i data-lucide="shopping-bag" aria-hidden="true"></i><p>Aún no hay ventas para mostrar.</p></div>
+      <EmptyState icon="shopping-bag" title="Aún no hay ventas para mostrar." />
     </section>
     <section class="section-view" data-section="settings" aria-label="Ajustes" aria-hidden="true">
-      <div class="state-copy"><i data-lucide="settings" aria-hidden="true"></i><p>Los ajustes estarán disponibles pronto.</p></div>
+      <EmptyState icon="settings" title="Los ajustes estarán disponibles pronto." />
     </section>
       </section>
     <aside class="detail-panel" id="detailPanel" aria-label="Cliente">
@@ -1692,7 +1612,7 @@ import '../styles/dashboard.css';
             <dl class="detail-fields">
               <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
               <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-              <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
+              <div class="detail-field"><dt>Estado</dt><dd class="is-pending">Pendiente</dd></div>
             </dl>
           </section>
         </div>
@@ -2168,21 +2088,17 @@ import '../styles/dashboard.css';
 
       if (id === 'tool1') {
         title.textContent = done ? 'Reserva encontrada' : 'Consultando la reserva de Sofía Martínez';
-        status.textContent = done ? 'Disponibilidad consultada · completado' : 'Buscando disponibilidad y condiciones';
+        status.textContent = done ? 'Disponibilidad consultada · completado' : 'Cargando…';
       } else {
         title.textContent = done ? 'Reserva actualizada a las 5:30 p. m.' : 'Actualizando hora de llegada';
-        status.textContent = done ? 'Cambio guardado · completado' : 'Guardando el cambio';
+        status.textContent = done ? 'Cambio guardado · completado' : 'Cargando…';
       }
 
-      const loader = tool.querySelector('.loader');
       const mark = tool.querySelector('.done-mark');
       if (instant) {
-        if (loader) loader.style.display = done ? 'none' : '';
         if (mark) { mark.style.opacity = done ? '1' : '0'; mark.style.transform = done ? 'scale(1)' : 'scale(.3)'; }
       } else {
-        if (loader) loader.style.display = '';
         if (mark) { mark.style.opacity = ''; mark.style.transform = ''; }
-        if (done) setTimeout(() => { if (tool.dataset.done === '1' && loader) loader.style.display = 'none'; }, 420);
       }
     }
 
@@ -2451,6 +2367,8 @@ import '../styles/dashboard.css';
         import { bootDashboard } from '../features/dashboard/dashboard';
         import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
         import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
+        import { showToast } from '../features/voice-call/infrastructure/toast';
+        import { checkSession, installSessionGuard } from '../features/auth/session-guard';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
@@ -2464,8 +2382,15 @@ import '../styles/dashboard.css';
        const tokenKey = 'kognia.auth.access-token';
        const conversationKey = 'kognia.auth.conversation-id';
 
+       // Maps friendly aliases to the mascot emotion keys.
+       const faceEmotionAliases: Record<string, string> = {
+         happy: 'default-happy',
+         neutral: 'default-happy',
+       };
+
        function setFaceEmotion(emotion: string): void {
-         window.dispatchEvent(new CustomEvent('demo-face-emotion', { detail: emotion }));
+         const mascot = document.querySelector<HTMLElement & { setEmotion?: (value: string) => void }>('.login-face-wrap [data-mascot-face]');
+         mascot?.setEmotion?.(faceEmotionAliases[emotion] ?? emotion);
        }
 
         function setLoginLoading(loading: boolean): void {
@@ -2565,9 +2490,10 @@ import '../styles/dashboard.css';
          let dashboardStarted = false;
          let dashboardCleanup: (() => void) | null = null;
          let dashboardStartPending = false;
-         let dashboardStartTimer = 0;
+         let dashboardPendingToken = '';
          let analyticsHandoffPending = false;
        let navReadyHandler: ((event: TransitionEvent) => void) | null = null;
+       let stopSessionGuard: (() => void) | null = null;
 
        function lucideRefresh(): void {
          const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -2584,8 +2510,8 @@ import '../styles/dashboard.css';
 
         function startDashboard(token: string): void {
           if (dashboardStarted || !authPanel?.classList.contains('is-app')) return;
-          window.clearTimeout(dashboardStartTimer);
           dashboardStartPending = false;
+          dashboardPendingToken = '';
           dashboardStarted = true;
           dashboardCleanup = bootDashboard(apiUrl, token);
         }
@@ -2598,7 +2524,7 @@ import '../styles/dashboard.css';
             syncMobileNavToggle();
             notifyLayoutChange();
             if (dashboardStartPending) {
-              startDashboard(sessionStorage.getItem(tokenKey)?.trim() ?? '');
+              startDashboard(dashboardPendingToken || (sessionStorage.getItem(tokenKey)?.trim() ?? ''));
             }
             if (analyticsHandoffPending && authPanel.dataset.view === 'dashboard') {
             analyticsHandoffPending = false;
@@ -2694,8 +2620,10 @@ import '../styles/dashboard.css';
 
          function resetAppShell(): void {
            clearNavReadyWait();
-           window.clearTimeout(dashboardStartTimer);
+           stopSessionGuard?.();
+           stopSessionGuard = null;
            dashboardStartPending = false;
+           dashboardPendingToken = '';
            authPanel?.classList.remove('is-app', 'no-wipe', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
           mobileNavToggle?.setAttribute('hidden', '');
           mobileNavToggle?.setAttribute('aria-expanded', 'false');
@@ -2714,11 +2642,34 @@ import '../styles/dashboard.css';
          detailPanel?.removeAttribute('inert');
        }
 
+        function wipeTargets(): Array<{ el: HTMLElement; rect: DOMRect }> {
+          if (matchMedia('(prefers-reduced-motion: reduce)').matches) return [];
+          return [document.querySelector<HTMLElement>('.login-face-wrap'), document.querySelector<HTMLElement>('.login-name')]
+            .filter((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0)
+            .map((el) => ({ el, rect: el.getBoundingClientRect() }));
+        }
+
+        function playWipeFlip(targets: Array<{ el: HTMLElement; rect: DOMRect }>): void {
+          targets.forEach(({ el, rect }) => {
+            const last = el.getBoundingClientRect();
+            const dx = rect.left - last.left;
+            const dy = rect.top - last.top;
+            if (!dx && !dy) return;
+            // Animate position with WAAPI so the CSS width/size transitions keep running.
+            el.animate(
+              [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+              { duration: 1550, easing: 'cubic-bezier(.32, .04, .18, 1)' },
+            );
+          });
+        }
+
         function revealApp(animate: boolean): void {
          if (!authPanel) return;
+          const flip = animate ? wipeTargets() : [];
           if (!animate) authPanel.classList.add('no-wipe');
           authPanel.classList.add('is-app');
           authPanel.classList.toggle('is-rail-collapsed', isCompactShell());
+          if (flip.length) playWipeFlip(flip);
           authPanel.setAttribute('aria-labelledby', 'screenTitle');
          setFormInert(true);
          setAppView('dashboard');
@@ -2770,12 +2721,18 @@ import '../styles/dashboard.css';
         function showApp(token: string, conversationId: string, animate = true): void {
           analyticsHandoffPending = true;
           setFaceEmotion('happy');
-          revealApp(animate);
-          void fillCallNav(apiUrl);
           if (!dashboardStarted) {
             dashboardStartPending = true;
-            dashboardStartTimer = window.setTimeout(() => startDashboard(token), animate ? 420 : 0);
+            dashboardPendingToken = token;
           }
+          revealApp(animate);
+          startSessionGuard();
+          void fillCallNav(apiUrl);
+        }
+
+        function startSessionGuard(): void {
+          stopSessionGuard?.();
+          stopSessionGuard = installSessionGuard(apiUrl);
         }
 
        async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {
@@ -2795,16 +2752,12 @@ import '../styles/dashboard.css';
         const conversationId = sessionStorage.getItem(conversationKey)?.trim() ?? '';
         if (!token || !conversationId) return;
         setFaceEmotion('surprised');
-        const [me, conversation] = await Promise.all([
-          fetch(`${apiUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${apiUrl}/conversations/${encodeURIComponent(conversationId)}`, { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
-        if (me.ok && conversation.ok) {
-          showApp(token, conversationId, false);
+        const state = await checkSession(apiUrl);
+        if (state !== 'invalid') {
+          // Keep the session on transient failures; only 401/403 logs out.
+          showApp(sessionStorage.getItem(tokenKey)?.trim() || token, conversationId, false);
           return;
         }
-        const failedResponse = me.ok ? conversation : me;
-        const sessionError = await backendErrorFromResponse(failedResponse, 'La sesión ya no está disponible.');
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
         resetAppShell();
@@ -2852,7 +2805,8 @@ import '../styles/dashboard.css';
          void createSession(email, password)
            .catch((error: unknown) => {
               const message = errorMessage(error, 'No se pudo iniciar sesión.');
-              setFaceEmotion(message.includes('inválidos') ? 'angry' : 'sad');
+              setFaceEmotion('auth-error');
+              showToast(message, 'error');
            })
            .finally(() => {
              setLoginLoading(false);
@@ -2863,6 +2817,8 @@ import '../styles/dashboard.css';
          window.__kogniaPageLeaving = true;
          dashboardCleanup?.();
          dashboardCleanup = null;
+         stopSessionGuard?.();
+         stopSessionGuard = null;
        });
 
        void restoreSession().catch(() => {

@@ -1,7 +1,7 @@
 ---
 interface Props {
   mode?: 'legacy' | 'route';
-  active?: 'analytics' | 'calls';
+  active?: 'analytics' | 'calls' | 'dev';
 }
 
 const { mode = 'route', active = 'analytics' } = Astro.props;
@@ -12,41 +12,46 @@ const isLegacy = mode === 'legacy';
   {isLegacy ? (
     <>
       <button class="app-nav__item" type="button" data-view="dashboard">
-        <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+        <span class="app-nav__icon" aria-hidden="true"><i data-lucide="layout-dashboard"></i></span>
         <span>Dashboard</span>
       </button>
     </>
   ) : (
     <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="../analytics" data-route="analytics" aria-current={active === 'analytics' ? 'page' : undefined}>
-      <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+      <span class="app-nav__icon" aria-hidden="true"><i data-lucide="layout-dashboard"></i></span>
       <span>Dashboard</span>
     </a>
   )}
 
   <a class:list={['app-nav__item', !isLegacy && active === 'calls' && 'is-active']} href="/calls" data-route="calls" aria-current={!isLegacy && active === 'calls' ? 'page' : undefined}>
-    <i data-lucide="phone" aria-hidden="true"></i>
+    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="phone"></i></span>
     <span>Llamadas</span>
+  </a>
+
+  <a class:list={['app-nav__item', !isLegacy && active === 'dev' && 'is-active']} href="/dev" data-route="dev" aria-current={!isLegacy && active === 'dev' ? 'page' : undefined}>
+    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="bug"></i></span>
+    <span>Modo dev</span>
   </a>
 
   {isLegacy ? (
     <>
       <button class="app-nav__item" type="button" data-view="sales">
-        <i data-lucide="shopping-bag" aria-hidden="true"></i>
+        <span class="app-nav__icon" aria-hidden="true"><i data-lucide="shopping-bag"></i></span>
         <span>Ventas</span>
       </button>
       <button class="app-nav__item" type="button" data-view="settings">
-        <i data-lucide="settings" aria-hidden="true"></i>
+        <span class="app-nav__icon" aria-hidden="true"><i data-lucide="settings"></i></span>
         <span>Ajustes</span>
       </button>
     </>
   ) : (
     <>
       <span class="app-nav__item app-nav__item--disabled" aria-disabled="true">
-        <i data-lucide="shopping-bag" aria-hidden="true"></i>
+        <span class="app-nav__icon" aria-hidden="true"><i data-lucide="shopping-bag"></i></span>
         <span>Ventas</span>
       </span>
       <span class="app-nav__item app-nav__item--disabled" aria-disabled="true">
-        <i data-lucide="settings" aria-hidden="true"></i>
+        <span class="app-nav__icon" aria-hidden="true"><i data-lucide="settings"></i></span>
         <span>Ajustes</span>
       </span>
     </>

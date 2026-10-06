@@ -16,7 +16,7 @@ imágenes se publican en **Docker Hub**, no en ACR.
 | `redis` | Container App | interno TCP 6379 | `AZURE_REDIS_APP_NAME` |
 | `chroma` | Container App | interno HTTP 8000 | `AZURE_CHROMA_APP_NAME`, cliente en `:80` |
 | `backend` | Container App | externo 18474 | `AZURE_BACKEND_APP_NAME` |
-| `worker` | Container App | **ninguno** | `AZURE_WORKER_APP_NAME`, `python -m app.worker` |
+| `worker` | Container App | **ninguno** | `AZURE_WORKER_APP_NAME`, `/app/backend/scripts/run-worker.sh` |
 | `frontend` | Container App | externo 80 | `AZURE_FRONTEND_APP_NAME`, nginx estático |
 | `migrate` | Container Apps Job | ninguno | `AZURE_BOOTSTRAP_JOB_NAME`, one-shot |
 
@@ -24,6 +24,12 @@ El **worker** comparte la imagen del backend y solo cambia el comando. Como ACA
 no admite `working-dir`, el paquete `app` (que vive en `/app/backend/app`) se
 resuelve con `PYTHONPATH=/app/backend`. Corre con `min-replicas 1`: hace polling
 a Redis y con 0 no consumiría la cola.
+
+El comando es `/bin/sh /app/backend/scripts/run-worker.sh` en lugar de
+`python -m app.worker`. No es capricho: `--args` del CLI está declarado
+`nargs='*'` y argparse rechaza los tokens que empiezan por guion, así que no hay
+forma de pasar `-m` y `app.worker` como dos argumentos separados. El wrapper
+(`backend/scripts/run-worker.sh`) hace `exec python -m app.worker`.
 
 ## Workflows
 
@@ -43,7 +49,7 @@ que el push).
 ### Orden
 
 ```text
-detect → infra (postgres | redis | chroma) en paralelo
+detect → infra (postgres + redis + chroma)
        → build-backend → deploy-backend → build-frontend → deploy-frontend → CORS
        → deploy-worker
        → migrate-bootstrap
@@ -53,14 +59,27 @@ Los builds siguen siendo condicionales (`dorny/paths-filter`): en un push que so
 toca `frontend/**` no se reconstruye la imagen del backend. Un disparo manual
 fuerza ambos builds.
 
-### Infraestructura sin reinicios
+### Infraestructura: Redis y Chroma se refrescan, Postgres no
 
-PostgreSQL, Redis y Chroma **no montan volúmenes persistentes** en Container
-Apps. Por eso los jobs de infraestructura solo crean la app cuando falta y, si ya
-existe, únicamente aseguran el ingress: nunca ejecutan `update --image`. Un
-`update` crearía una revisión nueva, reiniciaría el contenedor y **borraría los
-datos**. Si necesitas persistir, hay que montar Azure Files o mover PostgreSQL a
-un servicio gestionado; está fuera del alcance actual.
+| Servicio | Si no existe | Si ya existe |
+| --- | --- | --- |
+| PostgreSQL | se crea | **se deja intacto** |
+| Redis | se crea | revisión nueva |
+| Chroma | se crea | revisión nueva |
+
+Para Redis y Chroma, forzar una revisión nueva es lo que repara una app atascada
+en un estado que no es `Running` (imagen inválida, crash-loop, configuración
+previa equivocada). Antes de esto había que tirar del workflow manual de ese
+servicio.
+
+**PostgreSQL nunca se actualiza**, porque no monta volúmenes en Container Apps:
+cualquier revisión nueva arrancaría un contenedor con el filesystem vacío y
+**perdería los datos**. Si necesitas que sobrevivan, hay que montar Azure Files o
+mover PostgreSQL a un servicio gestionado.
+
+El workflow **no espera ni verifica** que los contenedores queden `Running`: crea,
+despliega y lanza el bootstrap. Si algo no arranca, se ve en los logs de Azure
+(`az containerapp logs show -n <app> -g <rg>`) o en la pestaña Logs del portal.
 
 El `RealtimeHub` es in-memory, así que el backend se queda en `min-replicas 1`.
 

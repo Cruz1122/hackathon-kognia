@@ -1,5 +1,8 @@
 import * as echarts from 'echarts';
 import type { ECharts, EChartsOption } from 'echarts';
+import { parseAgentSignalsEnvelope, updateAgentSignals, type AgentSignalsPanelElement } from '../../lib/agent-signals/dom';
+import { revealLoadedContent, showContentLoader } from '../ui/loading-reveal';
+import { accessTokenKey } from '../auth/session-guard';
 
 type DashboardSummary = {
   conversations: number; opportunities: number; won: number; conversion_rate: number;
@@ -21,6 +24,7 @@ type DashboardPayload = {
   metric_trend: Array<{ date: string; conversations: number; opportunities: number; won: number; revenue_minor: number; recovered_sales: number; recovered_revenue_minor: number }>;
   funnel: Array<{ stage: string; value: number; percentage: number }>;
   objection_product_heatmap: Array<{ category: string; product_name: string; count: number; resolved: number; resolution_rate: number }>;
+  agent_signals?: { sample_count: number; signals: Record<string, unknown> };
 };
 
 const C = { graphite: '#414141', amber: '#f7c974', cream: '#faeccf', paper: '#f8f8f8', white: '#f8f8f8', graphite42: 'rgba(65,65,65,.42)', graphite10: 'rgba(65,65,65,.10)' };
@@ -59,12 +63,19 @@ function parsePayload(value: unknown): DashboardPayload {
     metric_trend: records('metric_trend') as DashboardPayload['metric_trend'],
     funnel: records('funnel') as DashboardPayload['funnel'],
     objection_product_heatmap: records('objection_product_heatmap') as DashboardPayload['objection_product_heatmap'],
+    agent_signals: root.agent_signals && typeof root.agent_signals === 'object' && !Array.isArray(root.agent_signals)
+      ? root.agent_signals as DashboardPayload['agent_signals']
+      : undefined,
   };
 }
 
 function element(id: string): HTMLElement | null { return document.getElementById(id); }
+function nextPaint(): Promise<void> { return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))); }
 function setText(id: string, value: string): void { const node = element(id); if (node) node.textContent = value; }
-function show(id: string, visible: boolean): void { const node = element(id); if (node) node.hidden = !visible; }
+function show(target: string | HTMLElement | null, visible: boolean): void {
+  const node = typeof target === 'string' ? element(target) : target;
+  if (node) node.hidden = !visible;
+}
 function setProgress(id: string, value: number): void {
   const node = element(id);
   if (node) node.style.width = `${Math.min(100, Math.max(0, numberValue(value)))}%`;
@@ -117,22 +128,27 @@ function cartesian(dark = false): Pick<EChartsOption, 'grid' | 'xAxis' | 'yAxis'
 function mount(id: string, option: EChartsOption): void {
   const host = element(id); if (!host) return;
   charts.get(id)?.dispose(); charts.delete(id);
-  const chart = echarts.init(host, undefined, { renderer: 'canvas' }); chart.setOption(option); charts.set(id, chart);
+  const chart = echarts.init(host, undefined, { renderer: 'canvas' });
+  // Charts must not animate on mount: their entrance would hide the content curtain.
+  chart.setOption({ ...option, animation: false });
+  charts.set(id, chart);
 }
 
-function mountGradually(entries: Array<[string, EChartsOption]>): void {
+function mountGradually(entries: Array<[string, EChartsOption]>): Promise<void> {
   window.cancelAnimationFrame(chartMountFrame);
   const generation = ++chartMountGeneration;
   let index = 0;
 
-  const mountNext = (): void => {
-    if (generation !== chartMountGeneration || index >= entries.length) return;
-    const [id, option] = entries[index++];
-    mount(id, option);
-    chartMountFrame = window.requestAnimationFrame(mountNext);
-  };
+  return new Promise<void>((resolve) => {
+    const mountNext = (): void => {
+      if (generation !== chartMountGeneration || index >= entries.length) { resolve(); return; }
+      const [id, option] = entries[index++];
+      mount(id, option);
+      chartMountFrame = window.requestAnimationFrame(mountNext);
+    };
 
-  chartMountFrame = window.requestAnimationFrame(mountNext);
+    chartMountFrame = window.requestAnimationFrame(mountNext);
+  });
 }
 
 function lineOption(points: Array<{ date: string; value: number }>, label: string, color = C.amber): EChartsOption {
@@ -243,7 +259,7 @@ function buildInsights(payload: DashboardPayload): void {
     : 'No hay suficiente relación entre objeciones y productos para mostrar concentración.');
 }
 
-function renderDashboard(payload: DashboardPayload): void {
+function renderDashboard(payload: DashboardPayload): { hasData: boolean; ready: Promise<void> } {
   const { summary } = payload;
   setText('dashboardRevenue', money.format(summary.revenue_minor)); setText('dashboardWon', integer.format(summary.won)); setText('dashboardConversion', percent(summary.conversion_rate)); setText('dashboardRecoveredRevenue', money.format(summary.recovered_revenue_minor));
   setText('dashboardConversations', integer.format(summary.conversations)); setText('dashboardRecoveredSales', integer.format(summary.recovered_sales)); setText('dashboardRecoveryRate', percent(summary.recovery_rate)); setProgress('dashboardRecoveryMeter', summary.recovery_rate);
@@ -251,17 +267,28 @@ function renderDashboard(payload: DashboardPayload): void {
   setDelta('dashboardWonDelta', payload.comparison?.won, (value) => `${value.toFixed(1)}%`);
   setDelta('dashboardConversionDelta', payload.comparison?.conversion_rate, (value) => `${value.toFixed(1)} pp`);
   setDelta('dashboardRecoveredRevenueDelta', payload.comparison?.recovered_revenue_minor, (value) => `${value.toFixed(1)}%`);
+  const agentSignals = parseAgentSignalsEnvelope(payload.agent_signals, true);
+  const signalsSection = element('dashboardAgentSignalsSection');
+  const signalsPanel = element('dashboardAgentSignals') as AgentSignalsPanelElement | null;
+  if (signalsSection) signalsSection.hidden = !agentSignals;
+  if (agentSignals && signalsPanel) {
+    signalsPanel.resetSignalHistory?.();
+    updateAgentSignals(signalsPanel, agentSignals);
+    setText(
+      'dashboardAgentSignalsSample',
+      `${integer.format(agentSignals.sampleCount ?? 0)} ${(agentSignals.sampleCount ?? 0) === 1 ? 'llamada' : 'llamadas'}`,
+    );
+  }
   buildInsights(payload);
-  const hasData = summary.conversations > 0 || summary.opportunities > 0 || payload.lost_reasons.length > 0 || payload.products.length > 0 || payload.objections.total > 0;
-  show('dashboardData', hasData); show('dashboardEmpty', !hasData); show('dashboardLoading', false); show('dashboardError', false);
+  const hasData = Boolean(agentSignals) || summary.conversations > 0 || summary.opportunities > 0 || payload.lost_reasons.length > 0 || payload.products.length > 0 || payload.objections.total > 0;
   if (!hasData) {
     window.cancelAnimationFrame(chartMountFrame);
     chartMountGeneration++;
     charts.forEach((chart) => chart.dispose());
     charts.clear();
-    return;
+    return { hasData: false, ready: Promise.resolve() };
   }
-   mountGradually([
+   const ready = mountGradually([
      ['dashboardConversionChart', lineOption(payload.conversion_trend.map((point) => ({ date: point.date, value: point.conversion_rate })), 'Conversión')],
      ['dashboardRecoveryChart', recoveryOption(summary)],
      ['dashboardLossesChart', horizontalBarOption(payload.lost_reasons.map((item) => ({ label: item.reason, value: item.count })), 'Pérdidas')],
@@ -277,8 +304,9 @@ function renderDashboard(payload: DashboardPayload): void {
    /*
      The charts are intentionally mounted one per frame. ECharts initialization
      is the expensive part of this view; spreading it avoids a main-thread spike
-     while the login wipe is still moving.
+     right after the dashboard boots.
    */
+  return { hasData: true, ready };
 }
 
 export function bootDashboard(apiUrl: string, token: string): () => void {
@@ -293,17 +321,38 @@ export function bootDashboard(apiUrl: string, token: string): () => void {
     activeController?.abort();
     const controller = new AbortController();
     activeController = controller;
-    show('dashboardLoading', true); show('dashboardData', false); show('dashboardEmpty', false); show('dashboardError', false);
+    const loading = element('dashboardLoading');
+    const content = element('dashboardContent');
+    const data = element('dashboardData');
+    const empty = element('dashboardEmpty');
+    const errorState = element('dashboardError');
+    showContentLoader(loading, content);
     const query = new URLSearchParams(); if (fromInput?.value) query.set('from', fromInput.value); if (toInput?.value) query.set('to', toInput.value);
+    const activeToken = sessionStorage.getItem(accessTokenKey)?.trim() || token;
     try {
-      const response = await fetch(`${apiUrl}/analytics/dashboard?${query}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+      const response = await fetch(`${apiUrl}/analytics/dashboard?${query}`, { headers: { Authorization: `Bearer ${activeToken}` }, signal: controller.signal });
       if (!response.ok) throw new Error(`dashboard ${response.status}`);
       const payload = parsePayload(await response.json());
       if (disposed || currentRequest !== requestId) return;
-      renderDashboard(payload);
+      // The content is shown (clipped) before rendering so chart hosts have a
+      // real size; the curtain only starts once every chart is mounted.
+      await revealLoadedContent(loading, content, undefined, async () => {
+        show(data, true);
+        const { hasData, ready } = renderDashboard(payload);
+        show(data, hasData);
+        show(empty, !hasData);
+        show(errorState, false);
+        await ready;
+        await nextPaint();
+      });
     } catch (error) {
       if (controller.signal.aborted || disposed || currentRequest !== requestId) return;
-      show('dashboardLoading', false); show('dashboardData', false); show('dashboardEmpty', false); show('dashboardError', true);
+      await revealLoadedContent(loading, content, undefined, async () => {
+        show(data, false);
+        show(empty, false);
+        show(errorState, true);
+        await nextPaint();
+      });
     }
   };
   const applyButton = element('dashboardApply'); const retryButton = element('dashboardRetry');

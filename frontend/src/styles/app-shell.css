@@ -18,18 +18,21 @@ button, input { font: inherit; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .app-shell { --sidebar-track: minmax(240px, min(17.5%, 21rem)); display: grid; grid-template-columns: var(--sidebar-track) minmax(0, 1fr); width: 100%; height: 100dvh; min-height: 100dvh; overflow: hidden; }
-.app-shell.has-detail-panel { grid-template-columns: var(--sidebar-track) minmax(0, 1fr) minmax(220px, min(17.5%, 21rem)); }
+.app-shell.has-detail-panel { grid-template-columns: var(--sidebar-track) minmax(0, 1fr) minmax(264px, min(21%, 25.2rem)); }
 .app-sidebar { position: relative; z-index: 5; display: flex; min-height: 100dvh; flex-direction: column; gap: 18px; padding: 28px 22px 32px; background: var(--ui-graphite); color: var(--ui-paper); }
 .app-mobile-topbar { display: flex; width: 100%; align-items: center; }
 .app-sidebar__brand { display: flex; align-items: center; gap: 12px; color: var(--ui-paper); font-size: 1.65rem; font-weight: 800; line-height: 1; }
-.app-sidebar__face { display: grid; width: 48px; flex: 0 0 48px; aspect-ratio: 1; place-items: center; border-radius: 50%; }
+.app-sidebar__face { display: grid; width: 48px; height: 48px; flex: 0 0 48px; align-self: center; aspect-ratio: 1; place-items: center; border-radius: 50%; }
 .app-sidebar__face svg { display: block; width: 100%; height: 100%; }
+.app-sidebar__brand > span { display: inline-flex; align-items: center; line-height: 1; }
 .mobile-nav-toggle { display: none; }
 .mobile-nav-toggle[hidden] { display: none !important; }
 .app-sidebar .app-nav { display: flex; width: 100%; min-width: 0; height: auto; flex-direction: column; align-items: center; gap: 6px; margin-top: 40px; opacity: 1; visibility: visible; pointer-events: auto; transform: none; overflow: visible; }
 .app-sidebar .app-nav__item, .app-sidebar .app-nav__label { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 16px; width: min(100%, 320px); min-width: 0; margin: 0 auto; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ui-paper); font: inherit; font-size: clamp(1.05rem, 1.35vw, 1.35rem); font-weight: 700; line-height: 1.2; padding: 16px 18px; text-align: left; text-decoration: none; transition: color .24s ease, transform .24s ease; }
 .app-sidebar .app-nav__item, .app-sidebar .app-nav__label { cursor: pointer; }
 .app-sidebar .app-nav__item span, .app-sidebar .app-nav__label span { min-width: 0; white-space: nowrap; }
+.app-sidebar .app-nav__icon { display: grid; width: 28px; height: 28px; place-items: center; align-self: center; line-height: 0; }
+.app-sidebar .app-nav__icon svg { display: block; width: 100%; height: 100%; }
 .app-sidebar .app-nav__label { opacity: .78; }
 .app-sidebar .app-nav__item svg, .app-sidebar .app-nav__label svg { width: clamp(22px, 2vw, 28px); height: clamp(22px, 2vw, 28px); flex-shrink: 0; stroke-width: 2.3; }
 .app-sidebar .app-nav__item:not(.app-nav__item--disabled):hover, .app-sidebar .app-nav__label:hover { background: transparent; color: var(--ui-amber); transform: translateX(3px); }
@@ -50,16 +53,34 @@ button, input { font: inherit; }
 .app-main > .section-view { display: block; height: 100%; min-height: 0; opacity: 1; visibility: visible; pointer-events: auto; transform: none; }
 .analytics-dashboard { height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; }
 .app-detail-panel { grid-column: 3; min-width: 0; }
+.app-shell.is-call-loading .app-detail-panel { display: none; visibility: hidden; opacity: 0; clip-path: inset(0 0 100% 0); pointer-events: none; }
+.app-shell:not(.is-call-loading) .app-detail-panel { transition: clip-path .78s cubic-bezier(.22, .8, .24, 1), opacity .3s ease; }
+
+/* While a call loads, the detail panel must not reserve its grid column yet.
+   Otherwise the loading surface is drawn against a three-column shell and its
+   centered content drifts left of the area the user actually sees. */
+@media (min-width: 768px) {
+  .app-shell.has-detail-panel.is-call-loading { grid-template-columns: var(--sidebar-track) minmax(0, 1fr); }
+}
+
+/* Route swaps hand control to the explicit loader + curtain sequence below.
+   The named loading transition is re-enabled later in loading-reveal.css. */
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation: none !important;
+  mix-blend-mode: normal;
+}
+::view-transition-old(*) { opacity: 0 !important; }
 
 ::view-transition-group(app-main) {
   z-index: 1;
-  animation-duration: .62s;
-  animation-timing-function: cubic-bezier(.22, .8, .24, 1);
+  animation: none;
 }
 ::view-transition-old(app-main),
 ::view-transition-new(app-main) {
-  animation-duration: .62s;
-  animation-timing-function: cubic-bezier(.22, .8, .24, 1);
+  animation: none;
+  mix-blend-mode: normal;
 }
 ::view-transition-group(app-sidebar),
 ::view-transition-old(app-sidebar),
@@ -77,6 +98,7 @@ button, input { font: inherit; }
   position: relative;
   z-index: 5;
 }
+[data-astro-transition-fallback] .app-main { animation: none !important; }
 .app-shell .login-material,
 .app-shell .login-material.is-gone { display: none !important; }
 .app-shell .login-sidebar { display: flex; width: 100%; flex: 1; flex-direction: column; align-items: stretch; }

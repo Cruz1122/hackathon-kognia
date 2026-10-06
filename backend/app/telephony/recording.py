@@ -130,7 +130,20 @@ def _validate_wav(path: Path) -> None:
             raise ValueError("invalid wav")
 
 
+def _apply_recording(row, record: RecordingRecord) -> None:
+    row.status = record.status
+    row.sha256 = record.sha256
+    row.size_bytes = record.size_bytes
+    row.duration_ms = record.duration_ms
+    row.channels = record.channels
+    row.waveform = record.waveform
+    row.download_url = record.download_url
+    row.error = record.error
+
+
 async def persist_recording(record: RecordingRecord) -> None:
+    from sqlalchemy.exc import IntegrityError
+
     from ..db.models import Recording
     from ..db.session import get_session_factory
 
@@ -145,15 +158,16 @@ async def persist_recording(record: RecordingRecord) -> None:
                     status=record.status,
                 )
                 session.add(row)
-            row.status = record.status
-            row.sha256 = record.sha256
-            row.size_bytes = record.size_bytes
-            row.duration_ms = record.duration_ms
-            row.channels = record.channels
-            row.waveform = record.waveform
-            row.download_url = record.download_url
-            row.error = record.error
-            await session.commit()
+            _apply_recording(row, record)
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Two events (recording.saved) can race on the same row; the loser updates.
+                await session.rollback()
+                row = await session.get(Recording, record.id)
+                if row is not None:
+                    _apply_recording(row, record)
+                    await session.commit()
     except Exception:
         logger.exception("Recording row persist failed")
 

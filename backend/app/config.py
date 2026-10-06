@@ -19,6 +19,8 @@ class Provider(StrEnum):
 
 DEFAULT_REDIS_URL = "redis://localhost:16379/0"
 DEFAULT_ANALYTICS_CACHE_TTL_SECONDS = 60
+DEFAULT_PRICING_CACHE_TTL_SECONDS = 21600  # 6 hours
+DEFAULT_PRICING_SOURCE_URL = "https://openrouter.ai/api/v1/models"
 
 
 @dataclass(frozen=True)
@@ -31,13 +33,13 @@ class ModelConfig:
 
 MODEL_CHAINS: dict[AppEnv, tuple[tuple[Provider, str], ...]] = {
     AppEnv.TEST: (
-        (Provider.OPENAI, "gpt-4o-mini"),
+        (Provider.OPENAI, "gpt-5.4-mini"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7"),
         (Provider.GROQ, "llama-3.3-70b-versatile"),
     ),
     AppEnv.PRODUCTION: (
-        (Provider.OPENAI, "gpt-5.6-luna"),
+        (Provider.OPENAI, "gpt-6-luna"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
     ),
 }
@@ -72,7 +74,7 @@ def get_model_chain(app_env: AppEnv | str | None = None) -> tuple[ModelConfig, .
     return tuple(
         ModelConfig(
             provider=provider,
-            model=model,
+            model=(os.getenv('OPENAI_MODEL', model).strip() or model) if provider is Provider.OPENAI else model,
             api_key=_api_key_for(provider),
             base_url=BASE_URLS[provider],
         )
@@ -98,3 +100,18 @@ def get_analytics_cache_ttl_seconds() -> int:
     if value < 1:
         raise ValueError("ANALYTICS_CACHE_TTL_SECONDS must be positive")
     return value
+
+
+def get_pricing_cache_ttl_seconds() -> int:
+    raw = os.getenv("PRICING_CACHE_TTL_SECONDS", str(DEFAULT_PRICING_CACHE_TTL_SECONDS))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("PRICING_CACHE_TTL_SECONDS must be an integer") from exc
+    if value < 1:
+        raise ValueError("PRICING_CACHE_TTL_SECONDS must be positive")
+    return value
+
+
+def get_pricing_source_url() -> str:
+    return os.getenv("PRICING_SOURCE_URL", DEFAULT_PRICING_SOURCE_URL).strip() or DEFAULT_PRICING_SOURCE_URL
