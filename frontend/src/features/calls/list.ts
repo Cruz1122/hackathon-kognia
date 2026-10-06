@@ -1,4 +1,5 @@
 import { showToast } from '../voice-call/infrastructure/toast';
+import { revealLoadedContent, showContentLoader } from '../ui/loading-reveal';
 
 type ListedCall = {
   id: string;
@@ -27,12 +28,14 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
   const pager = document.querySelector<HTMLElement>('#callsPager');
   const controls = document.querySelector<HTMLElement>('#callsPagerControls');
   const loading = document.querySelector<HTMLElement>('#callsLoading');
+  const content = document.querySelector<HTMLElement>('#callsContent');
   const error = document.querySelector<HTMLElement>('#callsError');
   const board = document.querySelector<HTMLElement>('#callsBoard');
   const sortButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-sort]')];
-  if (!search || !status || !body || !empty || !table || !pager || !controls || !loading || !error || !board || sortButtons.length === 0) {
+  if (!search || !status || !body || !empty || !table || !pager || !controls || !loading || !content || !error || !board || sortButtons.length === 0) {
     return () => undefined;
   }
+  const emptyTitle = empty.querySelector<HTMLElement>('.empty-state__title');
 
   const params = new URLSearchParams(window.location.search);
   search.value = params.get('q') ?? '';
@@ -101,7 +104,7 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
     show(table, true);
     show(empty, !hasRows);
     show(pager, hasRows);
-    empty.textContent = calls.length === 0 ? 'Aún no hay llamadas.' : 'Ninguna llamada coincide con la búsqueda.';
+    if (emptyTitle) emptyTitle.textContent = calls.length === 0 ? 'Aún no hay llamadas.' : 'Ninguna llamada coincide con la búsqueda.';
     renderPager(controls, page, pages, (next) => {
       page = next;
       syncUrl();
@@ -122,15 +125,15 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
       const recent = sortCalls(payload.recent ?? []);
       liveIds = new Set(live.map((call) => call.id));
       calls = [...live, ...recent].sort((left, right) => Date.parse(right.started_at) - Date.parse(left.started_at));
-      show(loading, false);
       show(error, false);
-      show(board, true);
       paint();
+      show(board, true);
+      await revealLoadedContent(loading, content);
     } catch {
       if (disposed) return;
-      show(loading, false);
       show(board, false);
       show(error, true);
+      await revealLoadedContent(loading, content);
     }
   };
 
@@ -153,8 +156,7 @@ export function bootCallsList(apiUrl: string, token: string): () => void {
     });
   });
   document.querySelector('#callsRetry')?.addEventListener('click', () => {
-    show(error, false);
-    show(loading, true);
+    showContentLoader(loading, content);
     void load();
   });
   void load();

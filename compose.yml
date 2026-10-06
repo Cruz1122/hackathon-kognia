@@ -71,7 +71,6 @@ services:
       - path: ./backend/.env
         required: false
     environment:
-      APP_ENV: ${APP_ENV:-test}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kognia}:${POSTGRES_PASSWORD:-kognia}@postgres:5432/${POSTGRES_DB:-kognia}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:18473}
       SHERPA_THREADS: ${SHERPA_THREADS:-2}
@@ -116,12 +115,15 @@ services:
       - path: ./backend/.env
         required: false
     environment:
-      APP_ENV: ${APP_ENV:-test}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kognia}:${POSTGRES_PASSWORD:-kognia}@postgres:5432/${POSTGRES_DB:-kognia}
       REDIS_URL: redis://redis:6379/0
       ANALYTICS_CACHE_TTL_SECONDS: ${ANALYTICS_CACHE_TTL_SECONDS:-60}
       AGENT_TOOL_MODULES: app.domains.demo_booking.tools,app.domains.business_analytics.tools
+      # WhatsApp agent turns run in the worker; call_customer requires Telnyx here too.
+      TELNYX_ENABLED: ${TELNYX_ENABLED:-true}
+      TELNYX_WEBHOOK_HOST: ${TELNYX_WEBHOOK_HOST:-corner-gorged-calamari.ngrok-free.dev}
       TELNYX_RECORDINGS_DIR: /var/lib/kognia/recordings
+      TELNYX_CAPTURE_DIR: /tmp/telnyx-captures
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
     healthcheck:
@@ -154,7 +156,7 @@ services:
       - "127.0.0.1:18473:80"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --spider http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3

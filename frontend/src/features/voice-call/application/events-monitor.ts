@@ -1,6 +1,7 @@
 import { backendMessage } from '../infrastructure/backend-error';
-import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
-import { bindDetailClicks, mountSessionPanel, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
+import { bindDetailClicks, mountSessionPanel, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { applyCallAgentSignals } from './agent-signals';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -33,6 +34,13 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   if (!token) {
     if (hubChip) hubChip.textContent = 'Demo local';
     return () => undefined;
+  }
+  if (conversationId) {
+    void fetch(`${apiUrl}/conversations/${conversationId}/agent-state`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async (response) => {
+      if (response.ok) patchSessionFromAgentState(await response.json());
+    }).catch(() => undefined);
   }
 
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/events`;
@@ -159,6 +167,9 @@ export function bootEventsMonitor(apiUrl: string): () => void {
       node.className = 'token';
       node.textContent = String(payload.text ?? '');
       ensureAgent().append(node);
+    } else if (type === 'agent.signals') {
+      applyCallAgentSignals(payload);
+      patchSessionFromAgentState(payload);
     } else if (type === 'tool.started') {
       enterLiveFeed();
       const toolCallId = String(payload.tool_call_id ?? payload.id ?? `${String(payload.tool ?? 'tool')}-${Date.now()}`);
@@ -167,7 +178,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
       const detail = toolDetailFromEvent(payload);
       appendRow(
         'tool-row',
-        `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status loading">${escapeHtml(String(payload.status ?? 'Ejecutando'))}</div></div>${toolCallBusyMarkup()}</button>`,
+        `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status loading">Cargando…</div></div></button>`,
       );
     } else if (type === 'tool.completed') {
       const toolCallId = String(payload.tool_call_id ?? payload.id ?? payload.tool ?? 'tool');
@@ -187,8 +198,6 @@ export function bootEventsMonitor(apiUrl: string): () => void {
           statusNode.textContent = String(payload.status ?? 'Completado');
           statusNode.classList.remove('loading');
         }
-        const loader = tool.querySelector('.loader') as HTMLElement | null;
-        if (loader) window.setTimeout(() => { loader.style.display = 'none'; }, 420);
       }
     } else if (type === 'rag.started') {
       enterLiveFeed();

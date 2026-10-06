@@ -1,0 +1,151 @@
+---
+import MascotFace from '../mascot/MascotFace.astro';
+import { SIGNAL_EMOTIONS } from '../../lib/agent-signals/fleybo-emotions';
+import { snapScale } from '../../lib/agent-signals/model';
+import type { ScaleSnapshot } from '../../lib/agent-signals/types';
+
+interface Props {
+  snapshot: ScaleSnapshot;
+}
+
+const { snapshot } = Astro.props;
+const snapped = snapScale(snapshot.score);
+---
+
+<article class="signal-scale" data-signal-scale={snapshot.key}>
+  <h2 class="signal-scale__title">{snapshot.title}</h2>
+  <p class="signal-scale__percentage" data-scale-percentage>{snapshot.percentage}%</p>
+
+  <div
+    class="signal-scale__meter"
+    role="meter"
+    aria-valuemin="0"
+    aria-valuemax="5"
+    aria-valuenow={snapshot.score.toFixed(2)}
+    aria-valuetext={`${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`}
+    aria-label={`${snapshot.title}: ${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`}
+    data-scale-meter
+  >
+    <div class="signal-scale__rail">
+      <div class="signal-scale__line" aria-hidden="true"></div>
+      <div class="signal-scale__marks" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <span class="signal-scale__endpoint signal-scale__endpoint--top">{snapshot.topLabel}</span>
+      <span class="signal-scale__endpoint signal-scale__endpoint--bottom">{snapshot.bottomLabel}</span>
+
+      <div class="signal-scale__mascot" data-scale-mascot style={`--position:${snapped.position}`}>
+        <MascotFace
+          emotion={snapped.emotion}
+          emotions={SIGNAL_EMOTIONS}
+          mergeDefaultEmotions={false}
+          pointerTracking={false}
+          ariaLabel={`${snapshot.title}: ${snapshot.percentage}%`}
+        />
+      </div>
+    </div>
+  </div>
+</article>
+
+<style>
+  .signal-scale {
+    min-width: 0;
+    min-height: 460px;
+    padding: 20px 18px 18px;
+    border-radius: var(--radius-ui, min(32px, 50%));
+    background: var(--ui-paper, #f8f8f8);
+    color: var(--ui-graphite, #414141);
+    box-shadow: 0 16px 38px rgb(65 65 65 / 8%);
+  }
+
+  .signal-scale__title {
+    min-height: 38px;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    text-align: center;
+    font: 800 1rem/1.08 "Urbanist", sans-serif;
+  }
+
+  .signal-scale__percentage {
+    min-height: 22px;
+    margin: 4px 0 0;
+    text-align: center;
+    font: 600 .82rem/1.2 "Urbanist", sans-serif;
+  }
+
+  .signal-scale__meter {
+    height: 360px;
+    display: flex;
+    justify-content: center;
+  }
+
+  .signal-scale__rail {
+    position: relative;
+    width: 48px;
+    height: 100%;
+  }
+
+  .signal-scale__line {
+    position: absolute;
+    left: 50%;
+    top: 30px;
+    width: 2px;
+    height: 300px;
+    translate: -50% 0;
+    background: var(--ui-graphite, #414141);
+    opacity: .42;
+  }
+
+  .signal-scale__marks {
+    position: absolute;
+    inset: 30px 0 auto;
+    height: 300px;
+    pointer-events: none;
+  }
+
+  .signal-scale__marks span {
+    position: absolute;
+    left: 50%;
+    width: 28px;
+    height: 2px;
+    translate: -50% -50%;
+    background: var(--ui-graphite, #414141);
+    opacity: .48;
+  }
+
+  .signal-scale__marks span:nth-child(1) { top: 0; }
+  .signal-scale__marks span:nth-child(2) { top: 25%; }
+  .signal-scale__marks span:nth-child(3) { top: 50%; }
+  .signal-scale__marks span:nth-child(4) { top: 75%; }
+  .signal-scale__marks span:nth-child(5) { top: 100%; }
+
+  .signal-scale__endpoint {
+    position: absolute;
+    right: calc(50% + 24px);
+    width: 80px;
+    text-align: right;
+    font: 700 .68rem/1 "Urbanist", sans-serif;
+    opacity: .72;
+    white-space: nowrap;
+  }
+
+  .signal-scale__endpoint--top { top: 24px; }
+  .signal-scale__endpoint--bottom { bottom: 24px; }
+
+  .signal-scale__mascot {
+    position: absolute;
+    z-index: 2;
+    left: 50%;
+    top: 30px;
+    width: 86px;
+    height: 86px;
+    translate: -50% calc((1 - var(--position, .5)) * 300px - 50%);
+    transition: translate 440ms cubic-bezier(.22, 1, .36, 1);
+    will-change: translate;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .signal-scale__mascot { transition-duration: .001ms; }
+  }
+</style>

@@ -267,18 +267,33 @@ async def _post_stream(
             headers = {"Content-Type": "application/json", "x-goog-api-key": config.api_key}
             stream_events = _stream_gemini_chat
 
+        # Reasoning models (for example gpt-6-luna) reject function tools on
+        # /chat/completions unless reasoning is explicitly disabled. The API
+        # names the fix in the 400 body, so retry once with reasoning_effort
+        # instead of keeping a per-model capability list. Non-reasoning models
+        # never receive the argument because their first request succeeds.
+        reasoned_tools_retry = False
         try:
-            async with http_client.stream(
-                "POST", url, params=params, headers=headers, json=body
-            ) as response:
-                if response.status_code >= 400:
-                    retryable = response.status_code not in {400, 401, 403, 404}
-                    raise ProviderError(
-                        f"{config.provider.value} returned HTTP {response.status_code}",
-                        retryable=retryable,
-                    )
-                async for event in stream_events(response):
-                    yield event
+            while True:
+                async with http_client.stream(
+                    "POST", url, params=params, headers=headers, json=body
+                ) as response:
+                    if (response.status_code == 400 and openai_compatible and tools
+                            and not reasoned_tools_retry):
+                        detail = (await response.aread()).decode("utf-8", "ignore")
+                        if "reasoning_effort" in detail:
+                            body["reasoning_effort"] = "none"
+                            reasoned_tools_retry = True
+                            continue
+                    if response.status_code >= 400:
+                        retryable = response.status_code not in {400, 401, 403, 404}
+                        raise ProviderError(
+                            f"{config.provider.value} returned HTTP {response.status_code}",
+                            retryable=retryable,
+                        )
+                    async for event in stream_events(response):
+                        yield event
+                    return
         except ProviderError:
             raise
         except (httpx.HTTPError, OSError) as exc:

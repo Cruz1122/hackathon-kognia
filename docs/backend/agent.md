@@ -27,6 +27,8 @@ Definición canónica en `CANONICAL_TOOLS`; `to_openai_tools` / `to_gemini_tools
 
 **Producto:** `agent runtime ≠ business tools`. Las tools actuales son demo (`lorem`, `sum`). En el reto se sustituyen por plugins de dominio (p. ej. pedidos de pizzería) sin reescribir el runtime. RAG cubre políticas cuando no hay tool ([intelligence](../product/intelligence.md)).
 
+Para conversaciones persistidas se usa ahora `AgentState` + Jev y autorización de escritura. Ver [stateful omnichannel backend](stateful-agent.md).
+
 ## Chunking semántico (servidor)
 
 `_take_semantic_chunk` en `main.py`: corta en `.!?` cuando hay al menos 2 palabras. Cada chunk dispara Piper en la llamada y en `/voice`. El frontend tiene un `SemanticChunker` equivalente para caminos HTTP.

@@ -3,8 +3,9 @@ import { backendErrorFromResponse, backendMessage, errorMessage } from '../infra
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { conversationIdKey, redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
-import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { showToast } from '../infrastructure/toast';
+import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
 type CallMonitorAudio = {
   pushAmplitude: (value: number) => void;
@@ -99,6 +100,13 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/call`;
   const authToken = typeof token === 'string' ? token.trim() : '';
   let attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+  if (authToken && attachedConversationId) {
+    void fetch(`${apiUrl}/conversations/${attachedConversationId}/agent-state`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    }).then(async (response) => {
+      if (response.ok) patchSessionFromAgentState(await response.json());
+    }).catch(() => undefined);
+  }
   const pendingTools = new Map<string, string>();
   let pendingRetrievalId: string | null = null;
 
@@ -119,6 +127,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   let ttsRate = 24000;
   let bargeHits = 0;
   let bargeArmedAt = 0;
+  let bargePending = false;
   let noiseFloor = 0.08;
   let reconnectTimer = 0;
   let connectionHideTimer = 0;
@@ -213,16 +222,21 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     return true;
   }
 
-  function handleLocalBarge(): void {
+  function holdPlayback(): void {
     bargeHits = 0;
-    bargeArmedAt = performance.now() + 400;
-    pcm.cancel();
-    pcmReady = false;
-    ignoreTts = true;
+    bargePending = true;
+    ignoreTts = false;
     processing = false;
+    pcm.pause();
     unhookTtsWave();
     hookMicWave();
-    finishAgent();
+    showToast('Te escucho…', 'info');
+  }
+
+  function handleLocalBarge(): void {
+    if (bargePending) return;
+    bargeArmedAt = performance.now() + 400;
+    holdPlayback();
     sendSocketCommand({ type: 'barge' });
   }
 
@@ -367,6 +381,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     customerShown = '';
     pendingTools.clear();
     pendingRetrievalId = null;
+    resetCallAgentSignals();
     setEmpty(false);
   }
 
@@ -383,7 +398,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       const now = performance.now();
       const level = capture.voiceLevel();
       const audioPlaying = pcmReady || pcm.size > 0;
-      if (audioPlaying) {
+      if (bargePending) {
+        bargeHits = 0;
+      } else if (audioPlaying) {
         if (now >= bargeArmedAt) {
           const floor = Math.max(0.08, noiseFloor);
           const voiced = capture.isVoiced();
@@ -412,6 +429,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (type === 'call.connected') {
       if (connected) return;
       connected = true;
+      // A fresh socket has no held barge, so make sure playback is not stuck paused.
+      bargePending = false;
+      pcm.resume();
       reconnectAttempts = 0;
       setConnectionStatus('connected', 'Llamada conectada');
       connectionHideTimer = window.setTimeout(() => setConnectionStatus('hidden'), 1400);
@@ -426,6 +446,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       finishCustomer(String(data.text ?? ''));
     } else if (type === 'agent.token') {
       appendToken(String(data.text ?? ''));
+    } else if (type === 'agent.signals') {
+      applyCallAgentSignals(data);
+      patchSessionFromAgentState(data);
     } else if (type === 'tool.started') {
       const toolCallId = String(data.tool_call_id ?? data.id ?? `${String(data.tool ?? 'tool')}-${Date.now()}`);
       const id = `tool-${toolCallId}`;
@@ -447,7 +470,14 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     } else if (type === 'tts.format') {
       if (ignoreTts) return;
       ttsRate = Number(data.sample_rate) || 24000;
+    } else if (type === 'tts.pause') {
+      if (!bargePending) holdPlayback();
+    } else if (type === 'tts.resume') {
+      bargePending = false;
+      pcm.resume();
+      hookTtsWave();
     } else if (type === 'tts.cancel' || type === 'turn.cancelled') {
+      bargePending = false;
       if (type === 'tts.cancel') showToast('Te escucho…', 'info');
       cancelPendingRetrieval();
       ignoreTts = true;
@@ -458,13 +488,16 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       hookMicWave();
       finishAgent();
     } else if (type === 'turn.completed') {
+      bargePending = false;
       cancelPendingRetrieval();
       finishAgent();
       processing = false;
       pcmReady = false;
+      const endCallAfterPlayback = data.end_call === true;
       pcm.finish(() => {
         unhookTtsWave();
         hookMicWave();
+        if (endCallAfterPlayback) void hangup();
       });
     } else if (type === 'transcript.empty') {
       processing = false;
@@ -588,6 +621,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     connected = false;
     processing = false;
     pcmReady = false;
+    bargePending = false;
     closing = false;
     reconnectAttempts = 0;
     setConnectionStatus('connecting', 'Conectando llamada…');
@@ -613,6 +647,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     paused = false;
     processing = false;
     pcmReady = false;
+    bargePending = false;
     waveApi?.setPlaying?.(true);
     syncControls();
     if (connected && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
@@ -623,6 +658,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     paused = true;
     processing = false;
     pcmReady = false;
+    bargePending = false;
     capture.stopPcmStream();
     capture.cancelRecording();
     sendSocketCommand({ type: 'pcm.stop' });
@@ -641,6 +677,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     live = false;
     paused = false;
     processing = false;
+    bargePending = false;
     capture.stopPcmStream();
     capture.abort();
     sendSocketCommand({ type: 'pcm.stop' });

@@ -11,7 +11,8 @@ from app.auth.tokens import create_access_token
 from app.config import AppEnv, Provider, get_model_chain
 from app.db.models import User, UserRole
 from app.db.session import get_db
-from app.providers import FakeLLM, FakeSTT, FakeTTS, ProviderError, _gemini_text, _openai_text, stream_provider
+from app.features.agent.tools import CANONICAL_TOOLS
+from app.providers import FakeLLM, FakeSTT, FakeTTS, ProviderError, _gemini_text, _openai_text, stream_chat, stream_provider
 
 
 @pytest.fixture
@@ -76,13 +77,13 @@ def test_model_catalog_is_hardcoded_by_environment(monkeypatch: pytest.MonkeyPat
     production_chain = get_model_chain(AppEnv.PRODUCTION)
 
     assert [(item.provider, item.model) for item in test_chain] == [
-        (Provider.OPENAI, "gpt-4o-mini"),
+        (Provider.OPENAI, "gpt-5.4-mini"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7"),
         (Provider.GROQ, "llama-3.3-70b-versatile"),
     ]
     assert [(item.provider, item.model) for item in production_chain] == [
-        (Provider.OPENAI, "gpt-5.6-luna"),
+        (Provider.OPENAI, "gpt-6-luna"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
     ]
 
@@ -158,7 +159,7 @@ async def test_partial_stream_does_not_fallback_or_duplicate(monkeypatch: pytest
 @pytest.mark.parametrize(
     ("provider", "model", "expected_path"),
     [
-        (Provider.OPENAI, "gpt-5.6-luna", "/v1/chat/completions"),
+        (Provider.OPENAI, "gpt-6-luna", "/v1/chat/completions"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7", "/api/v1/chat/completions"),
         (Provider.GROQ, "llama-3.3-70b-versatile", "/openai/v1/chat/completions"),
     ],
@@ -189,6 +190,72 @@ async def test_openai_compatible_providers_stream_tokens(
     assert captured.headers["authorization"] == "Bearer secret"
     assert json.loads(captured.content)["stream"] is True
     assert tokens == ["A", "B"]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_model_retries_tool_call_with_reasoning_effort_none() -> None:
+    # Regression: reasoning models (gpt-5.6-luna / gpt-6-luna) reject function
+    # tools on /chat/completions with HTTP 400 unless reasoning_effort is "none".
+    # The provider must retry once with that parameter and still surface the
+    # tool calls, instead of treating the request as a permanent provider error.
+    requests: list[httpx.Request] = []
+    tool_call_chunk = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {
+                                "name": "sum_numbers",
+                                "arguments": json.dumps({"numbers": [3, 4]}),
+                            },
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        body = json.loads(request.content)
+        if body.get("tools") and body.get("reasoning_effort") != "none":
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            "Function tools with reasoning_effort are not supported for "
+                            "gpt-6-luna in /v1/chat/completions. To use function tools, "
+                            "use /v1/responses or set reasoning_effort to 'none'."
+                        )
+                    }
+                },
+            )
+        content = f"data: {json.dumps(tool_call_chunk)}\n\ndata: [DONE]\n\n"
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=content)
+
+    base = next(
+        item for item in get_model_chain(AppEnv.PRODUCTION) if item.provider is Provider.OPENAI
+    )
+    config = base.__class__(base.provider, "gpt-6-luna", "secret", base.base_url)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        events = [
+            event
+            async for event in stream_chat(config, "suma 3 y 4", client, tools=CANONICAL_TOOLS)
+        ]
+
+    assert len(requests) == 2
+    assert json.loads(requests[0].content).get("reasoning_effort") is None
+    assert json.loads(requests[1].content)["reasoning_effort"] == "none"
+    assert events == [
+        (
+            "tool_calls",
+            {"calls": [{"id": "call_1", "name": "sum_numbers", "arguments": '{"numbers": [3, 4]}'}]},
+        )
+    ]
 
 
 @pytest.mark.asyncio

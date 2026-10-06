@@ -143,6 +143,43 @@ async def test_login_rejects_missing_user_without_leaking_credentials(
 
 
 @pytest.mark.asyncio
+async def test_refresh_returns_new_access_token_for_active_user(
+    client: httpx.AsyncClient,
+    fake_db: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user(role=UserRole.ADMIN, organization_id=uuid.uuid4())
+    fake_db.get.return_value = user
+    token = _token(user, monkeypatch)
+
+    response = await client.post("/auth/refresh", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    body = response.json()
+    claims = jwt.decode(body["access_token"], TEST_SECRET, algorithms=[JWT_ALGORITHM])
+    assert claims["sub"] == str(user.id)
+    assert claims["type"] == JWT_TOKEN_TYPE
+    assert body["expires_in"] > 0
+    assert body["user"]["id"] == str(user.id)
+    assert "password_hash" not in body["user"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_missing_or_invalid_token(
+    client: httpx.AsyncClient,
+    fake_db: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", TEST_SECRET)
+
+    missing = await client.post("/auth/refresh")
+    invalid = await client.post("/auth/refresh", headers={"Authorization": "Bearer not-a-token"})
+
+    assert missing.status_code == 401
+    assert invalid.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_auth_me_accepts_valid_token_and_rejects_disabled_user(
     client: httpx.AsyncClient,
     fake_db: AsyncMock,

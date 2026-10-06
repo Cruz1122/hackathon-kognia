@@ -34,6 +34,7 @@ El README de raíz sigue siendo el arranque corto para `make setup`. Esta carpet
 | ¿Cómo creo el SUPERADMIN? | [Auth](auth/README.md) |
 | ¿Qué modelos LLM hay? | [Providers](backend/providers.md) |
 | ¿Cómo arranco Docker? | [Compose](operations/docker.md) |
+| ¿Cómo despliego y qué secrets necesito? | [Azure](operations/azure.md) |
 | ¿Qué comprueba el smoke? | [Verificación](operations/verification.md) |
 | ¿Cuál es la apuesta y cómo pivotar? | [Producto → contexto](product/context.md) |
 | ¿Qué es core vs dominio? | [Capacidades](product/capabilities.md) |
@@ -83,6 +84,7 @@ El README de raíz sigue siendo el arranque corto para `make setup`. Esta carpet
 | [operations/README.md](operations/README.md) | Índice |
 | [operations/local.md](operations/local.md) | Detalle |
 | [operations/docker.md](operations/docker.md) | Detalle |
+| [operations/azure.md](operations/azure.md) | Detalle |
 | [operations/configuration.md](operations/configuration.md) | Detalle |
 | [operations/verification.md](operations/verification.md) | Detalle |
 | [reference/README.md](reference/README.md) | Índice |

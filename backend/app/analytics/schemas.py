@@ -103,6 +103,16 @@ class ObjectionProductPoint(BaseModel):
     resolution_rate: float
 
 
+class AgentSignalAggregate(BaseModel):
+    value: str
+    probabilities: dict[str, float] = Field(default_factory=dict)
+
+
+class AgentSignalsAggregate(BaseModel):
+    sample_count: int = 0
+    signals: dict[str, AgentSignalAggregate] = Field(default_factory=dict)
+
+
 class DashboardResponse(BaseModel):
     period: AnalyticsPeriod
     summary: AnalyticsSummary
@@ -116,3 +126,4 @@ class DashboardResponse(BaseModel):
     metric_trend: list[MetricTrendPoint] = Field(default_factory=list)
     funnel: list[FunnelPoint] = Field(default_factory=list)
     objection_product_heatmap: list[ObjectionProductPoint] = Field(default_factory=list)
+    agent_signals: AgentSignalsAggregate | None = None

@@ -11,10 +11,11 @@ export class PcmAudioQueue {
   private inputRate = 24000;
   private tail = new Float32Array(0);
   private sources = new Set<AudioBufferSourceNode>();
+  private paused = false;
 
   frequencyAnalyser(): { analyser: AnalyserNode; sampleRate: number } | undefined {
     if (!this.context || !this.analyser) return undefined;
-    if (this.context.state === 'suspended') void this.context.resume();
+    if (!this.paused && this.context.state === 'suspended') void this.context.resume();
     return { analyser: this.analyser, sampleRate: this.context.sampleRate };
   }
 
@@ -24,7 +25,7 @@ export class PcmAudioQueue {
 
   prime(): void {
     if (!this.context || this.context.state === 'closed') this.context = new AudioContext();
-    void this.context.resume();
+    if (!this.paused) void this.context.resume();
   }
 
   start(sampleRate: number): void {
@@ -47,12 +48,22 @@ export class PcmAudioQueue {
       this.analyser.maxDecibels = -12;
       this.analyser.connect(context.destination);
     }
-    void context.resume();
+    if (!this.paused) void context.resume();
+  }
+
+  pause(): void {
+    this.paused = true;
+    if (this.context && this.context.state === 'running') void this.context.suspend();
+  }
+
+  resume(): void {
+    this.paused = false;
+    if (this.context && this.context.state === 'suspended') void this.context.resume();
   }
 
   enqueue(chunk: Uint8Array, onStart: () => void, onEnd: () => void): void {
     if (!this.context || !this.analyser || chunk.byteLength < 2) return;
-    void this.context.resume();
+    if (!this.paused) void this.context.resume();
     const copy = new Uint8Array(chunk.byteLength);
     copy.set(chunk);
     const usableLength = copy.byteLength - (copy.byteLength % 2);
@@ -113,6 +124,7 @@ export class PcmAudioQueue {
     this.finished = false;
     this.tail = new Float32Array(0);
     this.nextTime = 0;
+    this.paused = false;
   }
 
   shutdown(): void {

@@ -12,63 +12,91 @@ import '../../styles/call-demo.css';
   import { bootCallReplay } from '../../features/voice-call/application/call-replay';
   import { bootLiveCall } from '../../features/voice-call/application/live-call';
   import { accessTokenKey, checkSession, redirectToLogin } from '../../features/auth/session-guard';
+  import { revealLoadedContent, waitForRouteSettle } from '../../features/ui/loading-reveal';
+  import { showToast } from '../../features/voice-call/infrastructure/toast';
 
   const apiUrl = document.body.dataset.apiUrl ?? '';
   let cleanup: (() => void | Promise<void>) | null = null;
   let mountedId = '';
+  let pendingId = '';
 
-  function clearConversation(): void {
-    document.querySelector('#conversation')?.querySelectorAll(':scope > :not(#conversationEmpty)').forEach((node) => node.remove());
-    const empty = document.querySelector<HTMLElement>('#conversationEmpty');
-    if (empty) empty.hidden = false;
+  async function revealCall(): Promise<void> {
+    await revealLoadedContent(
+      document.getElementById('callLoading'),
+      document.getElementById('appContent'),
+      () => document.querySelector('.app-shell')?.classList.remove('is-call-loading'),
+    );
+    window.dispatchEvent(new Event('resize'));
   }
 
-  async function handoffToReplay(callId: string, token: string): Promise<void> {
-    const headers = { Authorization: `Bearer ${token}` };
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (new URLSearchParams(window.location.search).get('id') !== callId) return;
-      const recording = await fetch(`${apiUrl}/calls/${callId}/recording`, { headers });
-      if (recording.ok && new URLSearchParams(window.location.search).get('id') === callId) {
-        const release = cleanup;
-        cleanup = null;
-        await release?.();
-        clearConversation();
-        if (new URLSearchParams(window.location.search).get('id') !== callId) return;
-        cleanup = bootCallReplay(apiUrl, token, callId);
-        return;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
-    }
+  async function revealCallError(reason: string): Promise<void> {
+    const status = document.getElementById('callConnectionStatus');
+    const reasonElement = document.getElementById('callErrorReason');
+    if (status) status.hidden = true;
+    if (reasonElement) reasonElement.textContent = reason;
+    await revealLoadedContent(
+      document.getElementById('callLoading'),
+      document.getElementById('callError'),
+    );
   }
 
   async function mountSavedCall(): Promise<void> {
     const root = document.querySelector<HTMLElement>('.call-demo-page');
     const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
     const callId = new URLSearchParams(window.location.search).get('id') ?? '';
-    if (!root || !callId || mountedId === callId) return;
-    if ((await checkSession(apiUrl)) === 'invalid' || !token) {
-      redirectToLogin();
-      return;
+    if (!root || !callId || mountedId === callId || pendingId === callId) return;
+    pendingId = callId;
+    await waitForRouteSettle();
+    if (!root.isConnected || pendingId !== callId) return;
+    try {
+      if ((await checkSession(apiUrl)) === 'invalid' || !token) {
+        pendingId = '';
+        redirectToLogin();
+        return;
+      }
+      const headers = { Authorization: `Bearer ${token}` };
+      const listResponse = await fetch(`${apiUrl}/calls`, { headers });
+      const list = listResponse.ok
+        ? await listResponse.json() as { calls?: Array<{ id: string }> }
+        : { calls: [] };
+      const live = (list.calls ?? []).some((call) => call.id === callId);
+      cleanup?.();
+      if (live) {
+        cleanup = bootLiveCall(
+          apiUrl,
+          token,
+          callId,
+          () => { void revealCall(); },
+          (reason) => { void revealCallError(reason); },
+        );
+      } else {
+        cleanup = bootCallReplay(
+          apiUrl,
+          token,
+          callId,
+          () => { void revealCall(); },
+          (reason) => { void revealCallError(reason); },
+        );
+      }
+      mountedId = callId;
+      pendingId = '';
+    } catch (error) {
+      pendingId = '';
+      const reason = error instanceof TypeError
+        ? 'No se pudo conectar con el servidor para consultar esta llamada.'
+        : error instanceof Error && error.message.trim()
+        ? error.message
+        : 'El servidor no respondió al consultar los datos de esta llamada.';
+      showToast(reason, 'error');
+      await revealCallError(reason);
     }
-    const headers = { Authorization: `Bearer ${token}` };
-    const listResponse = await fetch(`${apiUrl}/calls`, { headers });
-    const list = listResponse.ok
-      ? await listResponse.json() as { calls?: Array<{ id: string }> }
-      : { calls: [] };
-    const live = (list.calls ?? []).some((call) => call.id === callId);
-    cleanup?.();
-    if (live) {
-      cleanup = bootLiveCall(apiUrl, token, callId, () => { void handoffToReplay(callId, token); });
-    } else {
-      cleanup = bootCallReplay(apiUrl, token, callId);
-    }
-    mountedId = callId;
   }
 
   function unmountSavedCall(): void {
     cleanup?.();
     cleanup = null;
     mountedId = '';
+    pendingId = '';
   }
 
   document.addEventListener('astro:before-swap', unmountSavedCall);

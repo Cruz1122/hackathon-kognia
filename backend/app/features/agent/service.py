@@ -1,5 +1,7 @@
 import re
 from collections.abc import AsyncIterator, Sequence
+from datetime import timedelta
+from functools import partial
 from typing import Any
 
 from ...config import AppEnv, Provider, get_app_env, get_model_chain
@@ -56,6 +58,44 @@ _CAPABILITY_MARKERS = (
 _MIN_KNOWLEDGE_TERMS = 2
 
 
+def normalize_relative_booking_date(
+    tool: str,
+    arguments: dict[str, Any],
+    prompt: str,
+    history: Sequence[Message] | None = None,
+) -> dict[str, Any]:
+    """Anchor an explicit relative booking date to the configured demo timezone.
+
+    Models can use their provider's UTC date instead of the local operational
+    date even when the latter is in the system context. Only an unambiguous date
+    expression in the current message overrides the model argument. A bare
+    ``mañana`` answering an AM/PM question keeps its time-of-day meaning.
+    """
+    if tool not in {'check_availability', 'create_booking'} or 'date' not in arguments:
+        return arguments
+    folded = ' '.join(prompt.casefold().split())
+    previous = next((str(item.get('content') or '').casefold() for item in reversed(history or [])
+                     if item.get('role') == 'assistant'), '')
+    am_pm_answer = folded in {'mañana', 'de mañana', 'por la mañana'} and (
+        'de la mañana o de la noche' in previous or 'mañana o de la noche' in previous
+    )
+    days: int | None = None
+    if re.search(r'\bpasado\s+mañana\b', folded):
+        days = 2
+    elif not am_pm_answer and (
+        re.search(r'\bpara\s+(?:el\s+)?(?:d[ií]a\s+de\s+)?mañana\b', folded)
+        or re.search(r'\bmañana\s*(?:,|a\s+la|a\s+las)\b', folded)
+        or folded == 'mañana'
+    ):
+        days = 1
+    elif re.search(r'\bpara\s+(?:el\s+)?(?:d[ií]a\s+de\s+)?hoy\b', folded):
+        days = 0
+    if days is None:
+        return arguments
+    from ...agent.state import local_now
+    return {**arguments, 'date': (local_now().date() + timedelta(days=days)).isoformat()}
+
+
 def context_window(
     messages: Sequence[Message] | None,
     limit: int = MAX_CONTEXT_TURNS,
@@ -99,6 +139,22 @@ async def stream_agent(
     tool_context: ToolContext | None = None,
     trace: TraceRecorder | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    generate = _generate if trace is None else partial(_generate, trace=trace)
+    if tool_context and tool_context.conversation_id and tool_context.organization_id:
+        from ...agent.runtime import stateful_stream
+        async for event in stateful_stream(prompt, messages=messages, llm=llm,
+                                          tool_context=tool_context, generate=generate):
+            yield event
+        return
+    # Compatibility path is read-only: ToolRegistry rejects every write.
+    async for event in generate(prompt, messages=messages, llm=llm, tool_context=tool_context):
+        yield event
+
+
+async def _generate(
+    prompt: str, *, messages=None, llm=None, tool_context=None, system_context: str = '', tools_enabled: bool = True,
+    knowledge_sink: list[str] | None = None, trace: TraceRecorder | None = None,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm
     recorder = trace or TraceRecorder()
@@ -119,11 +175,15 @@ async def stream_agent(
     recorder.start(prompt, history, tools_available)
     knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, history)
     recorder.record_retrieval(used_rag=used_rag, topic=retrieval_topic, hits=retrieval_hits)
+    if knowledge_sink is not None:
+        knowledge_sink[:] = [str(item.get('content') or '') for item in knowledge if item.get('content')]
+    if system_context:
+        knowledge = [{'role': 'system', 'content': system_context}, *knowledge]
 
     attempt = 0
     answer_parts: list[str] = []
     permanent_failures: set[Provider] = set()
-    use_tools = provider.capabilities.supports_tools
+    use_tools = provider.capabilities.supports_tools and tools_enabled
     while attempt < len(configs):
         config = configs[attempt]
         attempt += 1
@@ -144,6 +204,7 @@ async def stream_agent(
                         messages=conversation,
                         tools=tools_available,
                     )
+                    round_parts: list[str] = []
                     try:
                         async for kind, payload in provider.stream(
                             config,
@@ -152,12 +213,10 @@ async def stream_agent(
                             tools=CANONICAL_TOOLS,
                         ):
                             if kind == "token":
-                                emitted_tokens = True
                                 text = str(payload["text"])
-                                answer_parts.append(text)
+                                round_parts.append(text)
                                 recorder.note_first_token(llm_span)
                                 recorder.note_text(llm_span, text)
-                                yield "token", {"text": text}
                             elif kind == "tool_calls":
                                 tool_calls = list(payload.get("calls") or [])
                             elif kind == "usage":
@@ -170,6 +229,12 @@ async def stream_agent(
                     finally:
                         recorder.close_span(llm_span, tool_calls=tool_calls)
                     if not tool_calls:
+                        # Tool-planning speech is not the final answer. Never join
+                        # intermediate "one moment" prose to the post-tool response.
+                        answer_parts = round_parts
+                        for text in round_parts:
+                            emitted_tokens = True
+                            yield 'token', {'text': text}
                         break
                     used_tools = True
                     assistant_calls = []
@@ -178,7 +243,9 @@ async def stream_agent(
                         call_id = call.get("id") or f"call_{index + 1}"
                         name = call.get("name") or "tool"
                         raw_arguments = call.get("arguments") or "{}"
-                        arguments = parse_arguments(raw_arguments)
+                        arguments = normalize_relative_booking_date(
+                            name, parse_arguments(raw_arguments), prompt, history
+                        )
                         title, status = describe_tool_start(name, arguments)
                         inputs = present_tool_inputs(name, arguments)
                         yield "tool.started", {"tool": name, "tool_call_id": call_id, "title": title, "status": status, "inputs": inputs}
@@ -204,8 +271,11 @@ async def stream_agent(
                         yield "tool.completed", {
                             "tool": name,
                             "tool_call_id": call_id,
+                            "arguments": arguments,
+                            "ok": tool_result.ok,
+                            "error_code": tool_result.error_code,
                             "title": done_title,
-                            "status": done_status,
+                            "status": done_status if tool_result.ok else "Pendiente de revisión",
                             "result": result,
                             "inputs": inputs,
                             "outputs": outputs,

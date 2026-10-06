@@ -46,6 +46,7 @@ from .db.session import check_database, dispose_engine, get_db
 from .platform.redis import close_redis
 from .platform.tracing import TraceRecorder, save_trace
 from .features.agent.service import context_window, stream_agent
+from .agent.state import greeting
 from .agent.tools.contracts import ToolContext
 from .features.transcription.service import pcm_speech_features, stt_label
 from .features.chat.schemas import (
@@ -73,9 +74,16 @@ from .platform.queue import enqueue_enrichment
 from .commercial.router import router as commercial_router
 from .features.dev.router import router as dev_router
 from .telephony.router import router as telnyx_router
+from .whatsapp.router import router as whatsapp_router
+from .agent.router import router as agent_state_router
+from .logging_config import install_access_log_filter
 
 
 logger = logging.getLogger("hackathon.voice")
+
+# Quiet the high-frequency polling endpoints. Uvicorn configures logging before
+# importing this module, so the filter persists for the whole server lifetime.
+install_access_log_filter()
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -106,6 +114,7 @@ CALL_BARGE_RMS = 0.05
 CALL_BARGE_STRONG_RMS = 0.08
 CALL_BARGE_ARM_SECONDS = 0.2
 CALL_BARGE_HITS = 2
+CALL_BARGE_GRACE_SECONDS = 3.0
 CALL_SILENCE_SECONDS = 0.8
 CALL_MAX_UTTERANCE_SECONDS = 8.0
 CALL_TURN_GUARD_SECONDS = 2.5
@@ -217,6 +226,8 @@ app.include_router(analytics_router)
 app.include_router(commercial_router)
 app.include_router(dev_router)
 app.include_router(telnyx_router)
+app.include_router(whatsapp_router)
+app.include_router(agent_state_router)
 
 
 def _health_status() -> dict[str, str]:
@@ -322,6 +333,19 @@ async def internal_rag_search(payload: RagSearchRequest) -> dict:
     return {"evidence_state": result.evidence_state, "level_reached": result.level_reached, "rewrite_used": result.rewrite_used, "hits": hits, "source_map": result.source_map, "debug": result.debug if payload.debug else {}}
 
 
+def _issue_session(user: User) -> LoginResponse:
+    try:
+        token = create_access_token(user.id)
+        expires_in = get_access_token_expire_minutes() * 60
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=500, detail="Authentication is not configured.") from exc
+    return LoginResponse(
+        access_token=token,
+        expires_in=expires_in,
+        user=UserResponse.model_validate(user),
+    )
+
+
 @app.post("/auth/login", response_model=LoginResponse, summary="Inicia sesión")
 async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db)) -> LoginResponse:
     try:
@@ -334,16 +358,12 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db)) 
         raise HTTPException(status_code=401, detail="Invalid email or password.")
     if not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
-    try:
-        token = create_access_token(user.id)
-        expires_in = get_access_token_expire_minutes() * 60
-    except AuthConfigurationError as exc:
-        raise HTTPException(status_code=500, detail="Authentication is not configured.") from exc
-    return LoginResponse(
-        access_token=token,
-        expires_in=expires_in,
-        user=UserResponse.model_validate(user),
-    )
+    return _issue_session(user)
+
+
+@app.post("/auth/refresh", response_model=LoginResponse, summary="Renueva el token de acceso")
+async def refresh_token(user: User = Depends(get_current_user)) -> LoginResponse:
+    return _issue_session(user)
 
 
 @app.get("/auth/me", response_model=UserResponse, summary="Devuelve el usuario autenticado")
@@ -821,6 +841,7 @@ async def _ask_stream(
     user_id: uuid.UUID | None = None,
 ) -> AsyncIterator[str]:
     answer_parts: list[str] = []
+    proposal_id = None
     async for name, payload in _agent_stream(
         prompt,
         messages=messages,
@@ -847,7 +868,13 @@ async def _ask_stream(
                         {"message": "No se pudo guardar la respuesta de la conversación."},
                     )
                     return
+        if name == 'done':
+            proposal_id = payload.get('proposal_id')
         yield _event(name, payload)
+    # The agent generator must release its conversation lock before transport acknowledgement.
+    if proposal_id and organization_id and conversation_id:
+        from .agent.store import mark_presented
+        await mark_presented(str(organization_id), str(conversation_id), str(proposal_id))
 
 
 async def _replay_stream(buffered_chunks: list[str], stream: AsyncIterator[str]) -> AsyncIterator[str]:
@@ -875,7 +902,7 @@ async def _replay_stream(buffered_chunks: list[str], stream: AsyncIterator[str])
                     "schema": {"type": "string"},
                     "example": (
                         'event: token\ndata: {"text":"Hola"}\n\n'
-                        'event: done\ndata: {"provider":"openai","model":"gpt-5.6-luna"}\n\n'
+                        'event: done\ndata: {"provider":"openai","model":"gpt-6-luna"}\n\n'
                     ),
                 }
             },
@@ -1036,6 +1063,10 @@ async def _speak_chunk(
     )
 
 
+def _call_demo_greeting() -> str:
+    return f"{greeting()}. Soy el asistente del restaurante. Para empezar, ¿cómo te llamas?"
+
+
 async def _run_call_turn(
     websocket: WebSocket,
     prompt: str,
@@ -1079,6 +1110,8 @@ async def _run_call_turn(
     answer = ""
     buffer = ""
     failed = False
+    proposal_id = None
+    reservation_confirmed = False
     pending: asyncio.Queue[str | None] = asyncio.Queue()
 
     async def speak_worker() -> None:
@@ -1113,7 +1146,12 @@ async def _run_call_turn(
                     conversation_id=conversation_id,
                 )
                 break
-            if name in {"tool.started", "tool.completed", "rag.started", "rag.completed"}:
+            if name == 'done':
+                proposal_id = payload.get('proposal_id')
+            if name in {"tool.started", "tool.completed", "rag.started", "rag.completed", "agent.signals"}:
+                if (name == "tool.completed" and payload.get("tool") == "create_booking"
+                        and payload.get("ok") is True):
+                    reservation_confirmed = True
                 await _send_call_event(
                     websocket,
                     name,
@@ -1141,6 +1179,9 @@ async def _run_call_turn(
             await pending.put(buffer.strip())
         await pending.put(None)
         await speaker
+        if proposal_id and not failed:
+            from .agent.store import mark_presented
+            await mark_presented(str(organization_id), str(conversation_id), str(proposal_id))
         if not failed and answer.strip():
             try:
                 await _persist_message(
@@ -1166,7 +1207,7 @@ async def _run_call_turn(
         await _send_call_event(
             websocket,
             "turn.completed",
-            {"text": answer},
+            {"text": answer, "end_call": reservation_confirmed and not failed},
             organization_id=organization_id,
             conversation_id=conversation_id,
         )
@@ -1392,8 +1433,123 @@ async def call_socket(
         ignore_until = 0.0
         barge_armed_at = 0.0
         barge_hits = 0
+        barge_pending = False  # playback held while we wait to see if the barge was real noise
+        barge_last_voice_at = 0.0
+        barge_resume_task: asyncio.Task[None] | None = None
         turn_task: asyncio.Task[None] | None = None
+        barge_pcm = bytearray()  # bounded pre-roll so a barge does not lose the first words
         stream = await asyncio.to_thread(stt_provider.create_stream)
+        idle_since = time.monotonic()
+        last_silence_prompt = None
+
+        async def _silence_prompt(text: str) -> None:
+            await _send_call_event(websocket, 'agent.token', {'text': text},
+                organization_id=organization_id, conversation_id=conversation_id)
+            history.append({'role': 'assistant', 'content': text})
+            session.add(DbMessage(conversation_id=conversation_id, role=MessageRole.ASSISTANT,
+                content=text, channel='voice'))
+            await session.commit()
+            await _speak_chunk(websocket, text, organization_id=organization_id,
+                conversation_id=conversation_id)
+            await _send_call_event(websocket, 'turn.completed', {},
+                organization_id=organization_id, conversation_id=conversation_id)
+
+        async def _speak_greeting(text: str) -> None:
+            await _speak_chunk(websocket, text, organization_id=organization_id,
+                conversation_id=conversation_id)
+            await _send_call_event(websocket, 'turn.completed', {},
+                organization_id=organization_id, conversation_id=conversation_id)
+
+        if not history:
+            welcome = _call_demo_greeting()
+            await _send_call_event(websocket, 'turn.started', {},
+                organization_id=organization_id, conversation_id=conversation_id)
+            await _send_call_event(websocket, 'agent.token', {'text': welcome},
+                organization_id=organization_id, conversation_id=conversation_id)
+            history.append({'role': 'assistant', 'content': welcome})
+            await _persist_message(session, conversation_id=conversation_id,
+                role=MessageRole.ASSISTANT, content=welcome)
+            now = time.monotonic()
+            barge_armed_at = now + CALL_BARGE_ARM_SECONDS
+            turn_task = asyncio.create_task(_speak_greeting(welcome))
+
+        async def _resume_playback() -> None:
+            """Give the held playback back to the client after a false-positive barge."""
+            nonlocal barge_pending, barge_resume_task
+            barge_pending = False
+            pending_task = barge_resume_task
+            if pending_task is not None and pending_task is not asyncio.current_task():
+                pending_task.cancel()
+            barge_resume_task = None
+            try:
+                await websocket.send_json({"type": "tts.resume"})
+            except Exception:
+                pass
+
+        async def _resume_after_barge_silence() -> None:
+            """Resume the agent only after the grace window passes without any customer voice."""
+            while barge_pending:
+                await asyncio.sleep(CALL_BARGE_GRACE_SECONDS)
+                if not barge_pending:
+                    return
+                if time.monotonic() - barge_last_voice_at >= CALL_BARGE_GRACE_SECONDS:
+                    break
+            if barge_pending:
+                await _resume_playback()
+
+        async def _soft_barge() -> None:
+            """Hold agent playback instead of cancelling: the barge may just be noise."""
+            nonlocal barge_pending, barge_resume_task, barge_hits, barge_armed_at, barge_last_voice_at, ignore_until, last_partial
+            if barge_pending or turn_task is None or turn_task.done():
+                return
+            buffered = bytes(barge_pcm)
+            barge_pcm.clear()
+            barge_hits = 0
+            barge_armed_at = 0.0
+            last_partial = ""
+            barge_pending = True
+            barge_last_voice_at = time.monotonic()
+            if stream is not None:
+                await asyncio.to_thread(stt_provider.reset_stream, stream)
+                if buffered:
+                    try:
+                        await asyncio.to_thread(stt_provider.feed_pcm, stream, buffered, sample_rate)
+                    except Exception:
+                        logger.exception("Barge pre-roll transcription failed")
+            ignore_until = 0.0
+            try:
+                await websocket.send_json({"type": "tts.pause"})
+            except Exception:
+                pass
+            barge_resume_task = asyncio.create_task(_resume_after_barge_silence())
+
+        async def _confirm_barge() -> None:
+            """The customer really spoke: drop the interrupted turn and its queued audio."""
+            nonlocal turn_task, barge_pending, barge_resume_task, barge_hits, barge_armed_at, last_partial, last_voice_at, first_voice_at, ignore_until
+            barge_pending = False
+            if barge_resume_task is not None:
+                barge_resume_task.cancel()
+                barge_resume_task = None
+            barge_hits = 0
+            task = turn_task
+            turn_task = None
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await websocket.send_json({"type": "tts.cancel"})
+                except Exception:
+                    pass
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.exception("Call turn cancel failed")
+            last_partial = ""
+            last_voice_at = time.monotonic()
+            first_voice_at = last_voice_at
+            ignore_until = 0.0
+            barge_armed_at = 0.0
 
         async def _reap_turn() -> None:
             nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_armed_at, barge_hits, stream
@@ -1403,10 +1559,14 @@ async def call_socket(
             turn_task = None
             barge_hits = 0
             barge_armed_at = 0.0
+            barge_pcm.clear()
             last_partial = ""
             last_voice_at = 0.0
             first_voice_at = 0.0
             ignore_until = 0.0
+            if barge_pending:
+                # The reply finished while its playback was held: let the client drain it.
+                await _resume_playback()
             try:
                 await task
             except asyncio.CancelledError:
@@ -1418,6 +1578,8 @@ async def call_socket(
 
         async def _start_turn(prompt: str) -> None:
             nonlocal turn_task, last_partial, last_voice_at, first_voice_at, stream, ignore_until, barge_armed_at, barge_hits
+            if barge_pending:
+                await _confirm_barge()
             flushed = ""
             if stream is not None:
                 try:
@@ -1427,6 +1589,7 @@ async def call_socket(
                 stream = await asyncio.to_thread(stt_provider.create_stream)
             final = flushed.strip() if _usable_transcript(flushed) else prompt.strip()
             last_partial = ""
+            barge_pcm.clear()
             last_voice_at = 0.0
             first_voice_at = 0.0
             if not _usable_transcript(final):
@@ -1456,36 +1619,12 @@ async def call_socket(
                 )
             )
 
-        async def _barge_in() -> None:
-            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_armed_at, barge_hits, stream
-            barge_hits = 0
-            if turn_task is None:
-                return
-            task = turn_task
-            turn_task = None
-            if not task.done():
-                task.cancel()
-                try:
-                    await websocket.send_json({"type": "tts.cancel"})
-                except Exception:
-                    pass
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    logger.exception("Call turn cancel failed")
-            last_partial = ""
-            last_voice_at = time.monotonic()
-            first_voice_at = last_voice_at
-            ignore_until = 0.0
-            barge_armed_at = 0.0
-            if stream is not None:
-                await asyncio.to_thread(stt_provider.reset_stream, stream)
-
         while True:
             message = await websocket.receive()
             if message["type"] == "websocket.disconnect":
+                if barge_resume_task is not None:
+                    barge_resume_task.cancel()
+                    barge_resume_task = None
                 if turn_task is not None and not turn_task.done():
                     turn_task.cancel()
                     try:
@@ -1503,11 +1642,24 @@ async def call_socket(
                     now = time.monotonic()
                     busy = turn_task is not None and not turn_task.done()
                     speaking = voiced or rms >= CALL_SPEECH_RMS
-                    if speaking and not busy and now >= ignore_until:
+                    if busy or speaking:
+                        idle_since = now
+                    elif first_voice_at <= 0 and now - idle_since > 10:
+                        from .agent.phrases import SILENCE, pick
+                        last_silence_prompt = pick(SILENCE, last_silence_prompt)
+                        idle_since = now
+                        barge_armed_at = now + CALL_BARGE_ARM_SECONDS
+                        turn_task = asyncio.create_task(_silence_prompt(last_silence_prompt))
+                        continue
+                    if speaking and (not busy or barge_pending) and now >= ignore_until:
                         last_voice_at = now
+                        # Only pitch-like voice extends the grace window; sustained
+                        # broadband noise must still time out and resume playback.
+                        if barge_pending and voiced:
+                            barge_last_voice_at = now
                         if first_voice_at <= 0:
                             first_voice_at = now
-                    if busy:
+                    if busy and not barge_pending:
                         if now >= barge_armed_at and rms >= CALL_BARGE_RMS:
                             barge_hits += 1
                         else:
@@ -1518,8 +1670,10 @@ async def call_socket(
                         )
                         if now >= barge_armed_at and (strong or enough):
                             barge_hits = 0
-                            await _barge_in()
+                            await _soft_barge()
                         else:
+                            barge_pcm.extend(raw)
+                            del barge_pcm[:-64000]  # keep at most two seconds of pre-roll
                             continue
                     if stream is None or now < ignore_until:
                         continue
@@ -1538,6 +1692,8 @@ async def call_socket(
                     if partial and partial != last_partial:
                         last_partial = partial
                         if _usable_transcript(partial):
+                            if barge_pending:
+                                barge_last_voice_at = time.monotonic()
                             await _send_call_event(
                                 websocket,
                                 "customer.partial",
@@ -1617,6 +1773,7 @@ async def call_socket(
                 )
                 continue
             if payload.get("type") == "pcm.start":
+                idle_since = time.monotonic()
                 rate = payload.get("sample_rate")
                 if isinstance(rate, int) and rate > 0:
                     sample_rate = rate
@@ -1626,6 +1783,9 @@ async def call_socket(
                 first_voice_at = 0.0
                 barge_hits = 0
                 barge_armed_at = 0.0
+                if barge_pending:
+                    # Never leave the client's queue suspended: release it explicitly.
+                    await _resume_playback()
                 if stream is not None:
                     await asyncio.to_thread(stt_provider.reset_stream, stream)
                 else:
@@ -1638,13 +1798,16 @@ async def call_socket(
                 first_voice_at = 0.0
                 barge_hits = 0
                 barge_armed_at = 0.0
+                if barge_pending:
+                    # Never leave the client's queue suspended: release it explicitly.
+                    await _resume_playback()
                 if stream is not None:
                     await asyncio.to_thread(stt_provider.reset_stream, stream)
                 continue
             if payload.get("type") == "barge":
                 busy = turn_task is not None and not turn_task.done()
                 if busy:
-                    await _barge_in()
+                    await _soft_barge()
                 else:
                     last_partial = ""
                     last_voice_at = time.monotonic()
@@ -1652,6 +1815,8 @@ async def call_socket(
                     ignore_until = 0.0
                     barge_hits = 0
                     barge_armed_at = 0.0
+                    # The client already held its playback, but there is no turn to interrupt.
+                    await _resume_playback()
                 continue
             if payload.get("type") == "audio":
                 mime = payload.get("mime")

@@ -1,13 +1,22 @@
+---
+import AgentSignalsPanel from '../agent-signals/AgentSignalsPanel.astro';
+import ContentLoader from '../ui/ContentLoader.astro';
+import EmptyState from '../ui/EmptyState.astro';
+---
+
 <section class="section-view section-view--dashboard analytics-dashboard" data-section="dashboard" aria-label="Dashboard" aria-hidden="true">
   <div class="dashboard-page">
-    <header class="dashboard-topline">
-      <div class="dashboard-heading"><h2>Rendimiento comercial</h2></div>
-      <div class="dashboard-filters" aria-label="Filtrar métricas"><label class="sr-only" for="dashboardFrom">Desde</label><input id="dashboardFrom" type="date" /><label class="sr-only" for="dashboardTo">Hasta</label><input id="dashboardTo" type="date" /><button id="dashboardApply" type="button">Actualizar</button></div>
-    </header>
-    <div class="dashboard-state" id="dashboardLoading" role="status"><p>Cargando métricas…</p></div>
-    <div class="dashboard-state" id="dashboardError" hidden role="alert"><div><p>No pudimos cargar las métricas.</p><button id="dashboardRetry" type="button">Reintentar</button></div></div>
-    <div class="dashboard-state" id="dashboardEmpty" hidden><p>Aún no hay datos comerciales para este periodo.</p></div>
-    <div class="dashboard-data" id="dashboardData" hidden>
+    <ContentLoader id="dashboardLoading" copy="Cargando métricas…" class="dashboard-state" />
+    <div id="dashboardContent" hidden inert aria-hidden="true">
+      <header class="dashboard-topline">
+        <div class="dashboard-heading"><h2>Rendimiento comercial</h2></div>
+        <div class="dashboard-filters" aria-label="Filtrar métricas"><label class="sr-only" for="dashboardFrom">Desde</label><input id="dashboardFrom" type="date" /><label class="sr-only" for="dashboardTo">Hasta</label><input id="dashboardTo" type="date" /><button id="dashboardApply" type="button">Actualizar</button></div>
+      </header>
+      <EmptyState id="dashboardError" class="dashboard-state" tone="error" icon="triangle-alert" title="No pudimos cargar las métricas." role="alert" hidden>
+        <button id="dashboardRetry" type="button">Reintentar</button>
+      </EmptyState>
+      <EmptyState id="dashboardEmpty" class="dashboard-state" icon="bar-chart-3" title="Aún no hay datos comerciales para este periodo." hidden />
+      <div class="dashboard-data" id="dashboardData" hidden>
       <div class="dashboard-kpis">
         <article class="dashboard-kpi"><small>Revenue generado</small><strong id="dashboardRevenue">—</strong><span id="dashboardRevenueDelta" class="dashboard-kpi__delta">vs período anterior</span><div class="dashboard-sparkline" id="dashboardRevenueSparkline" role="img" aria-label="Tendencia de revenue generado"></div></article>
         <article class="dashboard-kpi"><small>Ventas ganadas</small><strong id="dashboardWon">—</strong><span id="dashboardWonDelta" class="dashboard-kpi__delta">vs período anterior</span><div class="dashboard-sparkline" id="dashboardWonSparkline" role="img" aria-label="Tendencia de ventas ganadas"></div></article>
@@ -15,6 +24,16 @@
         <article class="dashboard-kpi dashboard-kpi--priority"><small>Revenue recuperado</small><strong id="dashboardRecoveredRevenue">—</strong><span id="dashboardRecoveredRevenueDelta" class="dashboard-kpi__delta">vs período anterior</span><div class="dashboard-sparkline" id="dashboardRecoveredRevenueSparkline" role="img" aria-label="Tendencia de revenue recuperado"></div></article>
       </div>
       <div class="dashboard-secondary"><span><strong id="dashboardConversations">—</strong> conversaciones</span><span><strong id="dashboardRecoveredSales">—</strong> ventas recuperadas</span><span class="dashboard-secondary__recovery"><span><strong id="dashboardRecoveryRate">—</strong> tasa de recuperación</span><span class="dashboard-progress" aria-hidden="true"><span id="dashboardRecoveryMeter"></span></span></span></div>
+      <section class="dashboard-signals" id="dashboardAgentSignalsSection" hidden aria-labelledby="dashboardAgentSignalsTitle">
+        <div class="dashboard-signals__head">
+          <div>
+            <p class="dashboard-signals__kicker">Promedio del período</p>
+            <h3 id="dashboardAgentSignalsTitle">Señales finales de las llamadas</h3>
+          </div>
+          <p class="dashboard-signals__sample" id="dashboardAgentSignalsSample">—</p>
+        </div>
+        <AgentSignalsPanel id="dashboardAgentSignals" categories={false} />
+      </section>
       <div class="dashboard-grid">
         <article class="dashboard-card dashboard-card--conversion"><div class="dashboard-card-head"><div><h3>Conversión diaria</h3><p>Qué proporción de oportunidades termina en venta.</p></div></div><div class="dashboard-chart-host" id="dashboardConversionChart" role="img" aria-describedby="dashboardConversionInsight" aria-label="Tasa de conversión por día"></div><p class="dashboard-chart-insight" id="dashboardConversionInsight"></p></article>
         <article class="dashboard-card dashboard-card--recovery"><div class="dashboard-card-head"><div><h3>Recuperación</h3><p>Qué parte del seguimiento vuelve a convertirse.</p></div></div><div class="dashboard-chart-host" id="dashboardRecoveryChart" role="img" aria-describedby="dashboardRecoveryInsight" aria-label="Porcentaje de oportunidades recuperadas"></div><p class="dashboard-chart-insight" id="dashboardRecoveryInsight"></p></article>
@@ -23,6 +42,7 @@
         <article class="dashboard-card dashboard-card--objections"><div class="dashboard-card-head"><div><h3>Objeciones: resueltas y pendientes</h3><p>Qué obstáculos aparecen y cuánto se resuelve.</p></div></div><div class="dashboard-chart-host" id="dashboardObjectionsChart" role="img" aria-describedby="dashboardObjectionsInsight" aria-label="Resolución de objeciones por categoría"></div><p class="dashboard-chart-insight" id="dashboardObjectionsInsight"></p></article>
         <article class="dashboard-card dashboard-card--products"><div class="dashboard-card-head"><div><h3>Interés y ventas por producto</h3><p>Compara popularidad con capacidad de cierre.</p></div></div><div class="dashboard-chart-host dashboard-chart-host--products" id="dashboardProductsChart" role="img" aria-describedby="dashboardProductsInsight" aria-label="Interés y ventas por producto"></div><p class="dashboard-chart-insight" id="dashboardProductsInsight"></p></article>
         <article class="dashboard-card dashboard-card--heatmap"><div class="dashboard-card-head"><div><h3>Dónde aparece la fricción</h3><p>Concentración de objeciones por producto.</p></div></div><div class="dashboard-chart-host" id="dashboardObjectionProductChart" role="img" aria-describedby="dashboardHeatmapInsight" aria-label="Mapa de objeciones por producto"></div><p class="dashboard-chart-insight" id="dashboardHeatmapInsight"></p></article>
+      </div>
       </div>
     </div>
   </div>
