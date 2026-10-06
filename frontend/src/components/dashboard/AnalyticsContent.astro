@@ -24,11 +24,11 @@ import EmptyState from '../ui/EmptyState.astro';
         <article class="dashboard-kpi dashboard-kpi--priority"><small>Revenue recuperado</small><strong id="dashboardRecoveredRevenue">—</strong><span id="dashboardRecoveredRevenueDelta" class="dashboard-kpi__delta">vs período anterior</span><div class="dashboard-sparkline" id="dashboardRecoveredRevenueSparkline" role="img" aria-label="Tendencia de revenue recuperado"></div></article>
       </div>
       <div class="dashboard-secondary"><span><strong id="dashboardConversations">—</strong> conversaciones</span><span><strong id="dashboardRecoveredSales">—</strong> ventas recuperadas</span><span class="dashboard-secondary__recovery"><span><strong id="dashboardRecoveryRate">—</strong> tasa de recuperación</span><span class="dashboard-progress" aria-hidden="true"><span id="dashboardRecoveryMeter"></span></span></span></div>
-      <section class="dashboard-signals" id="dashboardAgentSignalsSection" hidden aria-labelledby="dashboardAgentSignalsTitle">
+      <section class="dashboard-card dashboard-signals" id="dashboardAgentSignalsSection" hidden aria-labelledby="dashboardAgentSignalsTitle">
         <div class="dashboard-signals__head">
           <div>
-            <p class="dashboard-signals__kicker">Promedio del período</p>
             <h3 id="dashboardAgentSignalsTitle">Señales finales de las llamadas</h3>
+            <p>Qué tan bien se sienten, avanzan y confían las conversaciones con el agente.</p>
           </div>
           <p class="dashboard-signals__sample" id="dashboardAgentSignalsSample">—</p>
         </div>

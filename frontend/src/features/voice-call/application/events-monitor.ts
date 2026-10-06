@@ -138,7 +138,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
     if (agentBubble) return agentBubble;
     const row = appendRow(
       'message-row agent',
-      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message"></div></div>`,
+      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message"></div></div>`,
     );
     agentBubble = row.querySelector('.message');
     return agentBubble as HTMLElement;

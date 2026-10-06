@@ -148,7 +148,8 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
           const target = event.target;
           if (!(target instanceof Element)) return;
           const dashboard = target.closest('[data-view="dashboard"]');
-          if (!dashboard || !window.location.pathname.startsWith('/calls')) return;
+          const path = window.location.pathname;
+          if (!dashboard || path === '/analytics' || path.startsWith('/analytics/')) return;
           event.preventDefault();
           const link = document.createElement('a');
           link.href = '/analytics';

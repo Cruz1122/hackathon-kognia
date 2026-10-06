@@ -1,4 +1,5 @@
 import { showToast } from '../voice-call/infrastructure/toast';
+import { revealLoadedContent, showContentLoader } from '../ui/loading-reveal';
 
 type TraceSpan = {
   name: string;
@@ -60,6 +61,10 @@ type TracesPayload = {
 type SpanTone = 'rag' | 'llm' | 'tool' | 'error' | 'other';
 
 const REFRESH_MS = 5000;
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -144,9 +149,10 @@ export function bootDev(apiUrl: string, token: string): () => void {
   const detailEmpty = document.querySelector<HTMLElement>('#devDetailEmpty');
   const search = document.querySelector<HTMLInputElement>('#devSearch');
   const loading = document.querySelector<HTMLElement>('#devLoading');
+  const content = document.querySelector<HTMLElement>('#devContent');
   const error = document.querySelector<HTMLElement>('#devError');
   const board = document.querySelector<HTMLElement>('#devBoard');
-  if (!list || !callsCount || !callsEmpty || !detailBody || !detailEmpty || !search || !loading || !error || !board) {
+  if (!list || !callsCount || !callsEmpty || !detailBody || !detailEmpty || !search || !loading || !content || !error || !board) {
     return () => undefined;
   }
 
@@ -460,7 +466,7 @@ export function bootDev(apiUrl: string, token: string): () => void {
     user.append(el('span', 'dev-bubble__label', 'Cliente'));
     user.append(el('p', 'dev-bubble__text', turn.prompt || '—'));
     const agent = el('div', 'dev-bubble dev-bubble--agent');
-    agent.append(el('span', 'dev-bubble__label', 'Agente'));
+    agent.append(el('span', 'dev-bubble__label', 'Wane'));
     agent.append(el('p', 'dev-bubble__text', turn.answer || 'Sin respuesta registrada.'));
     transcript.append(user, agent);
     detailBody!.append(transcript);
@@ -490,20 +496,37 @@ export function bootDev(apiUrl: string, token: string): () => void {
     signature = currentSignature();
   }
 
-  async function refresh(notify = false): Promise<void> {
+  async function revealState(prepare: () => Promise<void>, useCurtain: boolean): Promise<void> {
+    if (useCurtain && !loading.hidden) {
+      await revealLoadedContent(loading, content, undefined, prepare);
+      return;
+    }
+    loading.hidden = true;
+    loading.setAttribute('aria-hidden', 'true');
+    show(content, true);
+    await prepare();
+  }
+
+  async function refresh(notify = false, useCurtain = false): Promise<void> {
     if (busy || disposed) return;
     busy = true;
     try {
       await loadCalls();
-      show(loading, false);
-      show(error, false);
-      show(board, true);
-      await refreshDetail(false);
+      await revealState(async () => {
+        show(error, false);
+        show(board, true);
+        await refreshDetail(false);
+        await nextPaint();
+      }, useCurtain);
       if (notify) showToast('Trazas actualizadas', 'success');
     } catch {
       if (disposed) return;
-      show(loading, false);
-      show(error, true);
+      await revealState(async () => {
+        show(board, false);
+        show(error, true);
+        await nextPaint();
+      }, useCurtain);
+      if (notify) showToast('No pudimos actualizar las trazas', 'error');
     } finally {
       busy = false;
     }
@@ -515,12 +538,12 @@ export function bootDev(apiUrl: string, token: string): () => void {
     void refresh(true);
   });
   document.querySelector('#devRetry')?.addEventListener('click', () => {
-    show(error, false);
-    show(loading, true);
-    void refresh();
+    showContentLoader(loading, content);
+    void refresh(false, true);
   });
 
-  void refresh();
+  showContentLoader(loading, content);
+  void refresh(false, true);
   const timer = window.setInterval(() => {
     void refresh();
   }, REFRESH_MS);

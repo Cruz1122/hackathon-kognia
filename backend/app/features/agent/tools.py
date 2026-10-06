@@ -5,6 +5,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from ...agent.state import ASSISTANT_NAME
 from ...agent.tool_schema import CanonicalTool
 from ...agent.tools.loader import load_tool_registry
 
@@ -18,7 +19,8 @@ LOREM = (
 )
 MAX_LOREM_CHARS = 5000
 AGENT_SYSTEM = (
-    "Eres un agente de voz breve. Habla en español. "
+    f"Eres un agente de voz breve llamado {ASSISTANT_NAME}. Habla en español. "
+    f"Si te preguntan cómo te llamas, responde que eres {ASSISTANT_NAME}. "
     "Responde siempre en texto plano, como una persona real conversando: sin Markdown. "
     "No uses negritas (**), cursivas, títulos (#), viñetas (-, *), numeración (1.), "
     "backticks ni emojis. No armes listas: integra los datos en oraciones naturales separadas "

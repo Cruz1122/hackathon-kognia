@@ -302,6 +302,7 @@ def test_ws_fresh_demo_greets_and_answers_hola_without_false_apology(
             assert websocket.receive_json()["type"] == "turn.started"
             welcome = websocket.receive_json()
             assert welcome == {"type": "agent.token", "text": main._call_demo_greeting()}
+            assert "Soy Wane" in welcome["text"]
             assert "¿cómo te llamas?" in welcome["text"].lower()
             assert websocket.receive_json()["type"] == "turn.completed"
 
@@ -354,7 +355,10 @@ def test_ws_demo_requests_hangup_only_after_successful_booking(
     async def fake_list_messages(*args, **kwargs):
         return [SimpleNamespace(role=MessageRole.ASSISTANT, content="¿Cómo te llamas?")]
 
+    prompts: list[str] = []
+
     async def fake_agent(prompt, *, messages, llm=None):
+        prompts.append(prompt)
         yield "tool.completed", {"tool": "create_booking", "ok": booking_succeeded}
         yield "token", {"text": "Tu reserva está confirmada. Gracias por llamar."}
         yield "done", {"provider": "fake", "model": "fake"}
@@ -375,10 +379,14 @@ def test_ws_demo_requests_hangup_only_after_successful_booking(
                 event = websocket.receive_json()
                 if event["type"] == "turn.completed":
                     break
+            if booking_succeeded:
+                websocket.send_json({"type": "turn", "prompt": "¿Continuamos?"})
+                websocket.close()
     finally:
         client.close()
 
     assert event["end_call"] is booking_succeeded
+    assert prompts == ["sí, confirmo"]
 
 
 def test_ws_call_forwards_only_last_context_messages(
@@ -735,6 +743,64 @@ def test_ws_interrupt_after_turn_completed_still_transcribes(
     types = [event["type"] for event in events]
     assert "customer.transcript" in types
     assert "turn.started" in types
+
+
+def test_ws_booking_completion_ignores_turns_after_audio_playback_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    """A confirmed booking must leave the call unable to create another agent turn."""
+    _session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+    prompts: list[str] = []
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return [SimpleNamespace(role=MessageRole.ASSISTANT, content="Bienvenida previa")]
+
+    async def booking_agent(prompt, *, messages, llm=None):
+        prompts.append(prompt)
+        yield "tool.completed", {"tool": "create_booking", "ok": True}
+        yield "token", {"text": "Tu reserva quedó confirmada. Gracias por llamar."}
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stt_provider", FakeSTT())
+    monkeypatch.setattr(main, "stream_agent", booking_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    loud = b"\x00\x40" * 1600
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+            websocket.send_json({"type": "pcm.start", "sample_rate": 16000})
+            websocket.send_bytes(loud)
+
+            completed = None
+            while True:
+                event = websocket.receive_json()
+                if event["type"] == "turn.completed":
+                    completed = event
+                    break
+
+            assert completed["end_call"] is True
+            # This frame reaps the completed turn before any new silence/turn logic runs.
+            websocket.send_bytes(b"\x00\x00" * 160)
+            websocket.send_json({"type": "turn", "prompt": "¿Continuamos?"})
+            websocket.close()
+    finally:
+        client.close()
+
+    assert prompts == ["transcripción local"]
 
 
 def test_ws_does_not_attach_foreign_conversation(

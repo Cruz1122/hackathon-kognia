@@ -186,7 +186,7 @@ export function bootLiveCall(
   function messageHtml(speaker: 'customer' | 'agent', text: string, atMs: number): string {
     const time = formatTime(atMs / 1000);
     if (speaker === 'agent') {
-      return `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message complete">${escapeHtml(text)}<span class="message-time">${time}</span></div></div>`;
+      return `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message complete">${escapeHtml(text)}<span class="message-time">${time}</span></div></div>`;
     }
     return `<div class="message-wrap"><div class="message-meta"><span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i></div><div class="message complete">${escapeHtml(text)}<span class="message-time">${time}</span></div></div>`;
   }

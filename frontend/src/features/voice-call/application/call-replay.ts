@@ -373,7 +373,7 @@ export function bootCallReplay(
         addItem(
           event.offset_ms,
           'message-row agent',
-          `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message complete">${escapeHtml(String(payload.text ?? ''))}<span class="message-time">${time}</span></div></div>`,
+          `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message complete">${escapeHtml(String(payload.text ?? ''))}<span class="message-time">${time}</span></div></div>`,
         );
       }
       if (event.type === 'tool.started') {

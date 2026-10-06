@@ -74,6 +74,7 @@ async def test_fresh_call_onboarding_introduces_role_and_asks_one_question(monke
     monkeypatch.setattr(runtime_module, '_speak', speak)
     await runtime._greet(call)
     text = speak.call_args.args[2]
+    assert 'Soy Wane' in text
     assert 'asistente del restaurante' in text
     assert text.count('¿') == 1
     assert '¿cómo te llamas?' in text.lower()

@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
-from ..agent.state import greeting
+from ..agent.state import ASSISTANT_NAME, greeting
 from .audio import mixed_call_wav, pcm16le_rms, resolve_byte_order, timeline_ms, wire_to_pcm16le
 from .bridge import _speak, run_agent_turn
 from .frames import CHANNEL_CUSTOMER, encode_audio_frame
@@ -644,7 +644,7 @@ class TelephonyRuntime:
                 await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
             session.idle_since = time.monotonic()
             return
-        text = f'{greeting()}. Soy el asistente del restaurante. Para empezar, ¿cómo te llamas?'
+        text = f'{greeting()}. Soy {ASSISTANT_NAME}, tu asistente del restaurante. Para empezar, ¿cómo te llamas?'
         session.greeted = True
         session.turn_task = asyncio.current_task()  # barge-in can cancel the greeting
         session.history.append({'role': 'assistant', 'content': text})

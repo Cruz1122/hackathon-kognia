@@ -110,23 +110,6 @@
 .dev-json summary:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
 .dev-json__body { max-height: 340px; margin: 8px 0 0; overflow: auto; border-radius: min(var(--radius-min), 50%); background: var(--ui-graphite); color: var(--ui-paper); padding: 12px 14px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.dev-loader { position: relative; width: 64px; height: 64px; filter: url(#ui-goo); -webkit-filter: url(#ui-goo); }
-.dev-loader__dot { position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; margin: -4px; border-radius: 50%; background: var(--ui-amber); }
-.dev-loader__dot.d1 { transform: translate(0, -24px); }
-.dev-loader__dot.d2 { transform: translate(17px, -17px); }
-.dev-loader__dot.d3 { transform: translate(24px, 0); }
-.dev-loader__dot.d4 { transform: translate(17px, 17px); }
-.dev-loader__dot.d5 { transform: translate(0, 24px); }
-.dev-loader__dot.d6 { transform: translate(-17px, 17px); }
-.dev-loader__dot.d7 { transform: translate(-24px, 0); }
-.dev-loader__dot.d8 { transform: translate(-17px, -17px); }
-.dev-loader__runner { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; margin: -6px; border-radius: 50%; background: var(--ui-amber); animation: dev-runner 7.8s cubic-bezier(.55, .02, .45, .98) infinite; }
-@keyframes dev-runner {
-  from { transform: rotate(0deg) translateX(24px); }
-  to { transform: rotate(360deg) translateX(24px); }
-}
-.dashboard-state .dev-loader { margin: 0 auto 14px; }
-
 @media (max-width: 1100px) {
   .dev-page.dashboard-page { padding: 32px 24px 80px; }
   .dev-board { grid-template-columns: 1fr; min-height: 0; }
@@ -139,7 +122,4 @@
   .dev-refresh { justify-content: center; }
   .dev-transcript { grid-template-columns: 1fr; }
   .dev-detail__body { padding: 16px 14px 20px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dev-loader__runner { animation: none; }
 }

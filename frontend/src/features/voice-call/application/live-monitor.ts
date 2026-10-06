@@ -8,7 +8,7 @@ import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
 type CallMonitorAudio = {
-  pushAmplitude: (value: number) => void;
+  setLevels: (customer: number, agent: number) => void;
   connectAnalyser: (analyser: AnalyserNode, sampleRate?: number) => void;
   connectPlaybackAnalyser?: (analyser: AnalyserNode, sampleRate?: number) => void;
   disconnectPlaybackAnalyser?: () => void;
@@ -299,7 +299,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (agentBubble) return agentBubble;
     const row = appendRow(
       'message-row agent',
-      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Agente</span></div><div class="message"></div></div>`,
+      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message"></div></div>`,
     );
     agentBubble = row.querySelector('.message');
     return agentBubble as HTMLElement;
@@ -391,7 +391,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     capture.onLevel((level) => {
       if (!live || paused) return;
       waveApi?.setPlaying?.(true);
-      waveApi?.pushAmplitude(Math.max(level, pcm.voiceLevel()));
+      waveApi?.setLevels(level, pcm.voiceLevel());
     });
     const started = await capture.startPcmStream((frame) => {
       if (!live || paused || !connected || !socket || socket.readyState !== WebSocket.OPEN) return;
@@ -414,7 +414,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         if (level < noiseFloor + 0.04) noiseFloor = Math.max(0.06, noiseFloor * 0.94 + level * 0.06);
       }
       waveApi?.setPlaying?.(true);
-      waveApi?.pushAmplitude(Math.max(level, pcm.voiceLevel()));
+      waveApi?.setLevels(level, pcm.voiceLevel());
       socket.send(frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength));
     });
     if (!started) {
@@ -542,7 +542,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         pcm.enqueue(bytes, () => undefined, () => undefined);
         hookTtsWave();
         waveApi?.setPlaying?.(true);
-        waveApi?.pushAmplitude(Math.max(capture.voiceLevel(), pcm.voiceLevel()));
+        waveApi?.setLevels(capture.voiceLevel(), pcm.voiceLevel());
         return;
       }
       try {

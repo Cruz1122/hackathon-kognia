@@ -46,7 +46,7 @@ from .db.session import check_database, dispose_engine, get_db
 from .platform.redis import close_redis
 from .platform.tracing import TraceRecorder, save_trace
 from .features.agent.service import context_window, stream_agent
-from .agent.state import greeting
+from .agent.state import ASSISTANT_NAME, greeting
 from .agent.tools.contracts import ToolContext
 from .features.transcription.service import pcm_speech_features, stt_label
 from .features.chat.schemas import (
@@ -1064,7 +1064,7 @@ async def _speak_chunk(
 
 
 def _call_demo_greeting() -> str:
-    return f"{greeting()}. Soy el asistente del restaurante. Para empezar, ¿cómo te llamas?"
+    return f"{greeting()}. Soy {ASSISTANT_NAME}, tu asistente del restaurante. Para empezar, ¿cómo te llamas?"
 
 
 async def _run_call_turn(
@@ -1077,7 +1077,7 @@ async def _run_call_turn(
     conversation_id: uuid.UUID,
     user_id: uuid.UUID | None = None,
     call_id: uuid.UUID | None = None,
-) -> None:
+) -> bool:
     try:
         await _persist_message(
             session,
@@ -1094,7 +1094,7 @@ async def _run_call_turn(
             organization_id=organization_id,
             conversation_id=conversation_id,
         )
-        return
+        return False
     recorder = TraceRecorder(
         call_id=str(call_id) if call_id else None,
         conversation_id=str(conversation_id),
@@ -1199,7 +1199,7 @@ async def _run_call_turn(
                     organization_id=organization_id,
                     conversation_id=conversation_id,
                 )
-                return
+                return False
             history.extend(
                 [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
             )
@@ -1211,6 +1211,7 @@ async def _run_call_turn(
             organization_id=organization_id,
             conversation_id=conversation_id,
         )
+        return reservation_confirmed and not failed
     except asyncio.CancelledError:
         speaker.cancel()
         try:
@@ -1245,6 +1246,7 @@ async def _run_call_turn(
             )
         except Exception:
             pass
+        return False
     finally:
         await save_trace(recorder)
 
@@ -1436,13 +1438,14 @@ async def call_socket(
         barge_pending = False  # playback held while we wait to see if the barge was real noise
         barge_last_voice_at = 0.0
         barge_resume_task: asyncio.Task[None] | None = None
-        turn_task: asyncio.Task[None] | None = None
+        turn_task: asyncio.Task[bool] | None = None
+        ending_call = False
         barge_pcm = bytearray()  # bounded pre-roll so a barge does not lose the first words
         stream = await asyncio.to_thread(stt_provider.create_stream)
         idle_since = time.monotonic()
         last_silence_prompt = None
 
-        async def _silence_prompt(text: str) -> None:
+        async def _silence_prompt(text: str) -> bool:
             await _send_call_event(websocket, 'agent.token', {'text': text},
                 organization_id=organization_id, conversation_id=conversation_id)
             history.append({'role': 'assistant', 'content': text})
@@ -1453,12 +1456,14 @@ async def call_socket(
                 conversation_id=conversation_id)
             await _send_call_event(websocket, 'turn.completed', {},
                 organization_id=organization_id, conversation_id=conversation_id)
+            return False
 
-        async def _speak_greeting(text: str) -> None:
+        async def _speak_greeting(text: str) -> bool:
             await _speak_chunk(websocket, text, organization_id=organization_id,
                 conversation_id=conversation_id)
             await _send_call_event(websocket, 'turn.completed', {},
                 organization_id=organization_id, conversation_id=conversation_id)
+            return False
 
         if not history:
             welcome = _call_demo_greeting()
@@ -1552,7 +1557,8 @@ async def call_socket(
             barge_armed_at = 0.0
 
         async def _reap_turn() -> None:
-            nonlocal turn_task, last_partial, last_voice_at, first_voice_at, ignore_until, barge_armed_at, barge_hits, stream
+            nonlocal ending_call, turn_task, last_partial, last_voice_at, first_voice_at
+            nonlocal ignore_until, barge_armed_at, barge_hits, stream
             if turn_task is None or not turn_task.done():
                 return
             task = turn_task
@@ -1568,7 +1574,8 @@ async def call_socket(
                 # The reply finished while its playback was held: let the client drain it.
                 await _resume_playback()
             try:
-                await task
+                if await task:
+                    ending_call = True
             except asyncio.CancelledError:
                 pass
             except Exception:
@@ -1578,6 +1585,8 @@ async def call_socket(
 
         async def _start_turn(prompt: str) -> None:
             nonlocal turn_task, last_partial, last_voice_at, first_voice_at, stream, ignore_until, barge_armed_at, barge_hits
+            if ending_call:
+                return
             if barge_pending:
                 await _confirm_barge()
             flushed = ""
@@ -1632,11 +1641,13 @@ async def call_socket(
                     except (asyncio.CancelledError, Exception):
                         pass
                 break
+            await _reap_turn()
+            if ending_call:
+                continue
             raw = message.get("bytes")
             text = message.get("text")
             if raw is not None:
                 if pcm_mode:
-                    await _reap_turn()
                     level, voiced, rms = pcm_speech_features(raw, sample_rate)
                     await websocket.send_json({"type": "wave.level", "value": level, "source": "customer"})
                     now = time.monotonic()
@@ -1710,6 +1721,8 @@ async def call_socket(
                     if silent or ended or too_long:
                         await _start_turn(prompt)
                     continue
+                if ending_call:
+                    continue
                 try:
                     async with transcription_lock:
                         prompt = await asyncio.to_thread(stt_provider.transcribe_audio, raw, audio_mime)
@@ -1733,7 +1746,7 @@ async def call_socket(
                     organization_id=organization_id,
                     conversation_id=conversation_id,
                 )
-                await _run_call_turn(
+                ending_call = await _run_call_turn(
                     websocket,
                     prompt,
                     history,
@@ -1742,6 +1755,8 @@ async def call_socket(
                     conversation_id=conversation_id,
                     user_id=user.id,
                 )
+                continue
+            if ending_call:
                 continue
             if not text:
                 await _send_call_event(
@@ -1842,7 +1857,7 @@ async def call_socket(
                     conversation_id=conversation_id,
                 )
                 continue
-            await _run_call_turn(
+            ending_call = await _run_call_turn(
                 websocket,
                 prompt,
                 history,

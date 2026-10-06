@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
+ASSISTANT_NAME = 'Wane'
+
 
 def now() -> datetime:
     return datetime.now(UTC)

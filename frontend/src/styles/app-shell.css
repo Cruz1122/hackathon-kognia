@@ -31,6 +31,8 @@ button, input { font: inherit; }
 .app-sidebar .app-nav__item, .app-sidebar .app-nav__label { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 16px; width: min(100%, 320px); min-width: 0; margin: 0 auto; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ui-paper); font: inherit; font-size: clamp(1.05rem, 1.35vw, 1.35rem); font-weight: 700; line-height: 1.2; padding: 16px 18px; text-align: left; text-decoration: none; transition: color .24s ease, transform .24s ease; }
 .app-sidebar .app-nav__item, .app-sidebar .app-nav__label { cursor: pointer; }
 .app-sidebar .app-nav__item span, .app-sidebar .app-nav__label span { min-width: 0; white-space: nowrap; }
+.app-sidebar .app-nav__icon { display: grid; width: 28px; height: 28px; place-items: center; align-self: center; line-height: 0; }
+.app-sidebar .app-nav__icon svg { display: block; width: 100%; height: 100%; }
 .app-sidebar .app-nav__label { opacity: .78; }
 .app-sidebar .app-nav__item svg, .app-sidebar .app-nav__label svg { width: clamp(22px, 2vw, 28px); height: clamp(22px, 2vw, 28px); flex-shrink: 0; stroke-width: 2.3; }
 .app-sidebar .app-nav__item:not(.app-nav__item--disabled):hover, .app-sidebar .app-nav__label:hover { background: transparent; color: var(--ui-amber); transform: translateX(3px); }
