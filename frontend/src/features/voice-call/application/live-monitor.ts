@@ -1,8 +1,8 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
-import { backendMessage, errorMessage } from '../infrastructure/backend-error';
+import { backendErrorFromResponse, backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
-import { redirectToLogin } from '../../auth/session-guard';
-import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
+import { conversationIdKey, redirectToLogin } from '../../auth/session-guard';
+import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
@@ -99,7 +99,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const pcm = new PcmAudioQueue();
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/call`;
   const authToken = typeof token === 'string' ? token.trim() : '';
-  const attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+  let attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
   if (authToken && attachedConversationId) {
     void fetch(`${apiUrl}/conversations/${attachedConversationId}/agent-state`, {
       headers: { Authorization: `Bearer ${authToken}` },
@@ -322,9 +322,10 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   function addTool(id: string, payload: Record<string, unknown>): void {
     const detail = toolDetailFromEvent(payload);
     const title = detail.name;
+    const status = String(payload.status ?? 'Ejecutando');
     appendRow(
       'tool-row',
-      `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">Cargando…</div></div></button>`,
+      `<button type="button" class="tool-call" id="${id}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(title)}</div><div class="tool-status loading">${escapeHtml(status)}</div></div>${toolCallBusyMarkup()}</button>`,
     );
   }
 
@@ -344,6 +345,8 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       statusNode.textContent = String(payload.status ?? 'Completado');
       statusNode.classList.remove('loading');
     }
+    const loader = tool.querySelector('.loader') as HTMLElement | null;
+    if (loader) window.setTimeout(() => { loader.style.display = 'none'; }, 420);
   }
 
   function addRetrieval(id: string, payload: unknown): void {
@@ -577,9 +580,30 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     });
   }
 
+  async function openCallConversation(): Promise<string> {
+    const response = await fetch(`${apiUrl}/conversations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ channel: 'voice-demo' }),
+    });
+    if (!response.ok) {
+      throw await backendErrorFromResponse(response, 'No se pudo abrir una conversación nueva.');
+    }
+    const payload: unknown = await response.json();
+    const record = payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {};
+    const nextId = typeof record.id === 'string' ? record.id.trim() : '';
+    if (!nextId) throw new Error('La API no devolvió una conversación válida.');
+    return nextId;
+  }
+
   async function startCall(): Promise<void> {
     if (live && !paused) return;
-    if (!authToken || !attachedConversationId) {
+    if (!authToken) {
       showTransportError('No se puede iniciar la llamada: faltan credenciales.');
       return;
     }
@@ -587,6 +611,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       await resumeCall();
       return;
     }
+    const nextConversationId = await openCallConversation();
+    attachedConversationId = nextConversationId;
+    sessionStorage.setItem(conversationIdKey, nextConversationId);
     capture.primeContext();
     pcm.prime();
     live = true;
@@ -687,6 +714,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
+      showToast(message, 'error');
     });
   });
   pauseBtn.addEventListener('click', () => {
@@ -694,7 +722,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   });
   restartBtn.addEventListener('click', () => {
     void restartCall().catch((error) => {
-      note(errorMessage(error, 'No se pudo reiniciar la llamada.'), 'phone-off');
+      const message = errorMessage(error, 'No se pudo reiniciar la llamada.');
+      note(message, 'phone-off');
+      showToast(message, 'error');
     });
   });
   syncControls();
@@ -708,6 +738,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
+      showToast(message, 'error');
     });
   }
 

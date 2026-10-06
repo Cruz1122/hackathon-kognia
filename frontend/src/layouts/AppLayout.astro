@@ -17,7 +17,11 @@ interface Props {
 const { title = 'Kognia — Analíticas' } = Astro.props;
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 const path = Astro.url.pathname;
-const activeRoute = path === '/calls' || path.startsWith('/calls/') ? 'calls' : 'analytics';
+const activeRoute = path === '/dev' || path.startsWith('/dev/')
+  ? 'dev'
+  : path === '/calls' || path.startsWith('/calls/')
+    ? 'calls'
+    : 'analytics';
 const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved');
 ---
 
@@ -122,11 +126,15 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
       }
 
       function syncNavActive(): void {
-        const calls = window.location.pathname === '/calls' || window.location.pathname.startsWith('/calls/');
+        const path = window.location.pathname;
+        const route = path === '/dev' || path.startsWith('/dev/')
+          ? 'dev'
+          : path === '/calls' || path.startsWith('/calls/')
+            ? 'calls'
+            : 'analytics';
         document.querySelectorAll<HTMLElement>('#appNav [data-route], #appNav [data-view="dashboard"]').forEach((item) => {
-          const isCalls = item.dataset.route === 'calls';
-          const isDashboard = item.dataset.route === 'analytics' || item.dataset.view === 'dashboard';
-          const active = (calls && isCalls) || (!calls && isDashboard);
+          const itemRoute = item.dataset.route === 'calls' ? 'calls' : item.dataset.route === 'dev' ? 'dev' : 'analytics';
+          const active = itemRoute === route;
           item.classList.toggle('is-active', active);
           if (active) item.setAttribute('aria-current', 'page');
           else item.removeAttribute('aria-current');

@@ -369,10 +369,11 @@ def test_context_window_keeps_last_turns() -> None:
     ]
     windowed = context_window(history)
 
-    # 6 turns of (user, assistant) = last 12 messages, starting on a user turn.
-    assert len(windowed) == 12
+    # Last 6 turns stay in the sliding window, and the opening user turn is pinned.
+    assert windowed[0] == history[0]
+    assert windowed[1] == history[1]
+    assert windowed[-12:] == history[-12:]
     assert windowed[0]["role"] == "user"
-    assert windowed == history[-12:]
 
 
 def test_context_window_keeps_consecutive_user_fragments_with_their_turn() -> None:
@@ -424,6 +425,32 @@ def test_context_window_preserves_fragmented_speech_turn() -> None:
     assert context_window(history) == history
 
 
+def test_context_window_pins_opening_user_turn() -> None:
+    from app.features.agent.service import context_window
+
+    opening = [
+        {"role": "user", "content": "¿Cómo puedo hacer una reserva?"},
+        {"role": "assistant", "content": "Dime fecha y hora."},
+    ]
+    later = [
+        {"role": "user", "content": f"u{index}"} if index % 2 == 0 else {"role": "assistant", "content": f"a{index}"}
+        for index in range(20)
+    ]
+    windowed = context_window([*opening, *later])
+
+    assert windowed[:2] == opening
+    assert windowed[-12:] == later[-12:]
+    assert all(item["role"] in {"user", "assistant"} for item in windowed)
+
+
+def test_agent_system_excludes_instructions_from_the_call() -> None:
+    from app.features.agent.tools import AGENT_SYSTEM
+
+    normalized = AGENT_SYSTEM.casefold()
+    assert "no forman parte de la llamada" in normalized
+    assert "primer mensaje del usuario" in normalized
+
+
 @pytest.mark.asyncio
 async def test_ask_truncates_history_to_context_window(
     monkeypatch: pytest.MonkeyPatch,
@@ -451,7 +478,7 @@ async def test_ask_truncates_history_to_context_window(
         )
 
     assert response.status_code == 200
-    assert captured == [*history[-12:], {"role": "user", "content": "¿Y ahora?"}]
+    assert captured == [*history[:2], *history[-12:], {"role": "user", "content": "¿Y ahora?"}]
 
 
 @pytest.mark.asyncio

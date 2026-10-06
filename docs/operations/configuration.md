@@ -23,6 +23,13 @@ Plantilla: `backend/.env.example`. No versionar `.env` ni keys.
 
 `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`
 
+## Precios (modo dev)
+
+| Variable | Default | Uso |
+| --- | --- | --- |
+| `PRICING_CACHE_TTL_SECONDS` | `21600` (6 h) | TTL de la caché Redis del catálogo |
+| `PRICING_SOURCE_URL` | `https://openrouter.ai/api/v1/models` | catálogo de precios público |
+
 ## STT / TTS
 
 | Variable | Default |

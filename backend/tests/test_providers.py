@@ -390,6 +390,61 @@ async def test_openai_merges_knowledge_into_the_system_prompt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_reports_usage_and_requests_it() -> None:
+    captured: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured
+        captured = request
+        body = (
+            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+            'data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    config = next(item for item in get_model_chain(AppEnv.TEST) if item.provider is Provider.OPENAI)
+    config = config.__class__(config.provider, config.model, "secret", config.base_url)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        events = [
+            event
+            async for event in OpenAICompatibleLLM().stream(config, "hola", client=client)
+        ]
+
+    assert captured is not None
+    request_payload = json.loads(captured.content)
+    assert request_payload["stream_options"] == {"include_usage": True}
+    assert events[-1] == (
+        "usage",
+        {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_reports_usage_metadata() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        body = (
+            'data: {"candidates":[{"content":{"parts":[{"text":"Hola"}]}}]}\n\n'
+            'data: {"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":4,"totalTokenCount":13}}\n\n'
+        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    config = next(item for item in get_model_chain(AppEnv.TEST) if item.provider is Provider.GEMINI)
+    config = config.__class__(config.provider, config.model, "secret", config.base_url)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        events = [
+            event
+            async for event in GeminiLLM().stream(config, "hola", client=client)
+        ]
+
+    assert events[-1] == (
+        "usage",
+        {"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
+    )
+
+
+@pytest.mark.asyncio
 async def test_gemini_adapter_translates_canonical_tools() -> None:
     captured: httpx.Request | None = None
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -9,6 +10,7 @@ from typing import Any
 
 from ..agent.tools.contracts import ToolContext
 from ..features.agent.service import stream_agent
+from ..platform.tracing import TraceRecorder, save_trace
 from .audio import CANONICAL_RATE, pcm16le_to_wire, resample_pcm16le, timeline_ms
 from .frames import CHANNEL_AGENT, encode_audio_frame
 from .live_audio import live_audio_hub
@@ -94,10 +96,21 @@ async def run_agent_turn(
         system_initiated=system_initiated,
     )
     answer: list[str] = []
+    recorder = TraceRecorder(
+        call_id=str(session.call_id),
+        conversation_id=str(session.conversation_id) if session.conversation_id else None,
+        organization_id=str(session.organization_id) if session.organization_id else None,
+    )
+    agent_kwargs: dict[str, Any] = {
+        "messages": list(session.history),
+        "tool_context": tool_context,
+    }
+    if "trace" in inspect.signature(agent).parameters:
+        agent_kwargs["trace"] = recorder
+    generator = agent(transcript, **agent_kwargs)
     proposal_id = None
     reservation_confirmed = False
     session.awaiting_agent_reply = True
-    generator = agent(transcript, messages=list(session.history), tool_context=tool_context)
     waiting = _with_holding(generator, session, voice)
     try:
         async for kind, payload in waiting:
@@ -121,6 +134,7 @@ async def run_agent_turn(
     finally:
         await waiting.aclose()
         await generator.aclose()
+        await save_trace(recorder)
     spoken = "".join(answer).strip()
     session.history.append({"role": "user", "content": transcript})
     if spoken:

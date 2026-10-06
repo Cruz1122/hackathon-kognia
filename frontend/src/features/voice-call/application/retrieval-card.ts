@@ -53,11 +53,19 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
 }
 
+function loaderMarkup(): string {
+  return `<div class="loader" aria-label="Consultando RAG"><span class="loader-dot" style="--angle:0deg"></span><span class="loader-dot" style="--angle:45deg"></span><span class="loader-dot" style="--angle:90deg"></span><span class="loader-dot" style="--angle:135deg"></span><span class="loader-dot" style="--angle:180deg"></span><span class="loader-dot" style="--angle:225deg"></span><span class="loader-dot" style="--angle:270deg"></span><span class="loader-dot" style="--angle:315deg"></span><span class="loader-runner"></span></div>`;
+}
+
+export function toolCallBusyMarkup(): string {
+  return loaderMarkup();
+}
+
 export function createRetrievalCardMarkup(id: string, payload: unknown): string {
   if (!shouldRenderRetrieval(payload)) return '';
   const { message } = normalizeRetrievalPayload(payload);
   const detail = sourceDetailFromEvent(payload);
-  return `<button type="button" class="tool-call" id="${escapeHtml(id)}" data-rag="true" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-live="polite" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="book-search"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="book-search" aria-hidden="true"></i><span>Fuente</span></div><div class="tool-title">${escapeHtml(message)}</div><div class="tool-status loading">Cargando…</div></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`;
+  return `<button type="button" class="tool-call" id="${escapeHtml(id)}" data-rag="true" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-live="polite" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="book-search"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="book-search" aria-hidden="true"></i><span>Fuente</span></div><div class="tool-title">${escapeHtml(message)}</div><div class="tool-status loading">Cargando…</div></div>${loaderMarkup()}<div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`;
 }
 
 export function completeRetrievalCard(id: string, payload: unknown): void {
@@ -75,6 +83,8 @@ export function completeRetrievalCard(id: string, payload: unknown): void {
     status.textContent = 'Completado';
     status.classList.remove('loading');
   }
+  const loader = card.querySelector('.loader') as HTMLElement | null;
+  if (loader) window.setTimeout(() => { loader.style.display = 'none'; }, 420);
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
   lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
 }

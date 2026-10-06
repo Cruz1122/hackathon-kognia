@@ -432,12 +432,12 @@ def test_ws_call_forwards_only_last_context_messages(
     finally:
         client.close()
 
-    expected = [
+    spoken = [
         {"role": message.role.value, "content": message.content}
         for message in persisted
         if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
-    ][-12:]
-    assert captured == expected
+    ]
+    assert captured == [*spoken[:2], *spoken[-12:]]
 
 
 def test_ws_barge_holds_and_resumes_without_customer_speech(

@@ -28,6 +28,7 @@ def test_models_create_expected_tables_foreign_keys_and_indexes() -> None:
     try:
         inspector = inspect(engine)
         assert set(inspector.get_table_names()) == {
+            "agent_traces",
             'agent_snapshots',
             'agent_operations',
             'channel_bindings',

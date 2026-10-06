@@ -550,7 +550,40 @@ class ProductInterest(Base):
     )
 
 
+class AgentTrace(Base):
+    __tablename__ = "agent_traces"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    call_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("calls.id", ondelete="SET NULL"), nullable=True
+    )
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok", server_default="ok")
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False
+    )
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("status IN ('ok', 'error', 'cancelled')", name="ck_agent_traces_status"),
+        Index("ix_agent_traces_organization_call", "organization_id", "call_id"),
+        Index("ix_agent_traces_organization_conversation", "organization_id", "conversation_id"),
+    )
+
+
 __all__ = [
+    "AgentTrace",
     "Call",
     "CallStatus",
     "Conversation",
