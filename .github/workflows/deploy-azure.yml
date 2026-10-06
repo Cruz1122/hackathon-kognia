@@ -482,7 +482,7 @@ jobs:
 
           test -n "$WORKER_APP_NAME"
           test -n "$RESOURCE_GROUP"
-          test -n "$CONTAINER_ENVIRONMENT"
+          test -n "$CONTAINER_APP_ENVIRONMENT"
           test -n "$DATABASE_APP_NAME"
           test -n "$REDIS_APP_NAME"
           test -n "$CHROMA_APP_NAME"
