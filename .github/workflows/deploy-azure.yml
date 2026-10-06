@@ -1,7 +1,8 @@
 name: Deploy Azure
 
-# Datos se crean solo si faltan; backend/worker/frontend se despliegan cuando
-# cambian sus rutas. Migraciones y bootstrap se ejecutan con la action manual.
+# Datos se crean solo si faltan. En cada push/manual se despliega `latest` de
+# backend/worker/frontend; sus imágenes solo se reconstruyen cuando hay cambios.
+# Migraciones y bootstrap se ejecutan con la action manual.
 
 on:
   push:
@@ -21,38 +22,26 @@ jobs:
     name: Detect backend and frontend changes
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.selection.outputs.backend }}
-      frontend: ${{ steps.selection.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Detect changed paths
         id: filter
-        if: github.event_name == 'push'
         uses: dorny/paths-filter@v4
         with:
-          # On pushes to this long-lived branch the action compares against the
-          # previous commit, rather than comparing main to itself.
+          # For push and manual runs on the same long-lived branch, the action
+          # compares against that branch's previous commit.
           base: ${{ github.ref }}
           filters: |
             backend:
               - 'backend/**'
             frontend:
               - 'frontend/**'
-
-      - name: Resolve selection
-        id: selection
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "backend=true" >> "$GITHUB_OUTPUT"
-            echo "frontend=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "backend=${{ steps.filter.outputs.backend }}" >> "$GITHUB_OUTPUT"
-            echo "frontend=${{ steps.filter.outputs.frontend }}" >> "$GITHUB_OUTPUT"
-          fi
 
   deploy-postgres:
     name: Create PostgreSQL if missing
@@ -278,8 +267,8 @@ jobs:
     needs: [detect-changes, build-backend, deploy-postgres, deploy-redis, deploy-chroma]
     if: >-
       always() && !cancelled() &&
-      needs.detect-changes.outputs.backend == 'true' &&
-      needs.build-backend.result == 'success' &&
+      needs.detect-changes.result == 'success' &&
+      (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') &&
       needs.deploy-postgres.result == 'success' &&
       needs.deploy-redis.result == 'success' &&
       needs.deploy-chroma.result == 'success'
@@ -293,7 +282,7 @@ jobs:
       - name: Deploy backend Container App
         uses: azure/container-apps-deploy-action@v1
         with:
-          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
           registryUrl: docker.io
           registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
           registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -435,15 +424,15 @@ jobs:
             --min-replicas 1 \
             --set-env-vars "${env_args[@]}"
 
-  # Worker y backend usan la misma imagen publicada para este commit.
+  # Worker y backend usan la misma última imagen publicada.
 
   deploy-worker:
     name: Deploy worker
     needs: [detect-changes, build-backend, deploy-postgres, deploy-redis, deploy-chroma]
     if: >-
       always() && !cancelled() &&
-      needs.detect-changes.outputs.backend == 'true' &&
-      needs.build-backend.result == 'success' &&
+      needs.detect-changes.result == 'success' &&
+      (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') &&
       needs.deploy-postgres.result == 'success' &&
       needs.deploy-redis.result == 'success' &&
       needs.deploy-chroma.result == 'success'
@@ -458,7 +447,7 @@ jobs:
       CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
       DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
+      IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
       POSTGRES_DB: ${{ vars.POSTGRES_DB }}
       POSTGRES_USER: ${{ vars.POSTGRES_USER }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -582,8 +571,8 @@ jobs:
     needs: [detect-changes, build-frontend]
     if: >-
       always() && !cancelled() &&
-      needs.detect-changes.outputs.frontend == 'true' &&
-      needs.build-frontend.result == 'success'
+      needs.detect-changes.result == 'success' &&
+      (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
@@ -594,7 +583,7 @@ jobs:
       - name: Deploy frontend Container App
         uses: azure/container-apps-deploy-action@v1
         with:
-          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
           registryUrl: docker.io
           registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
           registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -610,13 +599,7 @@ jobs:
 
   configure-backend-cors:
     name: Configure backend CORS
-    needs: [detect-changes, deploy-backend, deploy-frontend]
-    if: >-
-      always() && !cancelled() &&
-      needs.detect-changes.outputs.frontend == 'true' &&
-      needs.deploy-frontend.result == 'success' &&
-      (needs.detect-changes.outputs.backend != 'true' ||
-       needs.deploy-backend.result == 'success')
+    needs: [deploy-backend, deploy-frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
