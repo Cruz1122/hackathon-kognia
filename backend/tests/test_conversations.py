@@ -4,6 +4,7 @@ import asyncio
 import time
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -260,7 +261,7 @@ def test_ws_rejects_binary_before_authentication(
         client.close()
 
 
-def test_ws_attaches_conversation_and_persists_user_and_assistant(
+def test_ws_fresh_demo_greets_and_answers_hola_without_false_apology(
     monkeypatch: pytest.MonkeyPatch,
     auth_context: tuple[AsyncMock, User, dict[str, str]],
 ) -> None:
@@ -277,9 +278,9 @@ def test_ws_attaches_conversation_and_persists_user_and_assistant(
         return []
 
     async def fake_agent(prompt, *, messages, llm=None):
-        assert prompt == "Hola desde WS"
-        assert messages is None
-        yield "token", {"text": "respuesta WS"}
+        assert prompt == "Hola"
+        assert messages == [{"role": "assistant", "content": main._call_demo_greeting()}]
+        yield "token", {"text": "Hola, ¿en qué te puedo ayudar?"}
         yield "done", {"provider": "fake", "model": "fake"}
 
     monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
@@ -298,11 +299,16 @@ def test_ws_attaches_conversation_and_persists_user_and_assistant(
             connected = websocket.receive_json()
             assert connected["type"] == "call.connected"
             assert connected["conversation_id"] == str(conversation.id)
+            assert websocket.receive_json()["type"] == "turn.started"
+            welcome = websocket.receive_json()
+            assert welcome == {"type": "agent.token", "text": main._call_demo_greeting()}
+            assert "¿cómo te llamas?" in welcome["text"].lower()
+            assert websocket.receive_json()["type"] == "turn.completed"
 
             websocket.send_json(
                 {
                     "type": "turn",
-                    "prompt": "Hola desde WS",
+                    "prompt": "Hola",
                     "messages": [{"role": "user", "content": "client-controlled history"}],
                 }
             )
@@ -320,11 +326,59 @@ def test_ws_attaches_conversation_and_persists_user_and_assistant(
         "agent.token",
         "turn.completed",
     ]
+    answer = next(event["text"] for event in events if event["type"] == "agent.token")
+    assert "¿en qué te puedo ayudar?" in answer
+    assert "no te escuché" not in answer.lower()
+    assert "perdón" not in answer.lower()
     stored = [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], DbMessage)]
     assert [(message.role, message.content) for message in stored] == [
-        (MessageRole.USER, "Hola desde WS"),
-        (MessageRole.ASSISTANT, "respuesta WS"),
+        (MessageRole.ASSISTANT, main._call_demo_greeting()),
+        (MessageRole.USER, "Hola"),
+        (MessageRole.ASSISTANT, "Hola, ¿en qué te puedo ayudar?"),
     ]
+
+
+@pytest.mark.parametrize("booking_succeeded", [True, False])
+def test_ws_demo_requests_hangup_only_after_successful_booking(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+    booking_succeeded: bool,
+) -> None:
+    _session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return [SimpleNamespace(role=MessageRole.ASSISTANT, content="¿Cómo te llamas?")]
+
+    async def fake_agent(prompt, *, messages, llm=None):
+        yield "tool.completed", {"tool": "create_booking", "ok": booking_succeeded}
+        yield "token", {"text": "Tu reserva está confirmada. Gracias por llamar."}
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stream_agent", fake_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json({"type": "conversation.attach", "conversation_id": str(conversation.id)})
+            assert websocket.receive_json()["type"] == "call.connected"
+            websocket.send_json({"type": "turn", "prompt": "sí, confirmo"})
+            while True:
+                event = websocket.receive_json()
+                if event["type"] == "turn.completed":
+                    break
+    finally:
+        client.close()
+
+    assert event["end_call"] is booking_succeeded
 
 
 def test_ws_call_forwards_only_last_context_messages(
@@ -386,11 +440,12 @@ def test_ws_call_forwards_only_last_context_messages(
     assert captured == expected
 
 
-def test_ws_barge_cancels_active_turn(
+def test_ws_barge_holds_and_resumes_without_customer_speech(
     monkeypatch: pytest.MonkeyPatch,
     auth_context: tuple[AsyncMock, User, dict[str, str]],
 ) -> None:
-    session, user, _headers = auth_context
+    """A noise barge must pause playback and resume it when no utterance follows."""
+    _session, user, _headers = auth_context
     conversation = _conversation(user)
     token = create_access_token(user.id)
 
@@ -398,7 +453,7 @@ def test_ws_barge_cancels_active_turn(
         return conversation
 
     async def fake_list_messages(*args, **kwargs):
-        return []
+        return [SimpleNamespace(role=MessageRole.ASSISTANT, content="Bienvenida previa")]
 
     async def slow_agent(prompt, *, messages, llm=None):
         yield "token", {"text": "respuesta que el usuario interrumpe"}
@@ -410,6 +465,7 @@ def test_ws_barge_cancels_active_turn(
     monkeypatch.setattr(main, "stt_provider", FakeSTT())
     monkeypatch.setattr(main, "stream_agent", slow_agent)
     monkeypatch.setattr(main, "tts_status", "error")
+    monkeypatch.setattr(main, "CALL_BARGE_GRACE_SECONDS", 0.05)
 
     loud = b"\x00\x40" * 1600  # int16 0x4000 → strong energy frame
     client = TestClient(main.app)
@@ -431,11 +487,132 @@ def test_ws_barge_cancels_active_turn(
                 if event["type"] == "turn.started":
                     break
 
+            # The client hears noise and barges, then goes silent.
             websocket.send_json({"type": "barge"})
             while True:
                 event = websocket.receive_json()
                 events.append(event)
-                if event["type"] == "turn.cancelled":
+                if event["type"] == "tts.resume":
+                    break
+    finally:
+        client.close()
+
+    types = [event["type"] for event in events]
+    assert "tts.pause" in types
+    assert "tts.cancel" not in types
+    assert "turn.cancelled" not in types
+
+
+def test_ws_pcm_stop_releases_held_playback(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    """Restarting capture must not leave the client's audio queue suspended forever."""
+    _session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return [SimpleNamespace(role=MessageRole.ASSISTANT, content="Bienvenida previa")]
+
+    async def slow_agent(prompt, *, messages, llm=None):
+        yield "token", {"text": "respuesta larga"}
+        await asyncio.sleep(30)
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stt_provider", FakeSTT())
+    monkeypatch.setattr(main, "stream_agent", slow_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+    # Keep the grace timer far away so only pcm.stop can release the held playback.
+    monkeypatch.setattr(main, "CALL_BARGE_GRACE_SECONDS", 30.0)
+
+    loud = b"\x00\x40" * 1600
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+
+            websocket.send_json({"type": "pcm.start", "sample_rate": 16000})
+            websocket.send_bytes(loud)
+            while websocket.receive_json()["type"] != "turn.started":
+                pass
+
+            websocket.send_json({"type": "barge"})
+            while websocket.receive_json()["type"] != "tts.pause":
+                pass
+
+            websocket.send_json({"type": "pcm.stop"})
+            events = []
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "tts.resume":
+                    break
+    finally:
+        client.close()
+
+    assert "tts.resume" in [event["type"] for event in events]
+
+
+def test_ws_barge_cancels_active_turn_when_customer_speaks(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_context: tuple[AsyncMock, User, dict[str, str]],
+) -> None:
+    """Once the customer really speaks, the held turn must be cancelled."""
+    _session, user, _headers = auth_context
+    conversation = _conversation(user)
+    token = create_access_token(user.id)
+
+    async def fake_get_conversation(*args, **kwargs):
+        return conversation
+
+    async def fake_list_messages(*args, **kwargs):
+        return [SimpleNamespace(role=MessageRole.ASSISTANT, content="Bienvenida previa")]
+
+    async def slow_agent(prompt, *, messages, llm=None):
+        yield "token", {"text": "respuesta que el usuario interrumpe"}
+        await asyncio.sleep(30)
+        yield "done", {"provider": "fake", "model": "fake"}
+
+    monkeypatch.setattr(main, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(main, "list_messages", fake_list_messages)
+    monkeypatch.setattr(main, "stt_provider", FakeSTT(text="quiero reservar"))
+    monkeypatch.setattr(main, "stream_agent", slow_agent)
+    monkeypatch.setattr(main, "tts_status", "error")
+
+    loud = b"\x00\x40" * 1600
+    client = TestClient(main.app)
+    try:
+        with client.websocket_connect("/ws/call") as websocket:
+            websocket.send_json({"type": "auth", "token": token})
+            websocket.send_json(
+                {"type": "conversation.attach", "conversation_id": str(conversation.id)}
+            )
+            assert websocket.receive_json()["type"] == "call.connected"
+
+            websocket.send_json({"type": "pcm.start", "sample_rate": 16000})
+            websocket.send_bytes(loud)
+            while websocket.receive_json()["type"] != "turn.started":
+                pass
+
+            # A barge arrives, then real speech: the held turn must be confirmed as interrupted.
+            websocket.send_json({"type": "barge"})
+            websocket.send_bytes(loud)
+
+            events = []
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "turn.started":
                     break
     finally:
         client.close()
@@ -443,8 +620,6 @@ def test_ws_barge_cancels_active_turn(
     types = [event["type"] for event in events]
     assert "tts.cancel" in types
     assert "turn.cancelled" in types
-    stored = [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], DbMessage)]
-    assert [message.role for message in stored] == [MessageRole.USER]
 
 
 def test_ws_voice_energy_cancels_active_turn(
@@ -459,7 +634,7 @@ def test_ws_voice_energy_cancels_active_turn(
         return conversation
 
     async def fake_list_messages(*args, **kwargs):
-        return []
+        return [SimpleNamespace(role=MessageRole.ASSISTANT, content="Bienvenida previa")]
 
     async def slow_agent(prompt, *, messages, llm=None):
         yield "token", {"text": "respuesta larga"}
@@ -517,7 +692,7 @@ def test_ws_interrupt_after_turn_completed_still_transcribes(
         return conversation
 
     async def fake_list_messages(*args, **kwargs):
-        return []
+        return [SimpleNamespace(role=MessageRole.ASSISTANT, content="Bienvenida previa")]
 
     async def fast_agent(prompt, *, messages, llm=None):
         yield "token", {"text": "respuesta corta"}

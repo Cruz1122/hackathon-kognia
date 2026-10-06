@@ -2,10 +2,13 @@
 import { ClientRouter } from 'astro:transitions';
 import AppNav from '../components/navigation/AppNav.astro';
 import InteractiveMascotFace from '../components/mascot/InteractiveMascotFace.astro';
+import AgentSignalsPanel from '../components/agent-signals/AgentSignalsPanel.astro';
 import '../styles/app-shell.css';
 import '../styles/dashboard.css';
 import '../styles/detail-panel.css';
 import '../styles/toast.css';
+import '../styles/loading-reveal.css';
+import '../styles/empty-state.css';
 
 interface Props {
   title?: string;
@@ -24,6 +27,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <ClientRouter fallback="swap" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -31,7 +35,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
     <script src="https://unpkg.com/lucide@latest" is:inline></script>
   </head>
   <body data-api-url={apiUrl}>
-    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel']}>
+    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel', showDetailPanel && 'is-call-loading']}>
       <aside class="app-sidebar" aria-label="Demo" transition:persist transition:name="app-sidebar">
         <div class="app-mobile-topbar">
           <div class="app-sidebar__brand">
@@ -44,7 +48,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
         </div>
         <AppNav mode="route" active={activeRoute} />
       </aside>
-      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="fade">
+      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="none">
         <slot />
       </main>
       {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">
@@ -52,16 +56,22 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
           <i data-lucide="x" aria-hidden="true"></i>
         </button>
         <div class="detail-panel__session" id="sessionPanel">
-          <p class="detail-kicker">Cliente</p>
-          <h2 class="detail-title">Estado de la llamada</h2>
-          <div class="detail-sheet">
-            <section class="detail-group">
-              <dl class="detail-fields">
-                <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
-                <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-                <div class="detail-field"><dt>Estado</dt><dd class="is-status"><span class="detail-chip">En espera</span></dd></div>
-              </dl>
-            </section>
+          <div id="sessionSummary">
+            <p class="detail-kicker">Cliente</p>
+            <h2 class="detail-title">Estado global del cliente</h2>
+            <div class="detail-sheet">
+              <section class="detail-group">
+                <dl class="detail-fields">
+                  <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
+                  <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
+                  <div class="detail-field"><dt>Estado</dt><dd class="is-pending">Pendiente</dd></div>
+                </dl>
+              </section>
+            </div>
+          </div>
+          <div class="detail-client-signals" id="callSignalCategories" aria-label="Estado global del cliente"></div>
+          <div class="detail-panel__signals">
+            <AgentSignalsPanel id="callAgentSignals" variant="compact" categoriesTarget="callSignalCategories" />
           </div>
         </div>
         <div class="detail-panel__body" hidden></div>

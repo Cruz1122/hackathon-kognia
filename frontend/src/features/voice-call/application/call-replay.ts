@@ -1,6 +1,13 @@
-import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
-import { completeRetrievalCard, createRetrievalCardMarkup, toolCallBusyMarkup } from './retrieval-card';
+import {
+  bindDetailClicks,
+  mountSessionPanel,
+  patchSession,
+  patchSessionFromAgentState,
+  toolDetailFromEvent,
+} from './detail-panel';
+import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { eventMarkIcon, paintCallWave, resizeWave, type WaveMark } from './wave-mark';
+import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
 type TimelineEvent = {
   type: string;
@@ -139,7 +146,13 @@ function alignCustomerMessages(buffer: AudioBuffer, originMs: number, rows: HTML
   }
 }
 
-export function bootCallReplay(apiUrl: string, token: string, callId: string): () => void {
+export function bootCallReplay(
+  apiUrl: string,
+  token: string,
+  callId: string,
+  onReady?: () => void,
+  onError?: (reason: string) => void,
+): () => void {
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector<HTMLElement>('#conversationEmpty');
   const status = document.querySelector<HTMLElement>('#callConnectionStatus');
@@ -151,9 +164,11 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
   const playBtn = document.querySelector<HTMLButtonElement>('#playBtn');
   const restartBtn = document.querySelector<HTMLButtonElement>('#rewindBtn');
   if (!(conversation instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement) || !waveShell || !playBtn || !restartBtn) {
+    onError?.('La vista de la llamada no está disponible en esta página.');
     return () => undefined;
   }
   bindDetailClicks(conversation);
+  mountSessionPanel();
     const scroller = document.getElementById('appContent');
     let scrollRest = 0;
     scroller?.addEventListener('scroll', () => {
@@ -162,7 +177,7 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
       scrollRest = window.setTimeout(() => scroller.classList.remove('is-scrolling'), 780);
     }, { passive: true });
   const emptyCopy = conversationEmpty?.innerHTML ?? '';
-  if (conversationEmpty) conversationEmpty.innerHTML = toolCallBusyMarkup();
+  if (conversationEmpty) conversationEmpty.innerHTML = emptyCopy;
   if (status) status.hidden = false;
   if (statusText) statusText.textContent = 'Conectando…';
 
@@ -172,8 +187,25 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
   let agentPeaks: number[] = [0];
   let offsetMs = 0;
   let disposed = false;
+  let readyNotified = false;
+  let errorNotified = false;
   let previousMs = 0;
   const items: HTMLElement[] = [];
+  let signalEvents: TimelineEvent[] = [];
+  let finalSignalsFallback: Record<string, unknown> | null = null;
+
+  const notifyReady = (): void => {
+    if (disposed || readyNotified || errorNotified) return;
+    readyNotified = true;
+    onReady?.();
+  };
+
+  const notifyError = (reason: string): void => {
+    if (disposed || readyNotified || errorNotified) return;
+    errorNotified = true;
+    onError?.(reason);
+  };
+  let visibleSignalCount = -1;
   const context = canvas.getContext('2d');
 
   function resize(): void {
@@ -247,8 +279,6 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
               statusNode.textContent = tool.dataset.finalStatus ?? 'Completado';
               statusNode.classList.remove('loading');
             }
-            const loader = tool.querySelector<HTMLElement>('.loader');
-            if (loader) window.setTimeout(() => { loader.style.display = 'none'; }, 420);
           }
         } else if (item.dataset.doneAt) {
           const tool = item.querySelector<HTMLElement>('.tool-call');
@@ -256,11 +286,9 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
           tool?.setAttribute('aria-busy', 'true');
           const statusNode = tool?.querySelector('.tool-status');
           if (statusNode) {
-            statusNode.textContent = tool?.dataset.busyStatus ?? 'Ejecutando';
+            statusNode.textContent = tool?.dataset.busyStatus ?? 'Cargando…';
             statusNode.classList.add('loading');
           }
-          const loader = tool?.querySelector<HTMLElement>('.loader');
-          if (loader) loader.style.display = '';
         }
       } else {
         item.classList.remove('visible', 'enter');
@@ -269,6 +297,12 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
         tool?.setAttribute('aria-busy', 'true');
         item.querySelector('.tool-status')?.classList.add('loading');
       }
+    }
+    const nextSignalCount = signalEvents.filter((event) => event.offset_ms <= timelineMs).length;
+    if (nextSignalCount !== visibleSignalCount) {
+      visibleSignalCount = nextSignalCount;
+      resetCallAgentSignals();
+      signalEvents.slice(0, nextSignalCount).forEach((event) => applyCallAgentSignals(event.payload));
     }
     if (conversationEmpty) conversationEmpty.hidden = visible;
     previousMs = timelineMs;
@@ -314,6 +348,8 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
   }
 
   function renderTimeline(events: TimelineEvent[], originMs: number): void {
+    signalEvents = events.filter((event) => event.type === 'agent.signals');
+    visibleSignalCount = -1;
     const tools = new Map<string, { start: number; payload: Record<string, unknown> }>();
     const clock = (offsetMs: number) => formatTime(Math.max(0, offsetMs - originMs) / 1000);
     if (!events.some((event) => event.type === 'lifecycle' && event.payload?.state === 'ACTIVE')) {
@@ -352,7 +388,7 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
         addItem(
           started?.start ?? event.offset_ms,
           'tool-row',
-          `<button type="button" class="tool-call" id="${escapeHtml(id)}" data-busy-status="${escapeHtml(String(started?.payload.status ?? 'Ejecutando'))}" data-final-status="${escapeHtml(String(payload.status ?? 'Completado'))}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status loading">${escapeHtml(String(started?.payload.status ?? 'Ejecutando'))}</div></div>${toolCallBusyMarkup()}<div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`,
+          `<button type="button" class="tool-call" id="${escapeHtml(id)}" data-busy-status="Cargando…" data-final-status="${escapeHtml(String(payload.status ?? 'Completado'))}" data-detail="${escapeHtml(JSON.stringify(detail))}" aria-busy="true"><div class="tool-icon" aria-hidden="true"><i data-lucide="bot"></i></div><div class="tool-copy"><div class="tool-label"><i data-lucide="bot" aria-hidden="true"></i><span>Herramienta usada</span></div><div class="tool-title">${escapeHtml(detail.name)}</div><div class="tool-status loading">Cargando…</div></div><div class="done-mark" aria-hidden="true"><i data-lucide="check"></i></div></button>`,
           event.offset_ms,
         );
       }
@@ -424,6 +460,7 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
 
   void (async () => {
     const headers = { Authorization: `Bearer ${token}` };
+    let loadStage = 'los datos de la llamada';
     const [callResponse, timelineResponse, recordingResponse] = await Promise.all([
       fetch(`${apiUrl}/calls/${callId}`, { headers }),
       fetch(`${apiUrl}/calls/${callId}/timeline`, { headers }),
@@ -431,16 +468,52 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
     ]);
     if (disposed) return;
     if (!callResponse.ok || !timelineResponse.ok || !recordingResponse.ok) {
-      if (statusText) statusText.textContent = 'No se pudo cargar la llamada';
+      const failed = callResponse.ok
+        ? timelineResponse.ok ? recordingResponse : timelineResponse
+        : callResponse;
+      const label = failed === callResponse
+        ? 'La llamada solicitada'
+        : failed === timelineResponse ? 'La línea de tiempo de la llamada' : 'La grabación de la llamada';
+      const reason = failed.status === 404
+        ? `${label} no existe o ya no está disponible.`
+        : failed.status === 401 || failed.status === 403
+          ? `No tienes permiso para consultar ${label.toLowerCase()}.`
+          : `${label} respondió con un error del servidor (${failed.status}).`;
+      if (statusText) statusText.textContent = reason;
       if (conversationEmpty) conversationEmpty.innerHTML = emptyCopy;
+      notifyError(reason);
       return;
     }
-    const call = await callResponse.json() as { recording_offset_ms?: number };
+    loadStage = 'los datos de la llamada';
+    const call = await callResponse.json() as {
+      recording_offset_ms?: number;
+      conversation_id?: string;
+      caller?: string;
+      customer_name?: string;
+      status?: string;
+    };
+    patchSession({
+      name: call.customer_name ?? '',
+      phone: call.caller ?? '',
+      status: call.status === 'active' ? 'En vivo' : 'Llamada finalizada',
+    });
+    loadStage = 'la línea de tiempo de la llamada';
     const timeline = await timelineResponse.json() as { events: TimelineEvent[] };
     const events = timeline.events ?? [];
+    if (call.conversation_id) {
+      const stateResponse = await fetch(`${apiUrl}/conversations/${call.conversation_id}/agent-state`, { headers });
+      if (stateResponse.ok) {
+        const state = await stateResponse.json() as { signals?: Record<string, unknown> };
+        patchSessionFromAgentState(state);
+        if (state.signals && Object.keys(state.signals).length) {
+          finalSignalsFallback = { signals: state.signals };
+        }
+      }
+    }
     const active = events.find((event) => event.type === 'lifecycle' && event.payload?.state === 'ACTIVE');
     offsetMs = call.recording_offset_ms || active?.offset_ms || 0;
     renderTimeline(events, offsetMs);
+    loadStage = 'la grabación de la llamada';
     const blob = await recordingResponse.blob();
     if (disposed) return;
     const bytes = await blob.arrayBuffer();
@@ -459,6 +532,16 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
       }
     }
     if (!decoded || disposed) return;
+    if (!signalEvents.length && finalSignalsFallback) {
+      // Historical calls only have the final snapshot, so reveal it at the
+      // end instead of presenting it as if it were known from the beginning.
+      signalEvents = [{
+        type: 'agent.signals',
+        offset_ms: offsetMs + decoded.duration * 1000,
+        payload: finalSignalsFallback,
+      }];
+      visibleSignalCount = -1;
+    }
     const wave = peaksFromBuffer(decoded);
     customerPeaks = wave.customer;
     agentPeaks = wave.agent;
@@ -478,13 +561,18 @@ export function bootCallReplay(apiUrl: string, token: string, callId: string): (
       audio.addEventListener('error', done, { once: true });
     });
     if (disposed) return;
+    notifyReady();
     resize();
     paint(offsetMs, false);
     drawWave(shownProgress());
     setPlaying(true);
-  })().catch(() => {
-    if (statusText) statusText.textContent = 'No se pudo cargar la llamada';
+  })().catch((error: unknown) => {
+    const reason = error instanceof DOMException && error.name === 'EncodingError'
+      ? 'La grabación llegó en un formato que el navegador no puede reproducir.'
+      : `No se pudo cargar ${loadStage}. Revisa la conexión con el servidor e inténtalo de nuevo.`;
+    if (statusText) statusText.textContent = reason;
     if (conversationEmpty) conversationEmpty.innerHTML = emptyCopy;
+    notifyError(reason);
   });
 
   return () => {

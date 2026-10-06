@@ -380,6 +380,11 @@ async def test_openai_merges_knowledge_into_the_system_prompt() -> None:
     system = payload["messages"][0]
     assert system["role"] == "system"
     assert "agente de voz" in system["content"]
+    assert "Resuelve las respuestas cortas o elípticas según la pregunta inmediatamente anterior" in system["content"]
+    assert "No empieces cada turno con 'Perfecto'" in system["content"]
+    assert "Un saludo claro del cliente como 'Hola' es una entrada válida y con sentido" in system["content"]
+    assert "sin decir que no lo oíste ni disculparte por no entenderlo" in system["content"]
+    assert "Un rechazo, una corrección, una queja o un insulto nunca son consentimiento" in system["content"]
     assert knowledge in system["content"]
     assert [message["role"] for message in payload["messages"][1:]] == ["user", "user"]
 

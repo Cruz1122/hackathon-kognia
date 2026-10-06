@@ -1,3 +1,8 @@
+---
+import ContentLoader from '../ui/ContentLoader.astro';
+import EmptyState from '../ui/EmptyState.astro';
+---
+
 <svg width="0" height="0" aria-hidden="true" style="position:absolute">
   <defs>
     <filter id="ui-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
@@ -13,7 +18,13 @@
 </svg>
 
 <div class="call-demo-page">
-  <div class="app-content is-nav-ready" id="appContent" aria-hidden="false">
+  <ContentLoader id="callLoading" copy="Preparando la llamada…" class="call-page-loader" />
+  <section class="call-page-error" id="callError" role="alert" aria-live="assertive" aria-atomic="true" hidden inert>
+    <div class="call-page-error__icon" aria-hidden="true"><i data-lucide="triangle-alert"></i></div>
+    <h1 class="call-page-error__title">No pudimos abrir esta llamada</h1>
+    <p class="call-page-error__reason" id="callErrorReason">La llamada no está disponible en este momento.</p>
+  </section>
+  <div class="app-content is-nav-ready" id="appContent" aria-hidden="true" inert hidden>
     <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
     <div class="player-wrap">
       <div class="call-connection-status" id="callConnectionStatus" role="status" aria-live="polite" hidden>
@@ -46,9 +57,9 @@
       </section>
     </div>
     <section class="conversation" id="conversation" aria-label="Transcripción de la llamada">
-      <div class="conversation-empty" id="conversationEmpty" role="status">
-        <div class="conversation-empty__copy"><i data-lucide="message-circle" aria-hidden="true"></i><p>Aún no hay mensajes.</p></div>
-      </div>
+        <div class="conversation-empty" id="conversationEmpty" role="status">
+          <EmptyState icon="message-circle" title="Aún no hay mensajes." />
+        </div>
     </section>
   </div>
 

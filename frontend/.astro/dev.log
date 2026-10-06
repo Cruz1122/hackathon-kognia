@@ -1,35 +1,32 @@
 {"message":"connected.","label":"vite","level":"info"}
-{"message":"Generated 2ms","label":"types","level":"info"}
+{"message":"Generated 1ms","label":"types","level":"info"}
 {"message":"connected.","label":"vite","level":"info"}
-{"message":"Re-optimizing dependencies because vite config has changed","label":"vite","level":"info"}
-{"message":" astro  v7.3.1 ready in 5469 ms\n┃ Local    http://127.0.0.1:18473/","label":"SKIP_FORMAT","level":"info"}
+{"message":" astro  v7.3.1 ready in 2065 ms\n┃ Local    http://127.0.0.1:18500/","label":"SKIP_FORMAT","level":"info"}
 {"message":"watching for file changes...","label":null,"level":"info"}
-{"message":"[200] / 110ms","label":null,"level":"info"}
-{"message":"[200] / 18ms","label":null,"level":"info"}
-{"message":"[200] / 14ms","label":null,"level":"info"}
-{"message":"[200] / 17ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/infrastructure/audio-capture-adapter.ts","label":"watch","level":"info"}
-{"message":"[200] / 26ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/infrastructure/audio-capture-adapter.ts","label":"watch","level":"info"}
-{"message":"[200] / 22ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
-{"message":"[200] / 31ms","label":null,"level":"info"}
-{"message":"src/pages/index.astro","label":"watch","level":"info"}
+{"message":"[200] /calls/demo 95ms","label":null,"level":"info"}
+{"message":"[200] /calls/demo 36ms","label":null,"level":"info"}
+{"message":"[200] /calls/demo 12ms","label":null,"level":"info"}
+{"message":"dependencies optimized: astro/virtual-modules/transitions-events.js, astro/virtual-modules/transitions-router.js, astro/virtual-modules/transitions-swap-functions.js, astro/virtual-modules/transitions-types.js, lucide, marked","label":"vite","level":"info"}
+{"message":"optimized dependencies changed. reloading","label":"vite","level":"info"}
+{"message":"[200] /calls/demo 10ms","label":null,"level":"info"}
+{"message":"[200] /calls 75ms","label":null,"level":"info"}
+{"message":"[200] /calls/demo 14ms","label":null,"level":"info"}
 {"message":"[200] / 40ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/infrastructure/backend-error.ts","label":"watch","level":"info"}
-{"message":"src/pages/index.astro","label":"watch","level":"info"}
-{"message":"[200] / 15ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/infrastructure/audio-capture-adapter.ts","label":"watch","level":"info"}
-{"message":"[200] / 25ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/infrastructure/backend-error.ts","label":"watch","level":"info"}
-{"message":"[200] / 30ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/infrastructure/backend-error.ts","label":"watch","level":"info"}
-{"message":"[200] / 17ms","label":null,"level":"info"}
-{"message":"src/features/voice-call/infrastructure/backend-error.ts","label":"watch","level":"info"}
-{"message":"src/pages/index.astro","label":"watch","level":"info"}
-{"message":"[200] / 30ms","label":null,"level":"info"}
-{"message":"/src/styles/toast.css","label":"watch","level":"info"}
-{"message":"src/pages/index.astro","label":"watch","level":"info"}
-{"message":"[200] / 17ms","label":null,"level":"info"}
-{"message":"src/pages/index.astro","label":"watch","level":"info"}
-{"message":"[200] / 31ms","label":null,"level":"info"}
+{"message":"[200] /calls 10ms","label":null,"level":"info"}
+{"message":"[200] /calls/demo 23ms","label":null,"level":"info"}
+{"message":"src/features/voice-call/infrastructure/pcm-audio-queue.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/infrastructure/pcm-audio-queue.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
+{"message":"/src/styles/app-shell.css","label":"watch","level":"info"}
+{"message":"/src/styles/call-demo.css","label":"watch","level":"info"}
+{"message":"/src/styles/call-demo.css","label":"watch","level":"info"}
+{"message":"[200] /calls/demo 59ms","label":null,"level":"info"}
+{"message":"[200] /calls/demo 16ms","label":null,"level":"info"}
+{"message":"[200] /calls/demo 10ms","label":null,"level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
+{"message":"src/features/voice-call/application/live-monitor.ts","label":"watch","level":"info"}
