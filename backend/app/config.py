@@ -31,13 +31,13 @@ class ModelConfig:
 
 MODEL_CHAINS: dict[AppEnv, tuple[tuple[Provider, str], ...]] = {
     AppEnv.TEST: (
-        (Provider.OPENAI, "gpt-4.1"),
+        (Provider.OPENAI, "gpt-5.4-mini"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
         (Provider.OPENROUTER, "minimax/minimax-m2.7"),
         (Provider.GROQ, "llama-3.3-70b-versatile"),
     ),
     AppEnv.PRODUCTION: (
-        (Provider.OPENAI, "gpt-5.6-luna"),
+        (Provider.OPENAI, "gpt-6-luna"),
         (Provider.GEMINI, "gemini-3.5-flash-lite"),
     ),
 }

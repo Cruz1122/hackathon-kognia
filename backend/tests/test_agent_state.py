@@ -10,8 +10,11 @@ import pytest
 from typesafe_sdk import AsyncTypeSafeClient
 
 from app.agent import jev
+from app.agent import dialogue
 from app.agent.policy import apply_observations, authorize
 from app.agent.state import AgentState, Signal, now
+from app.agent.state import local_now
+from app.features.agent.service import normalize_relative_booking_date
 from app.agent.tools.contracts import ToolContext
 from app.agent.tools.loader import load_tool_registry
 from app.db.models import ChannelBinding
@@ -22,6 +25,55 @@ from app.whatsapp.service import normalize_message, outbound_payload, parse_even
 
 def state():
     return AgentState(conversation_id='conversation', organization_id='tenant')
+
+
+def test_relative_booking_date_uses_local_operational_day_not_provider_utc_day():
+    wrong = {'date': '2099-12-31', 'time': '20:00', 'party_size': 1}
+    fixed = normalize_relative_booking_date(
+        'check_availability', wrong,
+        'Reserva para mañana a las ocho de la noche, para una persona', [],
+    )
+    assert fixed['date'] == (local_now().date() + timedelta(days=1)).isoformat()
+
+
+def test_bare_manana_after_ampm_question_is_not_mistaken_for_a_new_date():
+    arguments = {'date': '2026-10-10', 'time': '08:00', 'party_size': 2}
+    result = normalize_relative_booking_date(
+        'check_availability', arguments, 'Mañana',
+        [{'role': 'assistant', 'content': '¿A las ocho de la mañana o de la noche?'}],
+    )
+    assert result == arguments
+
+
+def test_camilo_details_produce_exact_reservation_confirmation_and_resume():
+    memory = state()
+    assert dialogue.remember_customer_name(memory, 'Hola, me llamo Camilo') == 'Camilo'
+    memory.booking_slots.update({'date': '2026-10-06', 'time': '20:00', 'party_size': 1})
+    args = dialogue.booking_arguments(memory)
+    assert args == {
+        'date': '2026-10-06', 'time': '20:00', 'party_size': 1, 'customer_name': 'Camilo',
+    }
+    authorize(memory, 'create_booking', args)
+    text, proposal = dialogue.resume_message(memory)
+    assert proposal == memory.pending.fingerprint
+    assert 'Retomemos donde quedamos' in text
+    assert 'para 1 persona' in text
+    assert 'a nombre de Camilo' in text
+    confirmed = dialogue.reservation_confirmation(args, {'booking_id': 'R-123'})
+    assert 'quedó confirmada' in confirmed
+    assert 'R-123' in confirmed
+    assert 'Gracias por tu llamada' in confirmed
+    assert 'Hasta luego' in confirmed
+
+
+def test_dropped_call_apologizes_only_when_agent_owed_a_response():
+    memory = state()
+    memory.booking_slots = {'customer_name': 'Camilo', 'date': '2026-10-06', 'time': '20:00'}
+    apology, _ = dialogue.continuation_text(memory, apologize=True)
+    normal, _ = dialogue.continuation_text(memory, apologize=False)
+    assert apology.startswith('Lamento que la llamada terminara antes de que pudiera responderte.')
+    assert normal.startswith('Gracias por tu llamada.')
+    assert 'Lamento' not in normal
 
 
 def signal(value, confidence=.99):
@@ -192,7 +244,7 @@ def test_correction_without_explicit_confirmation_still_withdraws():
     assert memory.authorized is None
 
 
-def test_high_frustration_cannot_authorize_a_pending_write():
+def test_high_frustration_does_not_invalidate_explicit_confirmation():
     memory = state()
     authorize(memory, 'create_booking', {'party_size': 7})
     memory.pending.presented = True
@@ -201,8 +253,9 @@ def test_high_frustration_cannot_authorize_a_pending_write():
         'frustration': signal('very_high'),
     }
     apply_observations(memory, 'Sí, te odio')
-    assert memory.pending is None
-    assert memory.authorized is None
+    assert memory.pending is not None
+    assert memory.pending.arguments == {'party_size': 7}
+    assert memory.authorized == memory.pending.fingerprint
 
 
 def test_missing_semantic_verdict_never_authorizes():
@@ -282,15 +335,20 @@ async def test_jev_observes_conversation_and_cross_channel_evidence(monkeypatch)
     evaluate = AsyncMock(return_value={})
     monkeypatch.setattr(jev, 'evaluate', evaluate)
     await jev.observe(memory, 'cuatro', 'turn')
-    payload = evaluate.call_args.args[0]
+    contextual_call = next(call for call in evaluate.await_args_list if 'recent' in call.args[0])
+    callback_call = next(call for call in evaluate.await_args_list if 'current_message' in call.args[0])
+    payload = contextual_call.args[0]
     assert payload['conversation_id'] == memory.conversation_id
     assert payload['recent'] == memory.recent
     assert payload['message'] == 'cuatro'
     assert payload['tool_results'] == memory.tool_history
-    questions = evaluate.call_args.args[1]
+    questions = contextual_call.args[1]
     assert 'ordinary cooperative exchange' in questions['satisfaction'][0]
     assert 'must repeat information' in questions['frustration'][0]
     assert 'repetition' in questions['fluency'][0]
+    assert 'callback_request' not in questions
+    assert callback_call.args[0] == {'current_message': 'cuatro'}
+    assert list(callback_call.args[1]) == ['callback_request']
 
 
 @pytest.mark.asyncio
@@ -499,3 +557,13 @@ async def test_official_jev_sdk_wire_contract(monkeypatch):
 async def test_jev_missing_credentials_is_unknown(monkeypatch):
     monkeypatch.delenv('TYPESAFE_API_KEY', raising=False)
     assert await jev.observe(state(), 'sí', 'turn') == {}
+
+
+def test_callback_question_treats_refusals_as_not_requested():
+    instruction, labels = jev.QUESTIONS['callback_request']
+    assert labels == ['explicit', 'not_requested', 'unknown']
+    assert 'Using only current_message' in instruction
+    assert 'refuses/negates a call' in instruction
+    assert 'already in a call' in instruction
+    assert 'Profanity, anger' in instruction
+    assert 'not_requested' in instruction

@@ -4,12 +4,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import select
 
 from . import dialogue, jev
-from .policy import Turn, active_turn, apply_observations
-from .state import Fact, Signal, fingerprint
+from .policy import Turn, active_turn, apply_observations, authorize, claims_callback
+from .state import Fact, Signal, fingerprint, now
 from .phrases import RECOVERY, pick
 from .store import conversation_state
 from .tools.contracts import ToolResult
@@ -24,7 +25,7 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
         async with asyncio.timeout(120):
             async with conversation_state(context.organization_id, context.conversation_id) as store:
                 state = store.state
-                from ..db.models import AgentOperation, Message, MessageRole
+                from ..db.models import AgentOperation, Customer, Message, MessageRole
                 from ..features.agent.service import TOOL_REGISTRY
 
                 from ..whatsapp.identity import verified_destination
@@ -52,23 +53,51 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                     if history and history[-1] == {'role': 'user', 'content': prompt}:
                         history.pop()
                     state.recent = history or state.recent or messages or []
+                    customer_row = None
+                    if state.customer_id:
+                        customer_row = await store.db.get(Customer, uuid.UUID(state.customer_id))
+                        if customer_row is not None and customer_row.name:
+                            state.booking_slots.setdefault('customer_name', customer_row.name)
+                            state.facts.setdefault(
+                                'customer.name', Fact(value=customer_row.name, source='customer_record')
+                            )
+                    spoken_name = dialogue.remember_customer_name(state, prompt)
+                    if spoken_name and customer_row is not None and customer_row.name != spoken_name:
+                        customer_row.name = spoken_name
                     if state.active_channel != context.channel:
                         state.action('channel_switched', previous=state.active_channel, channel=context.channel)
                     state.active_channel = context.channel
                     signals = await jev.observe(state, prompt, context.request_id, TOOL_REGISTRY.domain_questions)
                     state.signals = signals
-                    callback_intent = signals.get('callback_request')
-                    if (callback_intent and callback_intent.value == 'explicit' and callback_intent.confidence >= .8
-                            and callback_intent.turn_id == context.request_id):
-                        state.signals['callback_request'] = Signal(
-                            value='explicit', confidence=callback_intent.confidence,
-                            turn_id=context.request_id, model=callback_intent.model)
                     confirmation = state.signals.get('confirmation')
                     if state.pending and state.pending.presented and (confirmation is None or confirmation.value == 'uncertain'):
                         fallback = await jev.confirmation_fallback(state, prompt, context.request_id, llm)
                         if fallback is not None:
                             state.signals['confirmation'] = fallback
+                    if context.system_initiated:
+                        # An internal prompt (for example the outbound-call
+                        # reconnect greeting) is not a customer utterance. JEV can
+                        # still label it a callback from the surrounding history,
+                        # which would place another call and loop.
+                        state.signals.pop('callback_request', None)
                     apply_observations(state, prompt)
+                    if (state.pending and state.pending.presented and state.authorized is None
+                            and now() - state.pending.created_at >= timedelta(minutes=15)):
+                        # Consent is deliberately short-lived. If the exact same
+                        # proposal is resumed later, re-present it and start a
+                        # fresh confirmation window instead of trapping the
+                        # customer in an expired proposal that can never be
+                        # authorized again.
+                        state.pending.created_at = now()
+                        state.pending.presented = False
+                        state.action('proposal_reissued_after_expiry', proposal=state.pending.fingerprint)
+                    callback_signal = state.signals.get('callback_request')
+                    logger.info(
+                        "Agent turn request_id=%s channel=%s system_initiated=%s callback_request=%s explicit_prob=%s authorized=%s",
+                        context.request_id, context.channel, context.system_initiated,
+                        callback_signal.value if callback_signal else None,
+                        (callback_signal.probabilities or {}).get('explicit') if callback_signal else None,
+                        state.authorized)
                     await store.save()
                     draft = ''
                     proposal_id = None
@@ -83,8 +112,18 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                         # integrity can verify the draft against the same evidence.
                         knowledge_sink: list[str] = []
                         execution = None
-                        if state.authorized and state.pending:
+                        callback_completed = False
+                        callback_authorized = state.callback_authorized_turn_id == context.request_id
+                        if callback_authorized:
+                            logger.info("Deterministic callback execution request_id=%s", context.request_id)
+                            async for kind, value in dialogue.execute('call_customer', {}, context):
+                                if kind == '_result':
+                                    execution = ('call_customer', value)
+                                else:
+                                    yield kind, value
+                        elif state.authorized and state.pending:
                             pending = state.pending
+                            logger.info("Deterministic execution request_id=%s tool=%s", context.request_id, pending.tool)
                             async for kind, value in dialogue.execute(pending.tool, pending.arguments, context):
                                 if kind == '_result':
                                     execution = (pending.tool, value)
@@ -96,43 +135,90 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                             name, result = execution
                             if not isinstance(result, ToolResult):
                                 raise TypeError('Tool execution returned an invalid result')
+                            logger.info("Deterministic result request_id=%s tool=%s ok=%s error=%s",
+                                        context.request_id, name, result.ok, result.error_code)
+                            if name == 'call_customer' and result.ok:
+                                callback_completed = True
                             if result.ok:
-                                draft = (('Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
-                                          if context.channel == 'voice' else 'Tu reserva está confirmada.')
-                                         if name == 'create_booking' else
-                                         'Te estoy llamando para retomar lo pendiente. Contesta cuando suene.')
+                                if name == 'create_booking':
+                                    booking_args = state.booking_slots or pending.arguments
+                                    draft = dialogue.reservation_confirmation(booking_args, result.data)
+                                elif isinstance(result.data, dict) and result.data.get('status') == 'already_active':
+                                    draft = 'Ya tienes una llamada en curso con nosotros.'
+                                else:
+                                    draft = 'Te estoy llamando para retomar lo pendiente. Contesta cuando suene.'
                             else:
                                 draft = 'La solicitud está pendiente de confirmación. No voy a repetirla para evitar duplicados.'
                             trusted = True
+                        elif state.pending and state.pending.tool == 'create_booking':
+                            # A transported/reconnected conversation can already
+                            # have a complete, presented booking proposal. Keep
+                            # that proposal deterministic instead of asking the
+                            # model to rediscover it (and potentially running a
+                            # duplicate availability lookup) after a greeting or
+                            # other non-confirming utterance.
+                            draft = dialogue.reservation_question(state.pending.arguments)
+                            trusted = True
                         else:
-                            async for kind, payload in generate(
+                            generated = generate(
                                 prompt, messages=history, llm=llm, tool_context=context,
-                                system_context=instructions, knowledge_sink=knowledge_sink):
-                                if kind == 'token':
-                                    draft += str(payload['text'])
-                                    if len(draft) > 16000:
+                                system_context=instructions, knowledge_sink=knowledge_sink)
+                            try:
+                                async for kind, payload in generated:
+                                    stop_after_tool = False
+                                    if kind == 'token':
+                                        draft += str(payload['text'])
+                                        if len(draft) > 16000:
+                                            draft = pick(RECOVERY, state.last_response)
+                                            break
+                                    elif kind == 'done':
+                                        done = payload
+                                    elif kind == 'error':
                                         draft = pick(RECOVERY, state.last_response)
+                                        trusted = True
                                         break
-                                elif kind == 'done':
-                                    done = payload
-                                elif kind == 'error':
-                                    draft = pick(RECOVERY, state.last_response)
-                                    trusted = True
-                                    break
-                                else:
-                                    if kind == 'tool.completed':
-                                        definition = TOOL_REGISTRY.resolve(payload.get('tool', ''))
-                                        if definition and definition.side_effects == 'write':
+                                    else:
+                                        if kind == 'tool.completed':
+                                            import json
+                                            tool_name = payload.get('tool', '')
                                             error = payload.get('error_code')
-                                            if error is None and isinstance(payload.get('result'), str):
-                                                import json
+                                            result_data = None
+                                            if isinstance(payload.get('result'), str):
                                                 try:
-                                                    error = json.loads(payload['result']).get('error_code')
+                                                    result_data = json.loads(payload['result'])
+                                                    if error is None and isinstance(result_data, dict):
+                                                        error = result_data.get('error_code')
                                                 except (ValueError, AttributeError):
                                                     pass
-                                            if error != 'CONFIRMATION_REQUIRED':
-                                                write_attempted = True
-                                    yield kind, payload
+                                            definition = TOOL_REGISTRY.resolve(tool_name)
+                                            if definition and definition.side_effects == 'write':
+                                                if error != 'CONFIRMATION_REQUIRED':
+                                                    write_attempted = True
+                                            if tool_name == 'call_customer':
+                                                logger.info("Model call_customer completed request_id=%s error=%s",
+                                                            context.request_id, error)
+                                                if error is None:
+                                                    callback_completed = True
+                                            if (tool_name == 'check_availability' and payload.get('ok') is True
+                                                    and isinstance(result_data, dict) and result_data.get('available') is True):
+                                                # Do not wait for another slow model round after the read tool.
+                                                # The exact write proposal is derived from validated tool arguments
+                                                # and persisted before the caller can hang up.
+                                                booking_args = dialogue.booking_arguments(state)
+                                                if booking_args is not None:
+                                                    authorize(state, 'create_booking', booking_args)
+                                                else:
+                                                    draft = dialogue.next_question(state) or ''
+                                                    trusted = bool(draft)
+                                                await store.save()
+                                                stop_after_tool = True
+                                        yield kind, payload
+                                        if stop_after_tool:
+                                            break
+                            finally:
+                                close = getattr(generated, 'aclose', None)
+                                if close is not None:
+                                    await close()
                         if state.pending and not write_attempted:
                             if not state.pending.presented:
                                 proposal_id = state.pending.fingerprint
@@ -146,6 +232,13 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                             elif state.pending.tool == 'call_customer':
                                 draft = '¿Confirmas que te llame al teléfono de esta conversación?'
                                 trusted = True
+                        if claims_callback(draft) and not callback_completed:
+                            # Never let the model claim a call it did not place this turn.
+                            logger.warning("Blocked callback claim without a completed call request_id=%s draft=%r",
+                                           context.request_id, draft[:120])
+                            state.action('callback_claim_blocked', reason='no_call_this_turn')
+                            draft = 'Aún no he podido iniciar la llamada. ¿Quieres que lo intente ahora?'
+                            trusted = True
                         # Integrity must see the customer's actual words, including
                         # names/details not yet promoted to tool-backed facts.
                         state.recent = [*history, {'role': 'user', 'content': prompt}]
@@ -190,14 +283,27 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                         'signals': {
                             key: signal.model_dump(mode='json')
                             for key, signal in state.signals.items()
-                        }
+                        },
+                        'state': {
+                            'phase': state.phase,
+                            'booking_slots': state.booking_slots,
+                            'customer_name': state.booking_slots.get('customer_name'),
+                        },
                     }
                     yield 'token', {'text': draft}
                     yield 'done', done
                 finally:
-                    active_turn.reset(token)
+                    try:
+                        active_turn.reset(token)
+                    except (ValueError, RuntimeError):
+                        # FastAPI probes an SSE iterator in the request context,
+                        # then StreamingResponse finishes it in its own copied
+                        # context. A ContextVar token cannot cross that boundary;
+                        # clearing the copied context avoids both leakage and a
+                        # false post-response failure after the turn committed.
+                        active_turn.set(None)
     except Exception as exc:
-        logger.warning('Stateful turn failed: %s', type(exc).__name__)
+        logger.warning('Stateful turn failed: %s', type(exc).__name__, exc_info=True)
         if response_emitted:
             return
         # Keep the conversation natural instead of exposing an internal error.

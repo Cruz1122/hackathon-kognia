@@ -1,6 +1,6 @@
 import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
-import { bindDetailClicks, mountSessionPanel, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { applyCallAgentSignals } from './agent-signals';
 
 function lucideRefresh(): void {
@@ -35,6 +35,13 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   if (!token) {
     if (hubChip) hubChip.textContent = 'Demo local';
     return () => undefined;
+  }
+  if (conversationId) {
+    void fetch(`${apiUrl}/conversations/${conversationId}/agent-state`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async (response) => {
+      if (response.ok) patchSessionFromAgentState(await response.json());
+    }).catch(() => undefined);
   }
 
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/events`;
@@ -162,6 +169,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
       ensureAgent().append(node);
     } else if (type === 'agent.signals') {
       applyCallAgentSignals(payload);
+      patchSessionFromAgentState(payload);
     } else if (type === 'tool.started') {
       enterLiveFeed();
       const toolCallId = String(payload.tool_call_id ?? payload.id ?? `${String(payload.tool ?? 'tool')}-${Date.now()}`);

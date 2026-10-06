@@ -32,9 +32,15 @@ QUESTIONS = {
         ['very_low', 'low', 'neutral', 'high', 'very_high', 'unknown']),
     'intent': ('Current customer intent? Voice text may have phonetic spelling errors; use recent context to interpret intent. Do not infer consent or changed numeric requirements from ambiguous speech.', ['continue', 'correct', 'cancel', 'callback', 'human', 'unknown']),
     'callback_request': (
-        'Did the customer explicitly ask to place a phone call now to the verified phone for this conversation? '
-        'explicit only for a clear present-tense request to call now. A future call, a different number, a mention '
-        'of a past call, a question about calling, or ambiguous speech is not explicit. Never infer permission.',
+        'Using only current_message, did the customer directly request that the assistant start a phone call now '
+        'to the already verified phone for this conversation? explicit means the message contains an unambiguous '
+        'current request or command to call, including colloquial speech or transcription errors. Profanity, anger '
+        'or a complaint alongside that direct request does not cancel it. A negative statement about a previous '
+        'failure to answer is still explicit when the customer is presently asking to be called again. '
+        'not_requested means there is no present request, or the customer refuses/negates a call, says they are '
+        'already in a call, asks only about the capability, requests a future call, supplies a different number, '
+        'mentions a past call, insults the assistant without requesting a call, or merely chats. unknown is for '
+        'genuinely ambiguous current speech. Never infer permission from tone, history or a mere call-related word.',
         ['explicit', 'not_requested', 'unknown']),
     'confirmation': (
         'Does the latest customer message clearly authorize exactly the presented pending action with unchanged terms? '
@@ -77,13 +83,25 @@ async def evaluate(state: dict, questions: dict, turn_id: str) -> dict[str, Sign
 
 
 async def observe(state: AgentState, prompt: str, turn_id: str, domain_questions: dict | None = None) -> dict[str, Signal]:
-    return await evaluate({'conversation_id': state.conversation_id, 'message': prompt,
-                           'recent': state.recent[-24:],
-                           'facts': {key: fact.model_dump(mode='json') for key, fact in state.facts.items()},
-                           'tool_results': state.tool_history[-8:],
-                           'pending': state.pending.model_dump(mode='json') if state.pending else None,
-                           'previous_signals': {key: value.value for key, value in state.signals.items()}},
-                           {**(domain_questions or {}), **QUESTIONS}, turn_id)
+    contextual_questions = {**(domain_questions or {}), **QUESTIONS}
+    callback_question = contextual_questions.pop('callback_request')
+    contextual, isolated_callback = await asyncio.gather(
+        evaluate({'conversation_id': state.conversation_id, 'message': prompt,
+                  'recent': state.recent[-24:],
+                  'facts': {key: fact.model_dump(mode='json') for key, fact in state.facts.items()},
+                  'tool_results': state.tool_history[-8:],
+                  'pending': state.pending.model_dump(mode='json') if state.pending else None,
+                  'previous_signals': {key: value.value for key, value in state.signals.items()}},
+                 contextual_questions, turn_id),
+        # Authorization-sensitive classification is intentionally isolated from
+        # history, previous signals, tools and facts. Those fields caused an old
+        # callback request to leak into a later insult.
+        evaluate({'current_message': prompt}, {'callback_request': callback_question}, turn_id),
+    )
+    callback = isolated_callback.get('callback_request')
+    if callback is not None:
+        contextual['callback_request'] = callback
+    return contextual
 
 
 async def confirmation_fallback(state: AgentState, prompt: str, turn_id: str, llm=None) -> Signal | None:

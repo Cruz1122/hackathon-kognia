@@ -1,4 +1,10 @@
-import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
+import {
+  bindDetailClicks,
+  mountSessionPanel,
+  patchSession,
+  patchSessionFromAgentState,
+  toolDetailFromEvent,
+} from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
@@ -10,7 +16,13 @@ type MonitorEvent = {
   payload?: Record<string, unknown>;
   call_id?: string;
   message_id?: string;
-  call?: { id: string; conversation_id?: string; lifecycle?: string };
+  call?: {
+    id: string;
+    conversation_id?: string;
+    lifecycle?: string;
+    caller?: string;
+    customer_name?: string;
+  };
 };
 
 const SAMPLE_RATE = 16000;
@@ -54,6 +66,8 @@ export function bootLiveCall(
   }
 
   bindDetailClicks(conversation);
+  mountSessionPanel();
+  patchSession({ status: 'En vivo' });
   const emptyCopy = conversationEmpty?.innerHTML ?? '';
   if (conversationEmpty) {
     conversationEmpty.hidden = false;
@@ -94,8 +108,19 @@ export function bootLiveCall(
   let customerBubble: HTMLElement | null = null;
   const seen = new Set<string>();
   let activeCallId = callId;
+  let activeConversationId = '';
   const tools = new Map<string, { start: number; payload: Record<string, unknown> }>();
   const startedAt = performance.now();
+
+  function loadAgentState(conversationId: string): void {
+    if (!conversationId) return;
+    void fetch(`${apiUrl}/conversations/${conversationId}/agent-state`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async (response) => {
+      if (!response.ok || disposed) return;
+      patchSessionFromAgentState(await response.json());
+    }).catch(() => undefined);
+  }
 
   function stopList(list: AudioBufferSourceNode[]): void {
     list.forEach((source) => {
@@ -184,6 +209,13 @@ export function bootLiveCall(
     if (event.type === 'call.snapshot' && event.call) {
       const resumed = event.call.id !== activeCallId;
       activeCallId = event.call.id;
+      activeConversationId = event.call.conversation_id ?? activeConversationId;
+      patchSession({
+        name: event.call.customer_name ?? '',
+        phone: event.call.caller ?? '',
+        status: 'En vivo',
+      });
+      loadAgentState(activeConversationId);
       if (resumed) {
         ended = false;
         customerBubble = null;
@@ -213,6 +245,7 @@ export function bootLiveCall(
     }
     if (type === 'agent.signals') {
       applyCallAgentSignals(payload);
+      patchSessionFromAgentState(payload);
       return;
     }
     if (type === 'transcript.partial' && payload.speaker !== 'agent') {
@@ -318,6 +351,20 @@ export function bootLiveCall(
     });
   }
   connectAudio(callId);
+
+  void fetch(`${apiUrl}/calls/${callId}`, { headers: { Authorization: `Bearer ${token}` } })
+    .then(async (response) => {
+      if (!response.ok || disposed) return;
+      const call = await response.json() as {
+        caller?: string;
+        customer_name?: string;
+        conversation_id?: string;
+      };
+      activeConversationId = call.conversation_id ?? '';
+      patchSession({ name: call.customer_name ?? '', phone: call.caller ?? '', status: 'En vivo' });
+      loadAgentState(activeConversationId);
+    })
+    .catch(() => undefined);
 
   const monitorSocket = new WebSocket(socketUrl(apiUrl, '/ws/calls/monitor'));
   monitorSocket.addEventListener('open', () => {

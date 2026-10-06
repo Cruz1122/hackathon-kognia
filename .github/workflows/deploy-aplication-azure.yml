@@ -172,8 +172,8 @@ jobs:
           CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
           REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
           BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
-          # La cadena de `production` (gpt-5.6-luna) no está verificada; `test`
-          # usa gpt-4o-mini + fallbacks y es la que funciona en la demo.
+          # La cadena de `production` (gpt-6-luna) no está verificada; `test`
+          # usa gpt-5.4-mini + fallbacks y es la que funciona en la demo.
           LLM_ENV: ${{ vars.APP_ENV || 'test' }}
         shell: bash
         run: |

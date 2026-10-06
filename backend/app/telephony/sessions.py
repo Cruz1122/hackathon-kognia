@@ -65,6 +65,7 @@ class CallSession:
     silence_task: Any = None
     idle_since: float = field(default_factory=time.monotonic)
     last_silence_prompt: str | None = None
+    awaiting_agent_reply: bool = False
 
     def offset_ms(self) -> int:
         offset = int((time.monotonic() - self.monotonic_zero) * 1000)

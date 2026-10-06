@@ -28,7 +28,7 @@ Run from `backend/` after applying migrations to a dedicated DB:
 .venv/bin/python scripts/benchmark_agent.py --database-url "$BENCHMARK_DATABASE_URL" --output /tmp/opencode/agent-benchmark.json
 ```
 
-The demo/test chain now uses `gpt-4.1` after comparison against `gpt-4o-mini` and `gpt-4.1-mini`; the production chain is unchanged. `OPENAI_MODEL` overrides the OpenAI model explicitly for comparison or rollback. This choice has a higher token cost than the previous mini default. Keep full benchmark reports outside customer-data directories.
+The demo/test chain now uses `gpt-5.4-mini`: tool calling and streaming were verified against the real API and it was the fastest tool-capable candidate, which keeps voice latency low. `OPENAI_MODEL` overrides the OpenAI model explicitly for comparison or rollback. Keep full benchmark reports outside customer-data directories.
 
 `AgentOperation` durably records write intent before effects. Restaurant availability is simulated; the demonstration booking result is deterministic and lives in this ledger rather than a live restaurant backend. Replays return the recorded result. A started/uncertain external operation is not repeated blindly. For Telnyx callbacks, the idempotent command identifier and base64 server-owned `client_state` correlate signed provider events with the original conversation; the first verified event reconciles a lost dial response. Events whose signed correlation cannot be mapped are ignored. Existing Telnyx event deduplication is process-local, while business write intents are PostgreSQL-backed.
 

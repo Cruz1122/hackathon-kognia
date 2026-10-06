@@ -275,11 +275,43 @@ async def test_reconnected_call_resumes_history_without_new_name_request(monkeyp
     call.websocket = AsyncMock()
     call.history = [{'role': 'user', 'content': 'Me llamo Camilo, reserva para cuatro.'}]
     resume = AsyncMock()
+    speak = AsyncMock()
     monkeypatch.setattr(runtime, '_start_turn', resume)
+    monkeypatch.setattr(runtime_module, '_speak', speak)
     await runtime._greet(call)
     assert call.greeted
-    resume.assert_awaited_once()
-    assert 'Retoma' in resume.call_args.args[1]
+    resume.assert_not_awaited()
+    speak.assert_awaited_once()
+    greeting = speak.call_args.args[2]
+    assert 'Retomemos' in greeting
+    assert '¿cómo te llamas?' not in greeting.lower()
+    assert '¿quieres que te llame' not in greeting.lower()
+
+
+@pytest.mark.asyncio
+async def test_hangup_while_agent_owes_reply_requests_apology(monkeypatch):
+    runtime = TelephonyRuntime()
+    call = session()
+    call.awaiting_agent_reply = True
+    close = AsyncMock()
+    monkeypatch.setattr(runtime, '_close_db_call', close)
+    monkeypatch.setattr(runtime, '_store_heard_recording', AsyncMock())
+    monkeypatch.setattr(runtime, 'write_capture', MagicMock())
+    await runtime.finish_call(call, None)
+    close.assert_awaited_once_with(call, apologize=True)
+
+
+@pytest.mark.asyncio
+async def test_hangup_after_agent_reply_does_not_request_false_apology(monkeypatch):
+    runtime = TelephonyRuntime()
+    call = session()
+    call.awaiting_agent_reply = False
+    close = AsyncMock()
+    monkeypatch.setattr(runtime, '_close_db_call', close)
+    monkeypatch.setattr(runtime, '_store_heard_recording', AsyncMock())
+    monkeypatch.setattr(runtime, 'write_capture', MagicMock())
+    await runtime.finish_call(call, None)
+    close.assert_awaited_once_with(call, apologize=False)
 
 
 @pytest.mark.asyncio

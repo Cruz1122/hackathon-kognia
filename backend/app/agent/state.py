@@ -72,6 +72,7 @@ class AgentState(BaseModel):
     booking_slots: dict[str, Any] = Field(default_factory=dict)
     pending: Proposal | None = None
     authorized: str | None = None
+    callback_authorized_turn_id: str | None = None
     handoff_requested: bool = False
     signals: dict[str, Signal] = Field(default_factory=dict)
     key_actions: list[dict[str, Any]] = Field(default_factory=list)

@@ -23,8 +23,12 @@ STATUS_RANK = {'sent': 1, 'delivered': 2, 'read': 3}
 # Continuation after a dropped call: the LLM writes the recap, this stays as the
 # safe fallback whenever generation is unavailable, empty or off-policy.
 DEFAULT_CONTINUATION_TEXT = (
-    'Lamento mucho que se haya cortado la llamada. Podemos continuar por aquí '
+    'Gracias por tu llamada. Podemos continuar por aquí '
     'y con gusto te ayudo con lo que quedó pendiente. ¿Quieres que retomemos?'
+)
+ERROR_CONTINUATION_TEXT = (
+    'Lamento que la llamada terminara antes de que pudiera responderte. '
+    'Podemos continuar por aquí con lo que quedó pendiente. ¿Quieres que retomemos?'
 )
 MAX_CONTINUATION_CHARS = 900
 CONTINUATION_SYSTEM = (
@@ -224,7 +228,13 @@ async def continuation_message(conversation_id, organization_id, source_id: str,
         return DEFAULT_CONTINUATION_TEXT
 
 
-async def prepare_continuation(conversation_id: uuid.UUID, organization_id: uuid.UUID, source_id: str):
+async def prepare_continuation(
+    conversation_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    source_id: str,
+    *,
+    apologize: bool = False,
+):
     async with get_session_factory()() as db:
         key = event_key('continuation', source_id)
         if await db.get(ChannelEvent, key):
@@ -233,6 +243,21 @@ async def prepare_continuation(conversation_id: uuid.UUID, organization_id: uuid
             Conversation.organization_id == organization_id))
         if conversation is None:
             return
+        # A finished conversation has nothing to resume: do not keep apologizing
+        # for a dropped call every time one ends.
+        snapshot = await db.get(AgentSnapshot, conversation_id)
+        state = None
+        if snapshot is not None and isinstance(snapshot.data, dict):
+            from ..agent.state import AgentState
+            try:
+                state = AgentState.model_validate(snapshot.data)
+            except Exception:
+                state = None
+            confirmed = bool(state and any(item.get('tool') == 'create_booking' and item.get('ok')
+                                           for item in state.tool_history))
+            if state is not None and state.phase == 'completed' and state.pending is None and confirmed:
+                logger.info('Skipping continuation: conversation already completed')
+                return
         binding = await db.scalar(select(ChannelBinding).where(ChannelBinding.conversation_id == conversation_id,
             ChannelBinding.organization_id == organization_id,
             ChannelBinding.phone_number_id == settings().whatsapp_number).with_for_update())
@@ -260,8 +285,21 @@ async def prepare_continuation(conversation_id: uuid.UUID, organization_id: uuid
             for previous in previous_events:
                 previous.payload = {**previous.payload, '_conversation_id': str(binding.conversation_id)}
             binding.conversation_id = conversation_id
+        continuation_payload = {
+            'continuation': {'call_id': source_id, 'apologize': apologize},
+            '_conversation_id': str(conversation_id),
+            **routing_change,
+        }
+        if state is not None:
+            from ..agent.dialogue import continuation_text
+            text, proposal = continuation_text(state, apologize=apologize)
+            continuation_payload['text'] = text
+            if proposal:
+                continuation_payload['proposal'] = proposal
+        elif apologize:
+            continuation_payload['text'] = ERROR_CONTINUATION_TEXT
         await db.execute(insert(ChannelEvent).values(id=key, binding_id=binding.id, kind='outbound',
-            payload={'continuation': {'call_id': source_id}, '_conversation_id': str(conversation_id), **routing_change},
+            payload=continuation_payload,
             status='pending', attempts=0, created_at=datetime.now(UTC), updated_at=datetime.now(UTC)
         ).on_conflict_do_nothing(index_elements=['id']))
         await db.commit()
@@ -269,13 +307,13 @@ async def prepare_continuation(conversation_id: uuid.UUID, organization_id: uuid
     await enqueue_channel_work()
 
 
-async def process_pending(limit: int = 20) -> None:
+async def process_pending(limit: int = 20, *, min_age_seconds: float = 2) -> None:
     if not settings().whatsapp_enabled:
         return
     async with get_session_factory()() as db:
         ids = list((await db.scalars(select(ChannelEvent.id).where(
             ChannelEvent.status.in_(['pending', 'processing', 'sending']),
-            ChannelEvent.updated_at < datetime.now(UTC) - timedelta(seconds=2)
+            ChannelEvent.updated_at <= datetime.now(UTC) - timedelta(seconds=max(0, min_age_seconds))
         ).order_by(ChannelEvent.created_at, ChannelEvent.id).limit(limit))).all())
     for key in ids:
         try:

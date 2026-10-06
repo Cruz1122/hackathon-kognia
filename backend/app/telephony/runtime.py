@@ -319,6 +319,7 @@ class TelephonyRuntime:
             await enqueue_recording(session.organization_id, session.conversation_id, record.id)
 
     async def finish_call(self, session: CallSession, occurred_at: str | None) -> None:
+        apologize_for_unanswered_turn = session.awaiting_agent_reply
         for task in (session.turn_task, session.greet_task, session.silence_task, session.barge_resume_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -330,9 +331,9 @@ class TelephonyRuntime:
         session.lifecycle_state = "ENDED"
         timeline.record(session, "lifecycle", {"state": "ENDED"}, provider_occurred_at=occurred_at)
         registry.end(session)
-        await self._close_db_call(session)
+        await self._close_db_call(session, apologize=apologize_for_unanswered_turn)
 
-    async def _close_db_call(self, session: CallSession) -> None:
+    async def _close_db_call(self, session: CallSession, *, apologize: bool = False) -> None:
         if session.organization_id is None or session.conversation_id is None:
             return
         try:
@@ -350,7 +351,12 @@ class TelephonyRuntime:
                 )
                 await db.commit()
             from ..whatsapp.service import prepare_continuation
-            await prepare_continuation(session.conversation_id, session.organization_id, str(session.call_id))
+            await prepare_continuation(
+                session.conversation_id,
+                session.organization_id,
+                str(session.call_id),
+                apologize=apologize,
+            )
             await enqueue_enrichment(session.organization_id, session.conversation_id)
         except Exception:
             logger.exception("Telnyx hangup persistence failed")
@@ -610,7 +616,33 @@ class TelephonyRuntime:
             return
         if session.history:
             session.greeted = True
-            await self._start_turn(session, 'La llamada se ha reconectado. Retoma lo pendiente de esta conversación sin reiniciar el saludo ni pedir datos ya conocidos.')
+            session.turn_task = asyncio.current_task()
+            text = 'Hola. Retomemos exactamente donde se interrumpió la conversación.'
+            proposal_id = None
+            if session.conversation_id and session.organization_id:
+                try:
+                    from ..agent import dialogue
+                    from ..agent.state import AgentState
+                    from ..db.models import AgentSnapshot, Message, MessageRole
+                    from ..db.session import get_session_factory
+                    async with get_session_factory()() as db:
+                        snapshot = await db.get(AgentSnapshot, session.conversation_id)
+                        if snapshot is not None:
+                            text, proposal_id = dialogue.resume_message(AgentState.model_validate(snapshot.data))
+                        db.add(Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT,
+                                       content=text, channel='voice'))
+                        await db.commit()
+                except Exception:
+                    logger.exception('Could not build the callback resume greeting')
+            session.history.append({'role': 'assistant', 'content': text})
+            await _speak(session, PiperTTSProvider(), text)
+            session.awaiting_agent_reply = False
+            if proposal_id and session.websocket and session.marks is not None and not session.closed:
+                mark = session.marks.generated()
+                session.presentation_mark = (mark, proposal_id)
+                session.marks.sent(mark)
+                await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
+            session.idle_since = time.monotonic()
             return
         text = f'{greeting()}. Soy el asistente del restaurante. Para empezar, ¿cómo te llamas?'
         session.greeted = True
@@ -723,7 +755,7 @@ class TelephonyRuntime:
         if task.done() and not task.cancelled():
             task.exception()  # retrieve to avoid 'exception was never retrieved'
 
-    async def _start_turn(self, session: CallSession, transcript: str) -> None:
+    async def _start_turn(self, session: CallSession, transcript: str, *, system_initiated: bool = False) -> None:
         if session.barge_pending:
             # The customer really spoke: the held reply loses to their utterance.
             await self._barge_in(session)
@@ -733,7 +765,7 @@ class TelephonyRuntime:
 
         async def _guarded() -> None:
             try:
-                await run_agent_turn(session, transcript, agent=self._agent())
+                await run_agent_turn(session, transcript, agent=self._agent(), system_initiated=system_initiated)
             except asyncio.CancelledError:
                 raise
             except Exception:

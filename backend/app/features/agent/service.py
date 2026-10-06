@@ -1,5 +1,6 @@
 import re
 from collections.abc import AsyncIterator, Sequence
+from datetime import timedelta
 from typing import Any
 
 from ...config import AppEnv, Provider, get_app_env, get_model_chain
@@ -53,6 +54,44 @@ _CAPABILITY_MARKERS = (
     "si tienes alguna pregunta",
 )
 _MIN_KNOWLEDGE_TERMS = 2
+
+
+def normalize_relative_booking_date(
+    tool: str,
+    arguments: dict[str, Any],
+    prompt: str,
+    history: Sequence[Message] | None = None,
+) -> dict[str, Any]:
+    """Anchor an explicit relative booking date to the configured demo timezone.
+
+    Models can use their provider's UTC date instead of the local operational
+    date even when the latter is in the system context. Only an unambiguous date
+    expression in the current message overrides the model argument. A bare
+    ``mañana`` answering an AM/PM question keeps its time-of-day meaning.
+    """
+    if tool not in {'check_availability', 'create_booking'} or 'date' not in arguments:
+        return arguments
+    folded = ' '.join(prompt.casefold().split())
+    previous = next((str(item.get('content') or '').casefold() for item in reversed(history or [])
+                     if item.get('role') == 'assistant'), '')
+    am_pm_answer = folded in {'mañana', 'de mañana', 'por la mañana'} and (
+        'de la mañana o de la noche' in previous or 'mañana o de la noche' in previous
+    )
+    days: int | None = None
+    if re.search(r'\bpasado\s+mañana\b', folded):
+        days = 2
+    elif not am_pm_answer and (
+        re.search(r'\bpara\s+(?:el\s+)?(?:d[ií]a\s+de\s+)?mañana\b', folded)
+        or re.search(r'\bmañana\s*(?:,|a\s+la|a\s+las)\b', folded)
+        or folded == 'mañana'
+    ):
+        days = 1
+    elif re.search(r'\bpara\s+(?:el\s+)?(?:d[ií]a\s+de\s+)?hoy\b', folded):
+        days = 0
+    if days is None:
+        return arguments
+    from ...agent.state import local_now
+    return {**arguments, 'date': (local_now().date() + timedelta(days=days)).isoformat()}
 
 
 def context_window(
@@ -165,7 +204,9 @@ async def _generate(
                         call_id = call.get("id") or f"call_{index + 1}"
                         name = call.get("name") or "tool"
                         raw_arguments = call.get("arguments") or "{}"
-                        arguments = parse_arguments(raw_arguments)
+                        arguments = normalize_relative_booking_date(
+                            name, parse_arguments(raw_arguments), prompt, history
+                        )
                         title, status = describe_tool_start(name, arguments)
                         inputs = present_tool_inputs(name, arguments)
                         yield "tool.started", {"tool": name, "tool_call_id": call_id, "title": title, "status": status, "inputs": inputs}
@@ -182,8 +223,11 @@ async def _generate(
                         yield "tool.completed", {
                             "tool": name,
                             "tool_call_id": call_id,
+                            "arguments": arguments,
+                            "ok": tool_result.ok,
+                            "error_code": tool_result.error_code,
                             "title": done_title,
-                            "status": done_status,
+                            "status": done_status if tool_result.ok else "Pendiente de revisión",
                             "result": result,
                             "inputs": inputs,
                             "outputs": present_tool_outputs(name, result),

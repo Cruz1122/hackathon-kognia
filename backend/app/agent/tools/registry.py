@@ -79,30 +79,41 @@ class ToolRegistry:
                     and item['turn_id'] == turn.turn_id and item['ok']), None)
                 if completed:
                     return ToolResult(True, data=completed['result'])
-            operation_id = fingerprint(state.conversation_id, {'proposal': fingerprint(name, clean)})
-            operation = await store.db.get(AgentOperation, operation_id) if name != 'call_customer' else None
+            callback_authorized = name == 'call_customer' and state.callback_authorized_turn_id == turn.turn_id
+            operation_id = (
+                fingerprint(state.conversation_id, {'callback_turn': turn.turn_id})
+                if name == 'call_customer'
+                else fingerprint(state.conversation_id, {'proposal': fingerprint(name, clean)})
+            )
+            operation = await store.db.get(AgentOperation, operation_id)
             if operation and operation.status == 'succeeded':
-                state.pending = None
-                state.authorized = None
-                state.phase = 'completed'
-                state.action('action_result_reused', tool=name, operation_id=operation_id)
-                await store.save()
-                return ToolResult(True, data=operation.result)
-            if not authorize(state, name, clean):
-                await store.save()
-                return ToolResult(False, error_code='CONFIRMATION_REQUIRED', message='Present the exact pending proposal and ask one concise confirmation question. Interpret the reply semantically, never require a specific phrase.')
-            if name == 'call_customer':
-                operation_id = fingerprint(state.conversation_id, {'proposal': state.pending.fingerprint,
-                    'created_at': state.pending.created_at.isoformat()})
-                operation = await store.db.get(AgentOperation, operation_id)
-            if operation:
-                if operation.status == 'succeeded':
+                if name == 'call_customer':
+                    state.callback_authorized_turn_id = None
+                    state.action('callback_result_reused', operation_id=operation_id)
+                else:
                     state.pending = None
                     state.authorized = None
                     state.phase = 'completed'
+                state.action('action_result_reused', tool=name, operation_id=operation_id)
+                await store.save()
+                return ToolResult(True, data=operation.result)
+            if not callback_authorized and not authorize(state, name, clean):
+                logger.info("Tool not authorized request_id=%s tool=%s", context.request_id, name)
+                await store.save()
+                return ToolResult(False, error_code='CONFIRMATION_REQUIRED', message='Present the exact pending proposal and ask one concise confirmation question. Interpret the reply semantically, never require a specific phrase.')
+            if operation:
+                if operation.status == 'succeeded':
+                    if name == 'call_customer':
+                        state.callback_authorized_turn_id = None
+                    else:
+                        state.pending = None
+                        state.authorized = None
+                        state.phase = 'completed'
                     await store.save()
                     return ToolResult(True, data=operation.result)
                 if not definition.replay_safe:
+                    logger.warning("Tool operation uncertain request_id=%s tool=%s operation_id=%s",
+                                   context.request_id, name, operation_id)
                     return ToolResult(False, error_code='OPERATION_UNCERTAIN', message='The previous attempt requires provider reconciliation. Do not retry it.')
                 operation.status = 'started'
             else:
@@ -123,7 +134,10 @@ class ToolRegistry:
         except asyncio.CancelledError:
             if turn and operation:
                 operation.status = 'uncertain'
-                turn.store.state.authorized = None
+                if name == 'call_customer':
+                    turn.store.state.callback_authorized_turn_id = None
+                else:
+                    turn.store.state.authorized = None
                 turn.store.state.action('action_uncertain', operation_id=operation.id, reason='cancelled')
                 await turn.store.save()
             raise
@@ -132,6 +146,8 @@ class ToolRegistry:
         except Exception:
             logger.exception("Tool execution failed request_id=%s tool=%s", context.request_id, name)
             outcome = ToolResult(False, error_code="TOOL_EXECUTION_ERROR", message="Tool execution failed.")
+        logger.info("Tool outcome request_id=%s tool=%s ok=%s error=%s",
+                    context.request_id, name, outcome.ok, outcome.error_code)
         if turn:
             store, state = turn.store, turn.store.state
             state.tool_history = [*state.tool_history[-19:], {'tool': name, 'arguments': clean,
@@ -140,6 +156,12 @@ class ToolRegistry:
             if outcome.ok:
                 for key, value in clean.items():
                     state.facts[f'{name}.{key}'] = Fact(value=value, source=f'tool:{name}:{turn.turn_id}')
+                if name in {'check_availability', 'create_booking'}:
+                    state.booking_slots.update({
+                        key: value for key, value in clean.items()
+                        if key in {'date', 'time', 'party_size', 'customer_name'}
+                    })
+                    state.goal = 'create_booking'
             if operation:
                 # A signed provider webhook may have reconciled the operation meanwhile.
                 await store.db.refresh(operation)
@@ -147,8 +169,12 @@ class ToolRegistry:
                     outcome = ToolResult(True, data=operation.result)
                 operation.status = 'succeeded' if outcome.ok else 'uncertain'
                 operation.result = outcome.data if isinstance(outcome.data, dict) else {'value': outcome.data}
-                state.authorized = None
-                if outcome.ok:
+                if name == 'call_customer':
+                    state.callback_authorized_turn_id = None
+                    state.action('callback_started' if outcome.ok else 'callback_failed', operation_id=operation.id)
+                else:
+                    state.authorized = None
+                if outcome.ok and name != 'call_customer':
                     state.pending = None
                     state.phase = 'completed'
                     state.action('action_completed', tool=name, operation_id=operation.id)

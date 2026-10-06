@@ -36,6 +36,7 @@ class ToolContext:
     user_id: str | None = None
     channel: str = 'voice'
     operation_id: str | None = None
+    system_initiated: bool = False
 
 
 @dataclass

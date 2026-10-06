@@ -896,7 +896,7 @@ async def _replay_stream(buffered_chunks: list[str], stream: AsyncIterator[str])
                     "schema": {"type": "string"},
                     "example": (
                         'event: token\ndata: {"text":"Hola"}\n\n'
-                        'event: done\ndata: {"provider":"openai","model":"gpt-5.6-luna"}\n\n'
+                        'event: done\ndata: {"provider":"openai","model":"gpt-6-luna"}\n\n'
                     ),
                 }
             },

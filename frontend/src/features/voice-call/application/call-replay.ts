@@ -1,4 +1,10 @@
-import { bindDetailClicks, toolDetailFromEvent } from './detail-panel';
+import {
+  bindDetailClicks,
+  mountSessionPanel,
+  patchSession,
+  patchSessionFromAgentState,
+  toolDetailFromEvent,
+} from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { eventMarkIcon, paintCallWave, resizeWave, type WaveMark } from './wave-mark';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
@@ -162,6 +168,7 @@ export function bootCallReplay(
     return () => undefined;
   }
   bindDetailClicks(conversation);
+  mountSessionPanel();
     const scroller = document.getElementById('appContent');
     let scrollRest = 0;
     scroller?.addEventListener('scroll', () => {
@@ -478,14 +485,26 @@ export function bootCallReplay(
       return;
     }
     loadStage = 'los datos de la llamada';
-    const call = await callResponse.json() as { recording_offset_ms?: number; conversation_id?: string };
+    const call = await callResponse.json() as {
+      recording_offset_ms?: number;
+      conversation_id?: string;
+      caller?: string;
+      customer_name?: string;
+      status?: string;
+    };
+    patchSession({
+      name: call.customer_name ?? '',
+      phone: call.caller ?? '',
+      status: call.status === 'active' ? 'En vivo' : 'Llamada finalizada',
+    });
     loadStage = 'la línea de tiempo de la llamada';
     const timeline = await timelineResponse.json() as { events: TimelineEvent[] };
     const events = timeline.events ?? [];
-    if (!events.some((event) => event.type === 'agent.signals') && call.conversation_id) {
+    if (call.conversation_id) {
       const stateResponse = await fetch(`${apiUrl}/conversations/${call.conversation_id}/agent-state`, { headers });
       if (stateResponse.ok) {
         const state = await stateResponse.json() as { signals?: Record<string, unknown> };
+        patchSessionFromAgentState(state);
         if (state.signals && Object.keys(state.signals).length) {
           finalSignalsFallback = { signals: state.signals };
         }

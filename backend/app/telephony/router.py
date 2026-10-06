@@ -133,21 +133,31 @@ async def get_call(
         if not _owns(user, live.organization_id):
             raise HTTPException(status_code=404, detail="not found")
         body = live.public_view()
+        if live.conversation_id is not None:
+            conversation = await session.scalar(
+                select(Conversation)
+                .where(Conversation.id == live.conversation_id, Conversation.organization_id == user.organization_id)
+                .options(joinedload(Conversation.customer))
+            )
+            customer = conversation.customer if conversation is not None else None
+            body['caller'] = customer.phone if customer is not None and customer.phone else body.get('caller', '')
+            body['customer_name'] = customer.name if customer is not None and customer.name else ''
         record = recording_store.get(call_id)
         if record is not None and record.organization_id == user.organization_id:
             body["recording"] = public_recording(record)
         return body
-    row = await session.get(Call, call_id)
+    row = await session.scalar(
+        select(Call)
+        .where(Call.id == call_id)
+        .options(joinedload(Call.conversation).joinedload(Conversation.customer))
+    )
     if row is None or not _owns(user, row.organization_id):
         raise HTTPException(status_code=404, detail="not found")
+    stored = _stored_call(row)
     return {
-        "id": str(row.id),
+        **stored,
         "organization_id": str(row.organization_id),
         "conversation_id": str(row.conversation_id),
-        "lifecycle": row.lifecycle_state,
-        "started_at": row.started_at.isoformat(),
-        "recording_offset_ms": row.recording_offset_ms,
-        "duration_ms": 0,
     }
 
 
@@ -262,11 +272,18 @@ async def monitor_socket(websocket: WebSocket) -> None:
             assert initial is not None
             conversation_id = initial.conversation_id
             latest_started_at = initial.started_at
+            conversation_started_at = initial.started_at
+            current_leg_started_at = initial.started_at
             last_poll = 0.0
             while True:
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=1)
-                    await websocket.send_json({**message, 'call_id': str(subscribed)})
+                    leg_base_ms = max(0, int((current_leg_started_at - conversation_started_at).total_seconds() * 1000))
+                    await websocket.send_json({
+                        **message,
+                        'call_id': str(subscribed),
+                        'offset_ms': leg_base_ms + int(message.get('offset_ms') or 0),
+                    })
                 except asyncio.TimeoutError:
                     pass
                 if conversation_id is None:
@@ -289,8 +306,12 @@ async def monitor_socket(websocket: WebSocket) -> None:
                     if key in seen_messages:
                         continue
                     seen_messages.add(key)
+                    message_offset_ms = max(
+                        0, int((row.created_at - conversation_started_at).total_seconds() * 1000)
+                    )
                     await websocket.send_json({'type': 'conversation.event' if row.channel == 'system' else 'transcript.final',
-                        'message_id': key, 'payload': {'channel': 'whatsapp', 'text': row.content,
+                        'message_id': key, 'offset_ms': message_offset_ms,
+                        'payload': {'channel': 'whatsapp', 'text': row.content,
                         'speaker': 'customer' if row.role == MessageRole.USER else 'agent'}})
                 candidates = [item for item in registry.list_for(organization_id)
                     if item.conversation_id == conversation_id
@@ -298,12 +319,21 @@ async def monitor_socket(websocket: WebSocket) -> None:
                 if candidates:
                     live = max(candidates, key=lambda item: item.started_at)
                     latest_started_at = live.started_at
+                    current_leg_started_at = live.started_at
                     monitor_hub.unsubscribe(organization_id, subscribed, queue)
                     subscribed = live.call_id
                     queue = monitor_hub.subscribe(organization_id, subscribed)
-                    await websocket.send_json({'type': 'call.snapshot', 'call': live.public_view()})
+                    call_view = live.public_view()
+                    call_view['conversation_offset_ms'] = max(
+                        0, int((live.started_at - conversation_started_at).total_seconds() * 1000)
+                    )
+                    await websocket.send_json({'type': 'call.snapshot', 'call': call_view})
                     for event in live.events:
-                        await websocket.send_json({**event, 'call_id': str(subscribed)})
+                        await websocket.send_json({
+                            **event,
+                            'call_id': str(subscribed),
+                            'offset_ms': call_view['conversation_offset_ms'] + int(event.get('offset_ms') or 0),
+                        })
 
         while True:
             incoming = await websocket.receive_json()

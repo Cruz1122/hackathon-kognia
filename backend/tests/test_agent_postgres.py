@@ -1,6 +1,7 @@
 """Run only against a disposable, migrated PostgreSQL database."""
 import asyncio
 import base64
+import json
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -86,7 +87,10 @@ async def test_persistent_booking_and_old_turn_replay(fixture):
     first = await turn(fixture, 'reserva', 'one')
     assert first[-1][1]['proposal_id'] is not None
     second = await turn(fixture, 'confirmo', 'two')
-    assert second[-2][1]['text'] == 'Reserva confirmada.'
+    confirmed_text = second[-2][1]['text']
+    assert 'quedó confirmada' in confirmed_text
+    assert 'Gracias por tu llamada' in confirmed_text
+    assert 'Hasta luego' in confirmed_text
     assert (await turn(fixture, 'reserva', 'one'))[-2][1]['text'] == first[-2][1]['text']
     org, conversation, _ = fixture
     async with get_session_factory()() as db:
@@ -100,6 +104,36 @@ async def test_persistent_booking_and_old_turn_replay(fixture):
     async with conversation_state(str(org.id), str(conversation.id)) as store:
         assert store.state.phase == 'completed'
         assert len(store.state.recent) == 4
+
+
+async def test_available_slot_becomes_persisted_proposal_without_second_model_round(fixture):
+    """Regression for the production pause after check_availability."""
+    args = {'date': '2027-10-05', 'time': '20:00', 'party_size': 1}
+    resumed_after_tool = False
+
+    async def availability_turn(prompt, **kwargs):
+        nonlocal resumed_after_tool
+        result = await TOOL_REGISTRY.execute('check_availability', args, kwargs['tool_context'])
+        yield 'tool.started', {'tool': 'check_availability', 'arguments': args}
+        yield 'tool.completed', {
+            'tool': 'check_availability', 'arguments': args, 'ok': result.ok,
+            'error_code': result.error_code, 'result': json.dumps(result.data),
+        }
+        resumed_after_tool = True
+        yield 'token', {'text': 'This second model round must never be awaited.'}
+
+    events = await turn(fixture, 'mañana a las ocho', 'availability-no-stall', availability_turn)
+    assert resumed_after_tool is False
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert 'para 1 persona' in text
+    assert 'a nombre de Juan' in text
+    assert '¿La confirmas?' in text
+    proposal_id = events[-1][1]['proposal_id']
+    assert proposal_id
+    async with get_session_factory()() as db:
+        snapshot = await db.get(AgentSnapshot, fixture[1].id)
+        assert snapshot.data['pending']['fingerprint'] == proposal_id
+        assert snapshot.data['booking_slots'] == {**args, 'customer_name': 'Juan'}
 
 
 async def test_model_receives_booking_intent_across_consecutive_user_fragments(fixture):
@@ -145,8 +179,7 @@ async def test_model_receives_hour_clarification_context_for_short_answer(fixtur
     async def model_turn(prompt, **kwargs):
         assert prompt == 'Mañana'
         assert [(item['role'], item['content']) for item in kwargs['messages']] == history
-        assert 'una respuesta como \'mañana\' o \'de mañana\' indica la mañana para esa hora' in kwargs['system_context']
-        assert 'No empieces cada turno con \'Perfecto\'' in kwargs['system_context']
+        assert 'Ask only when a date is genuinely ambiguous or the hour lacks AM/PM context' in kwargs['system_context']
         yield 'token', {'text': 'A las ocho de la mañana. ¿Para cuántas personas será?'}
         yield 'done', {'provider': 'fake', 'model': 'tool-calling'}
 
@@ -168,13 +201,30 @@ async def test_integrity_blocks_every_token_until_validated(fixture, monkeypatch
         order.append('draft')
         yield 'token', {'text': 'Unsupported success!'}
         yield 'done', {'provider': 'fake'}
-    async def reject(*args):
+    async def reject(*args, **kwargs):
         order.append('evaluate')
         return Signal(value='unsupported', confidence=.99, turn_id='one', model='fake')
     monkeypatch.setattr(jev, 'integrity', reject)
     events = await turn(fixture, 'hello', 'one', generate)
     assert order == ['draft', 'evaluate', 'draft', 'evaluate']
     assert [data['text'] for kind, data in events if kind == 'token'][0] in RECOVERY
+
+
+async def test_runtime_passes_retrieved_knowledge_to_integrity(fixture, monkeypatch):
+    captured: dict = {}
+
+    async def generate(prompt, **kwargs):
+        kwargs['knowledge_sink'][:] = ['La tolerancia máxima es de 15 minutos.']
+        yield 'token', {'text': 'La tolerancia es de 15 minutos.'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
+
+    async def integrity(state, draft, turn_id, knowledge=None):
+        captured['knowledge'] = knowledge
+        return Signal(value='supported', confidence=.99, turn_id=turn_id, model='fake')
+
+    monkeypatch.setattr(jev, 'integrity', integrity)
+    await turn(fixture, '¿Cuál es la tolerancia?', 'rag-knowledge-turn', generate)
+    assert captured['knowledge'] == ['La tolerancia máxima es de 15 minutos.']
 
 
 async def test_concurrent_turns_do_not_lose_updates(fixture):
@@ -247,19 +297,151 @@ async def test_callback_reuses_conversation_and_is_not_duplicated(fixture, monke
     monkeypatch.setenv('TELNYX_ENABLED', 'true')
     dial = AsyncMock(return_value={'call_control_id': str(uuid.uuid4()), 'call_leg_id': 'leg', 'call_session_id': 'session'})
     monkeypatch.setattr(TelnyxApi, 'dial', dial)
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'callback_request': Signal(value='explicit', confidence=.99, turn_id=turn_id, model='isolated-test')}
+    monkeypatch.setattr(jev, 'observe', observe)
     async def generate(prompt, **kwargs):
         result = await TOOL_REGISTRY.execute('call_customer', {'phone': fixture[2].phone}, kwargs['tool_context'])
         yield 'token', {'text': 'Llamada solicitada.' if result.ok else 'Confirma el teléfono.'}
         yield 'done', {}
     await turn(fixture, 'llámame', 'one', generate)
-    assert dial.await_count == 0
-    await turn(fixture, 'confirmo', 'two', generate)
-    await turn(fixture, 'confirmo', 'two', generate)
+    assert dial.await_count == 1
+    # Replaying the same durable turn never places a duplicate provider call.
+    await turn(fixture, 'llámame', 'one', generate)
     assert dial.await_count == 1
     operation_id = dial.call_args.kwargs['command_id']
     session = await restore_outbound({**dial.return_value, 'client_state': base64.b64encode(operation_id.encode()).decode()})
     assert session.conversation_id == fixture[1].id
     assert session.organization_id == fixture[0].id
+
+
+async def test_callback_transport_does_not_replace_pending_booking(fixture, monkeypatch):
+    from app.agent.policy import authorize
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+    async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
+        store.state.booking_slots = dict(ARGS)
+        authorize(store.state, 'create_booking', ARGS)
+        store.state.pending.presented = True
+        await store.save()
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {
+            'callback_request': Signal(value='explicit', confidence=.99, turn_id=turn_id, model='isolated-test'),
+            'confirmation': Signal(value='uncertain', confidence=.99, turn_id=turn_id, model='test'),
+            'frustration': Signal(value='very_high', confidence=.99, turn_id=turn_id, model='test'),
+        }
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def unused_model(prompt, **kwargs):
+        raise AssertionError('An authorized callback must execute before the response model')
+        yield
+
+    await turn(fixture, 'Vuelve a llamarme ahora', 'callback-preserves-booking', unused_model, channel='whatsapp')
+    assert dial.await_count == 1
+    async with get_session_factory()() as db:
+        snapshot = await db.get(AgentSnapshot, fixture[1].id)
+        assert snapshot.data['pending']['tool'] == 'create_booking'
+        assert snapshot.data['pending']['arguments'] == ARGS
+        assert snapshot.data['phase'] == 'confirming'
+        assert snapshot.data['callback_authorized_turn_id'] is None
+
+
+async def test_greeting_after_callback_reuses_pending_booking_without_model_or_duplicate_lookup(
+        fixture, monkeypatch):
+    """A customer greeting after the agent resumes the call must not restart the flow."""
+    from app.agent.policy import authorize
+    async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
+        store.state.booking_slots = dict(ARGS)
+        authorize(store.state, 'create_booking', ARGS)
+        store.state.pending.presented = True
+        await store.save()
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {
+            'confirmation': Signal(value='uncertain', confidence=.99, turn_id=turn_id, model='test'),
+            'callback_request': Signal(value='not_requested', confidence=.99, turn_id=turn_id,
+                                       model='isolated-test'),
+        }
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def unused_model(prompt, **kwargs):
+        raise AssertionError('A surviving booking proposal must not invoke the response model')
+        yield
+
+    events = await turn(fixture, 'Hola', 'callback-greeting-resume', unused_model, channel='voice')
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert 'para 4 personas' in text
+    assert 'a nombre de Juan' in text
+    assert '¿La confirmas?' in text
+    assert not [data for kind, data in events
+                if kind == 'tool.started' and data.get('tool') == 'check_availability']
+    async with get_session_factory()() as db:
+        snapshot = await db.get(AgentSnapshot, fixture[1].id)
+        assert snapshot.data['pending']['tool'] == 'create_booking'
+        assert snapshot.data['phase'] == 'confirming'
+
+
+async def test_explicit_booking_confirmation_survives_high_frustration(fixture, monkeypatch):
+    """Being angry must not turn an explicit confirmation into a rejection."""
+    from app.agent.policy import authorize
+    async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
+        store.state.booking_slots = dict(ARGS)
+        authorize(store.state, 'create_booking', ARGS)
+        store.state.pending.presented = True
+        await store.save()
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {
+            'confirmation': Signal(value='explicit', confidence=.99, turn_id=turn_id, model='test'),
+            'frustration': Signal(value='very_high', confidence=.99, turn_id=turn_id, model='test'),
+            'callback_request': Signal(value='not_requested', confidence=.99, turn_id=turn_id,
+                                       model='isolated-test'),
+        }
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def unused_model(prompt, **kwargs):
+        raise AssertionError('An explicit confirmation must execute deterministically')
+        yield
+
+    events = await turn(fixture, 'Sí, claro, la confirmo', 'angry-explicit-confirmation', unused_model)
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert 'quedó confirmada' in text
+    assert 'Gracias por tu llamada' in text
+    async with get_session_factory()() as db:
+        snapshot = await db.get(AgentSnapshot, fixture[1].id)
+        assert snapshot.data['phase'] == 'completed'
+        assert snapshot.data['pending'] is None
+
+
+async def test_expired_booking_proposal_is_reissued_then_can_be_confirmed(fixture):
+    """An expired consent window must not leave a permanently unconfirmable proposal."""
+    from app.agent.policy import authorize
+    async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
+        store.state.booking_slots = dict(ARGS)
+        authorize(store.state, 'create_booking', ARGS)
+        store.state.pending.presented = True
+        store.state.pending.created_at = now() - timedelta(minutes=16)
+        await store.save()
+
+    async def unused_model(prompt, **kwargs):
+        raise AssertionError('A stale known proposal must be reissued without the response model')
+        yield
+
+    first = await turn(fixture, 'confirmo', 'expired-confirmation-reissue', unused_model)
+    first_text = next(data['text'] for kind, data in first if kind == 'token')
+    assert '¿La confirmas?' in first_text
+    assert first[-1][1]['proposal_id'] is not None
+
+    second = await turn(fixture, 'confirmo', 'fresh-confirmation-after-reissue', unused_model)
+    second_text = next(data['text'] for kind, data in second if kind == 'token')
+    assert 'quedó confirmada' in second_text
+    async with get_session_factory()() as db:
+        snapshot = await db.get(AgentSnapshot, fixture[1].id)
+        assert snapshot.data['phase'] == 'completed'
+        assert snapshot.data['pending'] is None
 
 
 async def test_a_new_confirmed_callback_can_dial_again(fixture, monkeypatch):
@@ -268,17 +450,160 @@ async def test_a_new_confirmed_callback_can_dial_again(fixture, monkeypatch):
     dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
     monkeypatch.setattr(TelnyxApi, 'dial', dial)
 
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'callback_request': Signal(value='explicit', confidence=.99,
+                                           turn_id=turn_id, model='isolated-test')}
+    monkeypatch.setattr(jev, 'observe', observe)
+
     async def generate(prompt, **kwargs):
         result = await TOOL_REGISTRY.execute('call_customer', {}, kwargs['tool_context'])
         yield 'token', {'text': 'Llamada solicitada.' if result.ok else '¿Confirmas que te llame?'}
         yield 'done', {}
 
-    await turn(fixture, 'llámame', 'first-proposal', generate)
-    await turn(fixture, 'confirmo', 'first-confirmation', generate)
-    await turn(fixture, 'llámame', 'second-proposal', generate)
-    await turn(fixture, 'confirmo', 'second-confirmation', generate)
+    await turn(fixture, 'llámame', 'first-callback', generate)
+    await turn(fixture, 'llámame de nuevo', 'second-callback', generate)
     assert dial.await_count == 2
     assert dial.await_args_list[0].kwargs['command_id'] != dial.await_args_list[1].kwargs['command_id']
+
+
+async def test_explicit_callback_dials_even_when_model_never_calls_the_tool(fixture, monkeypatch):
+    # Regression: with a stale failed call_customer in tool results the model
+    # answered "Hubo un problema" without calling the tool. Policy must dial.
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'callback_request': Signal(value='explicit', confidence=.99, turn_id=turn_id, model='fake'),
+                'frustration': Signal(value='high', confidence=.83, turn_id=turn_id, model='fake')}
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    model_calls = []
+
+    async def model_never_calls_tool(prompt, **kwargs):
+        model_calls.append(prompt)
+        yield 'token', {'text': 'Hubo un problema al intentar llamarte.'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
+
+    events = await turn(fixture, 'Lláame pls', 'callback-no-tool', model_never_calls_tool, channel='whatsapp')
+    assert dial.await_count == 1
+    assert model_calls == []
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert 'llamando' in text
+
+
+async def test_system_initiated_turn_never_authorizes_a_callback(fixture, monkeypatch):
+    # Regression: the outbound-call reconnect greeting is internal, but JEV can
+    # label it a callback from the surrounding history. It must never dial again.
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'callback_request': Signal(value='explicit', confidence=.99, turn_id=turn_id, model='fake'),
+                'intent': Signal(value='callback', confidence=.99, turn_id=turn_id, model='fake')}
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def model_reply(prompt, **kwargs):
+        yield 'token', {'text': 'Retomemos lo pendiente de tu reserva.'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
+
+    org, conversation, _ = fixture
+    ctx = ToolContext('reconnect-system', organization_id=str(org.id),
+                      conversation_id=str(conversation.id), channel='voice', system_initiated=True)
+    events = [item async for item in stateful_stream(
+        'La llamada se ha reconectado. Retoma lo pendiente.', messages=None, llm=None,
+        tool_context=ctx, generate=model_reply)]
+    assert dial.await_count == 0
+    assert 'Retomemos' in next(data['text'] for kind, data in events if kind == 'token')
+
+
+async def test_call_customer_guard_blocks_dial_while_a_call_is_active(fixture, monkeypatch):
+    from app.db.models import Call, CallStatus
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+    async with get_session_factory()() as db:
+        db.add(Call(organization_id=fixture[0].id, conversation_id=fixture[1].id,
+                    status=CallStatus.ACTIVE, telnyx_call_control_id='v3:already-active'))
+        await db.commit()
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'callback_request': Signal(value='explicit', confidence=.93, turn_id=turn_id, model='fake',
+                                           probabilities={'explicit': 0.93, 'not_requested': 0.06})}
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def model_reply(prompt, **kwargs):
+        yield 'token', {'text': 'ok'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
+
+    events = await turn(fixture, 'Sí llámame', 'guard-active', model_reply, channel='whatsapp')
+    assert dial.await_count == 0
+    assert 'llamada en curso' in next(data['text'] for kind, data in events if kind == 'token')
+
+
+async def test_non_explicit_callback_verdict_never_dials_from_probability(fixture, monkeypatch):
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        # The classifier missed it, but the current message itself is explicit.
+        return {'callback_request': Signal(value='not_requested', confidence=.4, turn_id=turn_id, model='fake',
+                                           probabilities={'explicit': 0.6, 'not_requested': 0.39})}
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def model_lie(prompt, **kwargs):
+        yield 'token', {'text': 'En este momento te estoy llamando al número registrado.'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
+
+    events = await turn(fixture, 'Sí llámame', 'high-prob-callback', model_lie, channel='whatsapp')
+    assert dial.await_count == 0
+    text = next(data['text'] for kind, data in events if kind == 'token')
+    assert 'no he podido iniciar la llamada' in text
+
+
+async def test_isolated_semantic_refusal_for_insult_does_not_dial(fixture, monkeypatch):
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'callback_request': Signal(value='not_requested', confidence=.93, turn_id=turn_id,
+                                           model='isolated-test', probabilities={'explicit': .02, 'not_requested': .93})}
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def answer(prompt, **kwargs):
+        yield 'token', {'text': 'Sigo aquí para ayudarte con la reserva.'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
+
+    events = await turn(fixture, 'Omg eres imbécil', 'insult-is-not-consent', answer, channel='whatsapp')
+    assert dial.await_count == 0
+    assert 'Sigo aquí' in next(data['text'] for kind, data in events if kind == 'token')
+
+
+async def test_model_cannot_claim_a_call_it_did_not_place(fixture, monkeypatch):
+    from app.telephony.telnyx_api import TelnyxApi
+    monkeypatch.setenv('TELNYX_ENABLED', 'true')
+    dial = AsyncMock(return_value={'call_control_id': 'control', 'call_leg_id': 'leg', 'call_session_id': 'session'})
+    monkeypatch.setattr(TelnyxApi, 'dial', dial)
+
+    async def observe(state, prompt, turn_id, domain_questions=None):
+        return {'callback_request': Signal(value='not_requested', confidence=.4, turn_id=turn_id, model='fake')}
+    monkeypatch.setattr(jev, 'observe', observe)
+
+    async def model_lie(prompt, **kwargs):
+        yield 'token', {'text': 'En este momento te estoy llamando al número registrado.'}
+        yield 'done', {'provider': 'fake', 'model': 'fake'}
+
+    events = await turn(fixture, 'cuéntame de la reserva', 'no-call-claim', model_lie, channel='whatsapp')
+    assert dial.await_count == 0
+    assert 'no he podido iniciar la llamada' in next(data['text'] for kind, data in events if kind == 'token')
 
 
 async def test_jev_receives_persisted_history_before_first_turn(fixture, monkeypatch):
@@ -417,8 +742,33 @@ async def test_dropped_call_enqueues_continuation_marker(fixture):
     async with get_session_factory()() as db:
         event = await db.get(ChannelEvent, event_key('continuation', source_id))
         assert event is not None and event.status == 'pending'
-        assert event.payload.get('continuation') == {'call_id': source_id}
+        assert event.payload.get('continuation') == {'call_id': source_id, 'apologize': False}
         assert 'text' not in event.payload
+
+
+async def test_dropped_call_with_unanswered_turn_enqueues_specific_apology(fixture):
+    from app.whatsapp.service import ERROR_CONTINUATION_TEXT, prepare_continuation
+    source_id = uuid.uuid4().hex
+    await prepare_continuation(fixture[1].id, fixture[0].id, source_id, apologize=True)
+    async with get_session_factory()() as db:
+        event = await db.get(ChannelEvent, event_key('continuation', source_id))
+        assert event is not None
+        assert event.payload['continuation']['apologize'] is True
+        assert event.payload['text'] == ERROR_CONTINUATION_TEXT
+
+
+async def test_completed_conversation_skips_dropped_call_continuation(fixture):
+    from app.whatsapp.service import prepare_continuation
+    async with conversation_state(str(fixture[0].id), str(fixture[1].id)) as store:
+        store.state.phase = 'completed'
+        store.state.pending = None
+        store.state.tool_history = [{'tool': 'create_booking', 'ok': True, 'error': None,
+                                     'result': {'status': 'confirmed'}, 'arguments': {}, 'turn_id': 't'}]
+        await store.save()
+    source_id = uuid.uuid4().hex
+    await prepare_continuation(fixture[1].id, fixture[0].id, source_id)
+    async with get_session_factory()() as db:
+        assert await db.get(ChannelEvent, event_key('continuation', source_id)) is None
 
 
 async def test_continuation_event_resolves_text_and_sends(fixture):
@@ -508,7 +858,7 @@ async def test_model_selected_booking_success_and_cached_success_never_reask_con
     assert generated_turns == ['reserva']
     confirmed = await turn(fixture, 'confirmo', 'model-confirmation', select_booking)
     text = next(data['text'] for kind, data in confirmed if kind == 'token')
-    assert text == 'Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
+    assert 'quedó confirmada' in text and 'Gracias por tu llamada' in text and 'Hasta luego' in text
     assert generated_turns == ['reserva']
     async with get_session_factory()() as db:
         state = (await db.get(AgentSnapshot, fixture[1].id)).data
@@ -521,7 +871,8 @@ async def test_model_selected_booking_success_and_cached_success_never_reask_con
         store.state.pending.presented = True
         await store.save()
     cached = await turn(fixture, 'confirmo', 'model-cached', select_booking)
-    assert next(data['text'] for kind, data in cached if kind == 'token') == 'Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
+    cached_text = next(data['text'] for kind, data in cached if kind == 'token')
+    assert 'quedó confirmada' in cached_text and 'Gracias por tu llamada' in cached_text
     async with get_session_factory()() as db:
         assert (await db.get(AgentSnapshot, fixture[1].id)).data['pending'] is None
         assert await db.scalar(select(func.count()).select_from(AgentOperation).where(
@@ -545,7 +896,7 @@ async def test_noisy_correct_intent_does_not_loop_confirmation(fixture, monkeypa
     assert first[-1][1]['proposal_id'] is not None
     confirmed = await turn(fixture, 'que sí', 'noisy-confirmation')
     text = next(data['text'] for kind, data in confirmed if kind == 'token')
-    assert text == 'Tu reserva está confirmada. Gracias por llamar. ¡Hasta luego!'
+    assert 'quedó confirmada' in text and 'Gracias por tu llamada' in text and 'Hasta luego' in text
     assert '¿La confirmas?' not in text
 
 

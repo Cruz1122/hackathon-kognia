@@ -3,7 +3,7 @@ import { backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
-import { bindDetailClicks, mountSessionPanel, patchSession, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
+import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 
@@ -100,6 +100,13 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/call`;
   const authToken = typeof token === 'string' ? token.trim() : '';
   const attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+  if (authToken && attachedConversationId) {
+    void fetch(`${apiUrl}/conversations/${attachedConversationId}/agent-state`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    }).then(async (response) => {
+      if (response.ok) patchSessionFromAgentState(await response.json());
+    }).catch(() => undefined);
+  }
   const pendingTools = new Map<string, string>();
   let pendingRetrievalId: string | null = null;
 
@@ -438,6 +445,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       appendToken(String(data.text ?? ''));
     } else if (type === 'agent.signals') {
       applyCallAgentSignals(data);
+      patchSessionFromAgentState(data);
     } else if (type === 'tool.started') {
       const toolCallId = String(data.tool_call_id ?? data.id ?? `${String(data.tool ?? 'tool')}-${Date.now()}`);
       const id = `tool-${toolCallId}`;

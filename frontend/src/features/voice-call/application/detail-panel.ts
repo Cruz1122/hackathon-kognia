@@ -163,6 +163,33 @@ export function patchSession(partial: { name?: string; phone?: string; status?: 
   renderSession();
 }
 
+type AgentStateView = {
+  phase?: unknown;
+  customer_name?: unknown;
+  booking_slots?: unknown;
+  state?: unknown;
+};
+
+function phaseLabel(value: unknown): string {
+  if (value === 'completed') return 'Reserva confirmada';
+  if (value === 'confirming') return 'Esperando confirmación';
+  if (value === 'searching') return 'Consultando disponibilidad';
+  if (value === 'presenting') return 'Presentando opciones';
+  return 'Recopilando datos';
+}
+
+export function patchSessionFromAgentState(value: unknown): void {
+  const envelope = asRecord(value) as AgentStateView;
+  const nested = asRecord(envelope.state);
+  const state = Object.keys(nested).length ? nested : asRecord(value);
+  const slots = asRecord(state.booking_slots);
+  const name = String(state.customer_name ?? slots.customer_name ?? '').trim();
+  patchSession({
+    ...(name ? { name } : {}),
+    status: phaseLabel(state.phase),
+  });
+}
+
 function sessionFields(): DetailField[] {
   return [
     { label: 'Nombre', value: pendingValue(session.name) },

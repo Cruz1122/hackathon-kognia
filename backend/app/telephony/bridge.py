@@ -69,6 +69,7 @@ async def run_agent_turn(
     *,
     agent: Any = stream_agent,
     tts: PiperTTSProvider | None = None,
+    system_initiated: bool = False,
 ) -> None:
     voice = tts or PiperTTSProvider()
     if session.marks is None:
@@ -90,10 +91,12 @@ async def run_agent_turn(
         organization_id=str(session.organization_id) if session.organization_id else None,
         user_id=str(session.system_user_id) if session.system_user_id else None,
         channel='voice',
+        system_initiated=system_initiated,
     )
     answer: list[str] = []
     proposal_id = None
     reservation_confirmed = False
+    session.awaiting_agent_reply = True
     generator = agent(transcript, messages=list(session.history), tool_context=tool_context)
     waiting = _with_holding(generator, session, voice)
     try:
@@ -132,6 +135,7 @@ async def run_agent_turn(
                 ])
                 await db.commit()
         await _speak(session, voice, spoken)
+        session.awaiting_agent_reply = False
         marks = session.marks
         if reservation_confirmed and session.websocket and marks is not None:
             mark = marks.generated()

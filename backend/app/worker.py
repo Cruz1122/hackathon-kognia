@@ -19,7 +19,7 @@ async def handle_job(job: object) -> None:
 
     if isinstance(job, Job) and job.type == 'channel_work':
         from .whatsapp.service import process_pending
-        await process_pending()
+        await process_pending(min_age_seconds=0)
         return
 
     if isinstance(job, Job) and job.type == "download_recording":
