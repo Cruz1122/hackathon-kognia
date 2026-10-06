@@ -36,6 +36,25 @@ Plantilla: `backend/.env.example`. No versionar `.env` ni keys.
 
 `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` — default `kognia`.
 
+## Telephony (Telnyx)
+
+Leídas por `backend/app/telephony/settings.py`. En Azure se configuran como
+variables/secrets de GitHub; ver [azure.md](azure.md).
+
+| Variable | Default | Uso |
+| --- | --- | --- |
+| `TELNYX_ENABLED` | `false` | habilita el manejo de webhooks |
+| `TELNYX_WEBHOOK_HOST` | host de ngrok | host público de los webhooks; en Azure lo deriva el workflow |
+| `TELNYX_API_KEY` | vacío | API key (descarga de grabaciones) |
+| `TELNYX_PUBLIC_KEY` | vacío | verifica firmas de webhook |
+| `TELNYX_CONNECTION_ID` | vacío | conexión SIP |
+| `TELNYX_PHONE_NUMBER` | vacío | número asignado |
+| `TELNYX_RECORDINGS_DIR` | `/var/lib/kognia/recordings` | grabaciones en disco |
+| `TELNYX_CAPTURE_DIR` | `/tmp/telnyx-captures` | capturas |
+
+`TELNYX_ORGANIZATION_ID` y `TELNYX_SYSTEM_USER_ID` los escribe el runtime por
+tenant; no se configuran globalmente.
+
 ## Smoke
 
 | Variable | Efecto |
