@@ -4,6 +4,7 @@ import {
   DEFAULT_EMOTIONS,
   GRAPHITE,
   type EmotionDefinition,
+  crossPath,
   mouthPath,
   roundedRectPath,
   rotationTransform,
@@ -41,6 +42,8 @@ const emotionMap: GradientEmotionMap = emotions
 const selectedInitialEmotion = emotionMap[emotion] ? emotion : 'default-happy';
 const initialDefinition = emotionMap[selectedInitialEmotion] ?? DEFAULT_EMOTIONS['default-happy'];
 const initialState = initialDefinition.state;
+const initialEyeStyle = initialDefinition.eyeStyle ?? 'rect';
+const initialMouthStyle = initialDefinition.mouthStyle ?? 'line';
 const initialGradient = initialDefinition.gradient ?? [AMBER, AMBER, AMBER, AMBER];
 const gradientId = `${id.replace(/[^a-zA-Z0-9_-]/g, '-')}-gradient`;
 const gradientCx = initialState.faceX - initialState.faceWidth * 0.25;
@@ -55,6 +58,8 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
   data-emotion={selectedInitialEmotion}
   data-emotions={JSON.stringify(emotionMap)}
   data-pointer-tracking={String(pointerTracking)}
+  data-eye-style={initialEyeStyle}
+  data-mouth-style={initialMouthStyle}
 >
   <svg viewBox="-180 -180 360 360" width="100%" height="100%" role="img" aria-label={ariaLabel}>
     <defs>
@@ -86,7 +91,12 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
         <path data-left-eye d={roundedRectPath(initialState.leftEyeX, initialState.leftEyeY, initialState.leftEyeWidth, initialState.leftEyeHeight, initialState.leftEyeRadius)} transform={rotationTransform(initialState.leftEyeRotation, initialState.leftEyeX, initialState.leftEyeY)} fill={GRAPHITE} />
         <path data-right-eye d={roundedRectPath(initialState.rightEyeX, initialState.rightEyeY, initialState.rightEyeWidth, initialState.rightEyeHeight, initialState.rightEyeRadius)} transform={rotationTransform(initialState.rightEyeRotation, initialState.rightEyeX, initialState.rightEyeY)} fill={GRAPHITE} />
       </g>
+      <g data-cross-eyes>
+        <path data-left-eye-cross d={crossPath(initialState.leftEyeX, initialState.leftEyeY, initialState.leftEyeWidth, initialState.leftEyeHeight)} transform={rotationTransform(initialState.leftEyeRotation, initialState.leftEyeX, initialState.leftEyeY)} fill="none" stroke={GRAPHITE} stroke-width={8} stroke-linecap="round" />
+        <path data-right-eye-cross d={crossPath(initialState.rightEyeX, initialState.rightEyeY, initialState.rightEyeWidth, initialState.rightEyeHeight)} transform={rotationTransform(initialState.rightEyeRotation, initialState.rightEyeX, initialState.rightEyeY)} fill="none" stroke={GRAPHITE} stroke-width={8} stroke-linecap="round" />
+      </g>
       <path data-mouth d={mouthPath(initialState)} transform={rotationTransform(initialState.mouthRotation, initialState.mouthX, initialState.mouthY)} fill="none" stroke={GRAPHITE} stroke-width={initialState.mouthStroke} stroke-linecap="round" />
+      <ellipse data-mouth-open cx={initialState.mouthX} cy={initialState.mouthY} rx={Math.max(2, initialState.mouthWidth / 2)} ry={Math.max(6, initialState.mouthWidth * 0.56)} transform={rotationTransform(initialState.mouthRotation, initialState.mouthX, initialState.mouthY)} fill="none" stroke={GRAPHITE} stroke-width={initialState.mouthStroke} />
     </g>
   </svg>
 </div>
@@ -97,6 +107,7 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
     easeInOutCubic,
     interpolateFaceState,
     lerp,
+    crossPath,
     mouthPath,
     roundedRectPath,
     rotationTransform,
@@ -152,7 +163,11 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
     document.querySelectorAll<MascotElement>('[data-mascot-face]:not([data-mascot-ready])').forEach((root) => {
       root.dataset.mascotReady = 'true';
       const emotions = JSON.parse(root.dataset.emotions ?? '{}') as RuntimeEmotionMap;
+      const eyeStyleOf = (name: string): string => emotions[name]?.eyeStyle ?? 'rect';
+      const mouthStyleOf = (name: string): string => emotions[name]?.mouthStyle ?? 'line';
       let selectedEmotion = root.dataset.emotion && emotions[root.dataset.emotion] ? root.dataset.emotion : 'default-happy';
+      root.dataset.eyeStyle = eyeStyleOf(selectedEmotion);
+      root.dataset.mouthStyle = mouthStyleOf(selectedEmotion);
       let displayState = { ...emotions[selectedEmotion].state };
       let displayGradient = [...(emotions[selectedEmotion].gradient ?? FLAT_AMBER)];
       let transitionFrom = { ...displayState };
@@ -180,7 +195,11 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
       const face = root.querySelector<SVGPathElement>('[data-face]')!;
       const leftEye = root.querySelector<SVGPathElement>('[data-left-eye]')!;
       const rightEye = root.querySelector<SVGPathElement>('[data-right-eye]')!;
+      const crossEyes = root.querySelector<SVGGElement>('[data-cross-eyes]')!;
+      const leftEyeCross = root.querySelector<SVGPathElement>('[data-left-eye-cross]')!;
+      const rightEyeCross = root.querySelector<SVGPathElement>('[data-right-eye-cross]')!;
       const mouth = root.querySelector<SVGPathElement>('[data-mouth]')!;
+      const mouthOpen = root.querySelector<SVGEllipseElement>('[data-mouth-open]')!;
       const features = root.querySelector<SVGGElement>('[data-features]')!;
       const eyes = root.querySelector<SVGGElement>('[data-eyes]')!;
       const gradient = root.querySelector<SVGRadialGradientElement>('[data-gradient]')!;
@@ -191,6 +210,8 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
         const previous = selectedEmotion;
         selectedEmotion = next;
         root.dataset.emotion = next;
+        root.dataset.eyeStyle = eyeStyleOf(next);
+        root.dataset.mouthStyle = mouthStyleOf(next);
         transitionFrom = { ...displayState };
         transitionTo = { ...emotions[next].state };
         gradientFrom = [...displayGradient];
@@ -350,8 +371,19 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
         mouth.setAttribute('d', mouthPath(mouthState));
         mouth.setAttribute('transform', rotationTransform(mouthState.mouthRotation, mouthState.mouthX, mouthState.mouthY));
         mouth.setAttribute('stroke-width', String(mouthState.mouthStroke));
+        mouthOpen.setAttribute('cx', String(mouthState.mouthX));
+        mouthOpen.setAttribute('cy', String(mouthState.mouthY));
+        mouthOpen.setAttribute('rx', String(Math.max(2, mouthState.mouthWidth / 2)));
+        mouthOpen.setAttribute('ry', String(Math.max(6, mouthState.mouthWidth * 0.56)));
+        mouthOpen.setAttribute('transform', rotationTransform(mouthState.mouthRotation, mouthState.mouthX, mouthState.mouthY));
+        mouthOpen.setAttribute('stroke-width', String(mouthState.mouthStroke));
+        leftEyeCross.setAttribute('d', crossPath(left.x, left.y, left.width, left.height));
+        leftEyeCross.setAttribute('transform', rotationTransform(left.rotation, left.x, left.y));
+        rightEyeCross.setAttribute('d', crossPath(right.x, right.y, right.width, right.height));
+        rightEyeCross.setAttribute('transform', rotationTransform(right.rotation, right.x, right.y));
         features.setAttribute('transform', reducedMotion.matches ? '' : `translate(${trackingX * 6} ${trackingY * 4})`);
         eyes.setAttribute('transform', reducedMotion.matches ? '' : `translate(0 ${trackingY * 8})`);
+        crossEyes.setAttribute('transform', reducedMotion.matches ? '' : `translate(0 ${trackingY * 8})`);
         animationFrame = requestAnimationFrame(render);
       }
 
@@ -385,4 +417,18 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
 <style>
   [data-mascot-face] { display: inline-grid; width: 100%; aspect-ratio: 1; place-items: center; }
   [data-mascot-face] svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  [data-mascot-face] [data-eyes],
+  [data-mascot-face] [data-mouth],
+  [data-mascot-face] [data-cross-eyes],
+  [data-mascot-face] [data-mouth-open] {
+    transition: opacity .25s ease;
+  }
+  [data-mascot-face] [data-cross-eyes],
+  [data-mascot-face] [data-mouth-open] {
+    opacity: 0;
+  }
+  [data-mascot-face][data-eye-style='cross'] [data-eyes] { opacity: 0; }
+  [data-mascot-face][data-eye-style='cross'] [data-cross-eyes] { opacity: 1; }
+  [data-mascot-face][data-mouth-style='open'] [data-mouth] { opacity: 0; }
+  [data-mascot-face][data-mouth-style='open'] [data-mouth-open] { opacity: 1; }
 </style>

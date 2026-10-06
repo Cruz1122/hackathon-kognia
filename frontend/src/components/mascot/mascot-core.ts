@@ -30,10 +30,17 @@ export interface FaceState {
   mouthRotation: number;
 }
 
+export type EyeStyle = 'rect' | 'cross';
+export type MouthStyle = 'line' | 'open';
+
 export interface EmotionDefinition {
   label: string;
   state: FaceState;
   blink?: boolean;
+  /** How the eyes are drawn: regular capsules or an X mark. Defaults to 'rect'. */
+  eyeStyle?: EyeStyle;
+  /** How the mouth is drawn: a curved line or an open oval. Defaults to 'line'. */
+  mouthStyle?: MouthStyle;
 }
 
 export type EmotionMap = Record<string, EmotionDefinition>;
@@ -70,6 +77,19 @@ export const DEFAULT_EMOTIONS: EmotionMap = {
       rightEyeX: 59, rightEyeY: -28, rightEyeWidth: 22, rightEyeHeight: 7, rightEyeRadius: 4, rightEyeRotation: -8,
       mouthX: 39, mouthY: 13, mouthWidth: 44, mouthCurve: 2, mouthLeftOffset: 0, mouthRightOffset: 1,
       mouthControlSpread: 0.2, mouthStroke: 7, mouthRotation: 5,
+    },
+  },
+  'auth-error': {
+    label: 'Auth error',
+    blink: false,
+    eyeStyle: 'cross',
+    mouthStyle: 'open',
+    state: {
+      faceX: 0, faceY: 0, faceWidth: 200, faceHeight: 200, faceRadius: 100, faceRotation: 0,
+      leftEyeX: 24, leftEyeY: -33, leftEyeWidth: 30, leftEyeHeight: 30, leftEyeRadius: 9, leftEyeRotation: -6,
+      rightEyeX: 63, rightEyeY: -32, rightEyeWidth: 30, rightEyeHeight: 30, rightEyeRadius: 9, rightEyeRotation: -6,
+      mouthX: 43, mouthY: 16, mouthWidth: 46, mouthCurve: 0, mouthLeftOffset: 0, mouthRightOffset: 0,
+      mouthControlSpread: 0.2, mouthStroke: 8, mouthRotation: 0,
     },
   },
 };
@@ -117,6 +137,17 @@ export function roundedRectPath(cx: number, cy: number, width: number, height: n
 
 export function rotationTransform(angle: number, cx: number, cy: number): string {
   return `rotate(${formatNumber(angle)} ${formatNumber(cx)} ${formatNumber(cy)})`;
+}
+
+/** Two crossing diagonal strokes filling the eye bounding box, used for X eyes. */
+export function crossPath(cx: number, cy: number, width: number, height: number): string {
+  const hw = Math.max(0.001, width / 2);
+  const hh = Math.max(0.001, height / 2);
+  const left = formatNumber(cx - hw);
+  const right = formatNumber(cx + hw);
+  const top = formatNumber(cy - hh);
+  const bottom = formatNumber(cy + hh);
+  return `M ${left} ${top} L ${right} ${bottom} M ${right} ${top} L ${left} ${bottom}`;
 }
 
 export function mouthPath(state: FaceState): string {

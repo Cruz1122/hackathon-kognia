@@ -2367,6 +2367,7 @@ import '../styles/empty-state.css';
         import { bootDashboard } from '../features/dashboard/dashboard';
         import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
         import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
+        import { showToast } from '../features/voice-call/infrastructure/toast';
         import { checkSession, installSessionGuard } from '../features/auth/session-guard';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
@@ -2381,8 +2382,15 @@ import '../styles/empty-state.css';
        const tokenKey = 'kognia.auth.access-token';
        const conversationKey = 'kognia.auth.conversation-id';
 
+       // Maps friendly aliases to the mascot emotion keys.
+       const faceEmotionAliases: Record<string, string> = {
+         happy: 'default-happy',
+         neutral: 'default-happy',
+       };
+
        function setFaceEmotion(emotion: string): void {
-         window.dispatchEvent(new CustomEvent('demo-face-emotion', { detail: emotion }));
+         const mascot = document.querySelector<HTMLElement & { setEmotion?: (value: string) => void }>('.login-face-wrap [data-mascot-face]');
+         mascot?.setEmotion?.(faceEmotionAliases[emotion] ?? emotion);
        }
 
         function setLoginLoading(loading: boolean): void {
@@ -2797,7 +2805,8 @@ import '../styles/empty-state.css';
          void createSession(email, password)
            .catch((error: unknown) => {
               const message = errorMessage(error, 'No se pudo iniciar sesión.');
-              setFaceEmotion(message.includes('inválidos') ? 'angry' : 'sad');
+              setFaceEmotion('auth-error');
+              showToast(message, 'error');
            })
            .finally(() => {
              setLoginLoading(false);
