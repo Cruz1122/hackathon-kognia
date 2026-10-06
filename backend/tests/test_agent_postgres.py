@@ -52,7 +52,7 @@ async def fixture(monkeypatch):
     async def observe(state, prompt, turn_id, domain_questions=None):
         return {'confirmation': Signal(value='explicit' if prompt == 'confirmo' else 'uncertain',
             confidence=.99, turn_id=turn_id, model='fake')}
-    async def integrity(state, draft, turn_id):
+    async def integrity(state, draft, turn_id, knowledge=None):
         return Signal(value='supported', confidence=.99, turn_id=turn_id, model='fake')
     monkeypatch.setattr(jev, 'observe', observe)
     monkeypatch.setattr(jev, 'integrity', integrity)

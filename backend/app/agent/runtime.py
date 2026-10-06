@@ -79,6 +79,9 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                         trusted = True
                     else:
                         history = state.recent
+                        # The generator records the retrieved knowledge it used so
+                        # integrity can verify the draft against the same evidence.
+                        knowledge_sink: list[str] = []
                         execution = None
                         if state.authorized and state.pending:
                             pending = state.pending
@@ -103,7 +106,8 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                             trusted = True
                         else:
                             async for kind, payload in generate(
-                                prompt, messages=history, llm=llm, tool_context=context, system_context=instructions):
+                                prompt, messages=history, llm=llm, tool_context=context,
+                                system_context=instructions, knowledge_sink=knowledge_sink):
                                 if kind == 'token':
                                     draft += str(payload['text'])
                                     if len(draft) > 16000:
@@ -145,7 +149,7 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                         # Integrity must see the customer's actual words, including
                         # names/details not yet promoted to tool-backed facts.
                         state.recent = [*history, {'role': 'user', 'content': prompt}]
-                        signal = await jev.integrity(state, draft, context.request_id)
+                        signal = await jev.integrity(state, draft, context.request_id, knowledge=knowledge_sink)
                         if signal:
                             state.signals['integrity'] = signal
                         if not trusted:
@@ -155,7 +159,7 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                                 draft = ''
                                 async for kind, payload in generate(
                                     prompt, messages=history, llm=llm, tool_context=context,
-                                    tools_enabled=False,
+                                    tools_enabled=False, knowledge_sink=knowledge_sink,
                                     system_context=state.context() + '\n' + '\n'.join(TOOL_REGISTRY.context_instructions)
                                     + '\nRewrite safely and naturally. Preserve the known task and details from the conversation. '
                                     'Use the supplied domain constraints and evidence; do not replace them with a generic inability to help. '
@@ -165,7 +169,7 @@ async def stateful_stream(prompt, *, messages, llm, tool_context, generate):
                                         draft += str(payload['text'])
                                         if len(draft) > 16000:
                                             break
-                                signal = await jev.integrity(state, draft[:16000], context.request_id)
+                                signal = await jev.integrity(state, draft[:16000], context.request_id, knowledge=knowledge_sink)
                                 if signal:
                                     state.signals['integrity'] = signal
                                 if (signal is not None and signal.value == 'unsupported') or len(draft) > 16000:

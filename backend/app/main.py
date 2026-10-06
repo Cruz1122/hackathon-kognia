@@ -330,6 +330,19 @@ async def internal_rag_search(payload: RagSearchRequest) -> dict:
     return {"evidence_state": result.evidence_state, "level_reached": result.level_reached, "rewrite_used": result.rewrite_used, "hits": hits, "source_map": result.source_map, "debug": result.debug if payload.debug else {}}
 
 
+def _issue_session(user: User) -> LoginResponse:
+    try:
+        token = create_access_token(user.id)
+        expires_in = get_access_token_expire_minutes() * 60
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=500, detail="Authentication is not configured.") from exc
+    return LoginResponse(
+        access_token=token,
+        expires_in=expires_in,
+        user=UserResponse.model_validate(user),
+    )
+
+
 @app.post("/auth/login", response_model=LoginResponse, summary="Inicia sesión")
 async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db)) -> LoginResponse:
     try:
@@ -342,16 +355,12 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db)) 
         raise HTTPException(status_code=401, detail="Invalid email or password.")
     if not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
-    try:
-        token = create_access_token(user.id)
-        expires_in = get_access_token_expire_minutes() * 60
-    except AuthConfigurationError as exc:
-        raise HTTPException(status_code=500, detail="Authentication is not configured.") from exc
-    return LoginResponse(
-        access_token=token,
-        expires_in=expires_in,
-        user=UserResponse.model_validate(user),
-    )
+    return _issue_session(user)
+
+
+@app.post("/auth/refresh", response_model=LoginResponse, summary="Renueva el token de acceso")
+async def refresh_token(user: User = Depends(get_current_user)) -> LoginResponse:
+    return _issue_session(user)
 
 
 @app.get("/auth/me", response_model=UserResponse, summary="Devuelve el usuario autenticado")

@@ -148,7 +148,7 @@ async def test_continuation_is_not_blocked_by_integrity(whatsapp_env, monkeypatc
     monkeypatch.setenv('TYPESAFE_API_KEY', 'present')
     from app.agent import jev
 
-    async def unsupported(state, draft, turn_id):
+    async def unsupported(state, draft, turn_id, knowledge=None):
         return Signal(value='unsupported', confidence=.9, turn_id=turn_id, model='fake')
 
     monkeypatch.setattr(jev, 'integrity', unsupported)
@@ -162,7 +162,7 @@ async def test_continuation_keeps_supported_integrity(whatsapp_env, monkeypatch)
     monkeypatch.setenv('TYPESAFE_API_KEY', 'present')
     from app.agent import jev
 
-    async def supported(state, draft, turn_id):
+    async def supported(state, draft, turn_id, knowledge=None):
         return Signal(value='supported', confidence=.9, turn_id=turn_id, model='fake')
 
     monkeypatch.setattr(jev, 'integrity', supported)

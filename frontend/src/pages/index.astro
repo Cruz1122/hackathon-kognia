@@ -18,6 +18,7 @@ import '../styles/empty-state.css';
   <meta charset="utf-8" />
    <meta name="viewport" content="width=device-width, initial-scale=1" />
    <title>Monitoreo de llamadas — Demo</title>
+   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
    <ClientRouter fallback="swap" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -268,8 +269,9 @@ import '../styles/empty-state.css';
 
     .auth-panel.is-app .login-face-wrap {
       width: 48px;
-      height: 48px;
-      flex: 0 0 48px;
+      /* Keep width (not flex-basis) as the animated main size so the face
+         shrinks together with the label during the login wipe. */
+      flex: 0 0 auto;
       align-self: center;
     }
 
@@ -2350,6 +2352,7 @@ import '../styles/empty-state.css';
         import { bootDashboard } from '../features/dashboard/dashboard';
         import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
         import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
+        import { checkSession, installSessionGuard } from '../features/auth/session-guard';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
       const authPanel = document.getElementById('authPanel');
@@ -2467,6 +2470,7 @@ import '../styles/empty-state.css';
          let dashboardPendingToken = '';
          let analyticsHandoffPending = false;
        let navReadyHandler: ((event: TransitionEvent) => void) | null = null;
+       let stopSessionGuard: (() => void) | null = null;
 
        function lucideRefresh(): void {
          const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -2593,6 +2597,8 @@ import '../styles/empty-state.css';
 
          function resetAppShell(): void {
            clearNavReadyWait();
+           stopSessionGuard?.();
+           stopSessionGuard = null;
            dashboardStartPending = false;
            dashboardPendingToken = '';
            authPanel?.classList.remove('is-app', 'no-wipe', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
@@ -2613,11 +2619,34 @@ import '../styles/empty-state.css';
          detailPanel?.removeAttribute('inert');
        }
 
+        function wipeTargets(): Array<{ el: HTMLElement; rect: DOMRect }> {
+          if (matchMedia('(prefers-reduced-motion: reduce)').matches) return [];
+          return [document.querySelector<HTMLElement>('.login-face-wrap'), document.querySelector<HTMLElement>('.login-name')]
+            .filter((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0)
+            .map((el) => ({ el, rect: el.getBoundingClientRect() }));
+        }
+
+        function playWipeFlip(targets: Array<{ el: HTMLElement; rect: DOMRect }>): void {
+          targets.forEach(({ el, rect }) => {
+            const last = el.getBoundingClientRect();
+            const dx = rect.left - last.left;
+            const dy = rect.top - last.top;
+            if (!dx && !dy) return;
+            // Animate position with WAAPI so the CSS width/size transitions keep running.
+            el.animate(
+              [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+              { duration: 1550, easing: 'cubic-bezier(.32, .04, .18, 1)' },
+            );
+          });
+        }
+
         function revealApp(animate: boolean): void {
          if (!authPanel) return;
+          const flip = animate ? wipeTargets() : [];
           if (!animate) authPanel.classList.add('no-wipe');
           authPanel.classList.add('is-app');
           authPanel.classList.toggle('is-rail-collapsed', isCompactShell());
+          if (flip.length) playWipeFlip(flip);
           authPanel.setAttribute('aria-labelledby', 'screenTitle');
          setFormInert(true);
          setAppView('dashboard');
@@ -2674,7 +2703,13 @@ import '../styles/empty-state.css';
             dashboardPendingToken = token;
           }
           revealApp(animate);
+          startSessionGuard();
           void fillCallNav(apiUrl);
+        }
+
+        function startSessionGuard(): void {
+          stopSessionGuard?.();
+          stopSessionGuard = installSessionGuard(apiUrl);
         }
 
        async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {
@@ -2694,16 +2729,12 @@ import '../styles/empty-state.css';
         const conversationId = sessionStorage.getItem(conversationKey)?.trim() ?? '';
         if (!token || !conversationId) return;
         setFaceEmotion('surprised');
-        const [me, conversation] = await Promise.all([
-          fetch(`${apiUrl}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${apiUrl}/conversations/${encodeURIComponent(conversationId)}`, { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
-        if (me.ok && conversation.ok) {
-          showApp(token, conversationId, false);
+        const state = await checkSession(apiUrl);
+        if (state !== 'invalid') {
+          // Keep the session on transient failures; only 401/403 logs out.
+          showApp(sessionStorage.getItem(tokenKey)?.trim() || token, conversationId, false);
           return;
         }
-        const failedResponse = me.ok ? conversation : me;
-        const sessionError = await backendErrorFromResponse(failedResponse, 'La sesión ya no está disponible.');
         sessionStorage.removeItem(tokenKey);
         sessionStorage.removeItem(conversationKey);
         resetAppShell();
@@ -2762,6 +2793,8 @@ import '../styles/empty-state.css';
          window.__kogniaPageLeaving = true;
          dashboardCleanup?.();
          dashboardCleanup = null;
+         stopSessionGuard?.();
+         stopSessionGuard = null;
        });
 
        void restoreSession().catch(() => {

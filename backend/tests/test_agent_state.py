@@ -305,6 +305,54 @@ async def test_integrity_marks_fabricated_commercial_outcomes_as_severe(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_integrity_rejects_offers_of_unverified_services(monkeypatch):
+    memory = state()
+    evaluate = AsyncMock(return_value={})
+    monkeypatch.setattr(jev, 'evaluate', evaluate)
+    await jev.integrity(memory, '¿Quieres información sobre nuestro menú?', 'turn')
+    instructions = evaluate.call_args.args[1]['integrity'][0]
+    assert 'any single named service' in instructions
+    assert 'offering information about something the evidence does not mention is an invented fact' in instructions
+
+
+@pytest.mark.asyncio
+async def test_integrity_verifies_against_retrieved_knowledge(monkeypatch):
+    memory = state()
+    evaluate = AsyncMock(return_value={})
+    monkeypatch.setattr(jev, 'evaluate', evaluate)
+    await jev.integrity(memory, 'La tolerancia máxima es de 15 minutos.', 'turn',
+                        knowledge=['La tolerancia máxima para una llegada tarde es de 15 minutos.'])
+    payload = evaluate.call_args.args[0]
+    assert payload['knowledge'] == 'La tolerancia máxima para una llegada tarde es de 15 minutos.'
+    # No knowledge supplied must not add a misleading empty evidence field.
+    await jev.integrity(memory, 'Hola', 'turn')
+    assert 'knowledge' not in evaluate.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_generate_records_retrieved_knowledge_for_integrity(monkeypatch):
+    from app.config import ModelConfig, Provider
+    from app.features.agent import service
+    from app.providers import FakeLLM
+
+    config = ModelConfig(provider=Provider.OPENAI, model='test', api_key='key', base_url='http://test.invalid')
+    text = 'knowledge_status=available\nLa tolerancia máxima es de 15 minutos.'
+
+    async def retrieve(prompt, messages):
+        return [{'role': 'system', 'content': text}], True, 'Atención', []
+
+    async def handler(config, prompt, *, messages=None, tools=None):
+        yield 'token', {'text': 'ok'}
+
+    monkeypatch.setattr(service, '_retrieve_knowledge', retrieve)
+    monkeypatch.setattr(service, 'get_model_chain', lambda: [config])
+    sink: list[str] = []
+    events = [event async for event in service._generate('¿Tolerancia?', llm=FakeLLM(handler), knowledge_sink=sink)]
+    assert sink == [text]
+    assert events[-1][0] == 'done'
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('verdict', ['explicit', 'uncertain', 'rejected'])
 async def test_llm_confirmation_fallback_uses_pending_context_without_tools(monkeypatch, verdict):
     from app import config

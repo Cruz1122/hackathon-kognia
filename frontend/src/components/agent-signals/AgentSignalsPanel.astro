@@ -15,6 +15,7 @@ interface Props {
   demoIntervalMs?: number;
   variant?: 'full' | 'compact';
   categoriesTarget?: string;
+  categories?: boolean;
   class?: string;
 }
 
@@ -26,6 +27,7 @@ const {
   demoIntervalMs = 1500,
   variant = 'full',
   categoriesTarget,
+  categories = true,
   class: className,
 } = Astro.props;
 
@@ -35,7 +37,7 @@ const initial = projector.project(initialData);
 
 <section
   id={id}
-  class:list={['agent-signals', variant === 'compact' && 'agent-signals--compact', className]}
+  class:list={['agent-signals', variant === 'compact' && 'agent-signals--compact', !categories && variant !== 'compact' && 'agent-signals--no-categories', className]}
   data-agent-signals
   data-initial={JSON.stringify(initialData)}
   data-demo={JSON.stringify(demoFrames)}
@@ -69,11 +71,13 @@ const initial = projector.project(initialData);
         <SignalScale snapshot={initial.scales.hallucination} />
       </div>
 
-      <div class="agent-signals__categories">
-        <CategoricalIndicator snapshot={initial.categories.intent} />
-        <CategoricalIndicator snapshot={initial.categories.human} />
-        <CategoricalIndicator snapshot={initial.categories.schedule} />
-      </div>
+      {categories && (
+        <div class="agent-signals__categories">
+          <CategoricalIndicator snapshot={initial.categories.intent} />
+          <CategoricalIndicator snapshot={initial.categories.human} />
+          <CategoricalIndicator snapshot={initial.categories.schedule} />
+        </div>
+      )}
     </>
   )}
 </section>
@@ -407,6 +411,8 @@ const initial = projector.project(initialData);
   }
 
   .agent-signals__categories { display: grid; gap: 14px; }
+
+  .agent-signals--no-categories { grid-template-columns: minmax(0, 1fr); }
 
   .agent-signals--compact {
     width: 100%;

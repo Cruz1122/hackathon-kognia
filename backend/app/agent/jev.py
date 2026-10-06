@@ -126,16 +126,25 @@ async def confirmation_fallback(state: AgentState, prompt: str, turn_id: str, ll
     return None
 
 
-async def integrity(state: AgentState, draft: str, turn_id: str) -> Signal | None:
+async def integrity(state: AgentState, draft: str, turn_id: str, knowledge: list[str] | None = None) -> Signal | None:
     from ..features.agent.service import TOOL_REGISTRY
 
-    result = await evaluate({'draft': draft, 'recent': state.recent[-24:],
-                             'facts': {k: v.model_dump(mode='json') for k, v in state.facts.items()},
-                             'tools': state.tool_history[-8:],
-                             'domain_context': TOOL_REGISTRY.context_instructions},
+    payload = {'draft': draft, 'recent': state.recent[-24:],
+               'facts': {k: v.model_dump(mode='json') for k, v in state.facts.items()},
+               'tools': state.tool_history[-8:],
+               'domain_context': TOOL_REGISTRY.context_instructions}
+    # The draft was generated with retrieved knowledge, so the verifier must see
+    # the same evidence. Without it an invented service looks unverifiable and a
+    # genuine document fact looks invented.
+    if knowledge:
+        payload['knowledge'] = '\n'.join(knowledge)[:6000]
+    result = await evaluate(payload,
                             {'integrity': (
-                                'Classify whether every factual claim and claimed action in the draft is supported by the supplied facts and tool results. '
-                                'supported = questions, greetings, requests for clarification, and honest statements that an action failed, is unavailable, or was not completed, plus claims backed by the evidence. '
+                                'Classify whether every factual claim, implied claim and named service in the draft is supported by the supplied facts, tool results, domain context and knowledge. '
+                                'supported = generic greetings, generic questions, requests for clarification, and honest statements that an action failed, is unavailable, or was not completed, plus claims and named services backed by the supplied evidence. '
+                                'A greeting, question or offer that names or presupposes a service, product, document, capability or fact absent from the supplied evidence is not supported; offering information about something the evidence does not mention is an invented fact even when phrased as a question. '
+                                'If any single named service, product, document, capability or fact in the draft is unsupported, the verdict is unsupported, even when other parts are supported or the whole is phrased as a friendly greeting or question. Do not let supported parts, brevity or the greeting/question form outweigh one invented item. '
+                                'For example, a restaurant greeting that offers information about a menu when no menu appears in the evidence is unsupported. '
                                 'unsupported = any invented fact or any claim of a success, booking, sale, availability, payment, message, call, customer detail, '
                                 'or external outcome that the supplied evidence does not show. Treat fabricated commercial outcomes as severe unsupported failures. '
                                 'uncertain = there is a concrete factual claim but the evidence is genuinely ambiguous. Do not use uncertain merely because the response is brief.',

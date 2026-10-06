@@ -33,7 +33,6 @@ const { id, copy, class: className } = Astro.props;
       <span></span>
       <span></span>
     </span>
-    <span class="content-loader__bullets"><span>●</span><span>●</span><span>●</span></span>
   </span>
   <p>{copy}</p>
 </div>
@@ -60,19 +59,6 @@ const { id, copy, class: className } = Astro.props;
     place-items: center;
   }
 
-  .content-loader__motion::after {
-    content: "";
-    grid-area: 1 / 1;
-    width: 11px;
-    height: 11px;
-    justify-self: start;
-    margin-left: 5.5px;
-    border-radius: 50%;
-    background: var(--ui-graphite, #414141);
-    box-shadow: 18px 0 var(--ui-graphite, #414141), 36px 0 var(--ui-graphite, #414141);
-    animation: content-loader-group 1.05s cubic-bezier(.45, .05, .55, .95) infinite;
-  }
-
   .content-loader__dots {
     grid-area: 1 / 1;
     display: flex;
@@ -89,21 +75,6 @@ const { id, copy, class: className } = Astro.props;
   }
 
   .content-loader__dots--crisp { opacity: .96; }
-
-  .content-loader__bullets {
-    grid-area: 1 / 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    color: var(--ui-graphite, #414141);
-    font-size: 16px;
-    line-height: 1;
-  }
-
-  .content-loader__bullets > span { animation: content-loader-bullet 1.05s cubic-bezier(.45, .05, .55, .95) infinite; }
-  .content-loader__bullets > span:nth-child(2) { animation-delay: -.92s; }
-  .content-loader__bullets > span:nth-child(3) { animation-delay: -.79s; }
 
   .content-loader__dots > span {
     width: 11px;
@@ -139,21 +110,8 @@ const { id, copy, class: className } = Astro.props;
     46% { opacity: .84; transform: translateY(-1px) scale(.94, 1.08); }
   }
 
-  @keyframes content-loader-group {
-    0%, 100% { opacity: .58; transform: translateY(2px) scale(.9); }
-    50% { opacity: .9; transform: translateY(-2px) scale(1); }
-  }
-
-  @keyframes content-loader-bullet {
-    0%, 65%, 100% { opacity: .5; transform: translateY(3px) scale(.76); }
-    32% { opacity: 1; transform: translateY(-5px) scale(1); }
-    46% { opacity: .86; transform: translateY(-1px) scale(.94, 1.08); }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .content-loader { animation-duration: .001ms; }
     .content-loader__dots > span { animation: none; opacity: .72; transform: none; }
-    .content-loader__motion::after { animation: none; opacity: .72; transform: none; }
-    .content-loader__bullets > span { animation: none; opacity: .72; transform: none; }
   }
 </style>

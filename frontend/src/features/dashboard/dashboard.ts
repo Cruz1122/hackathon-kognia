@@ -2,6 +2,7 @@ import * as echarts from 'echarts';
 import type { ECharts, EChartsOption } from 'echarts';
 import { parseAgentSignalsEnvelope, updateAgentSignals, type AgentSignalsPanelElement } from '../../lib/agent-signals/dom';
 import { revealLoadedContent, showContentLoader } from '../ui/loading-reveal';
+import { accessTokenKey } from '../auth/session-guard';
 
 type DashboardSummary = {
   conversations: number; opportunities: number; won: number; conversion_rate: number;
@@ -69,6 +70,7 @@ function parsePayload(value: unknown): DashboardPayload {
 }
 
 function element(id: string): HTMLElement | null { return document.getElementById(id); }
+function nextPaint(): Promise<void> { return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))); }
 function setText(id: string, value: string): void { const node = element(id); if (node) node.textContent = value; }
 function show(target: string | HTMLElement | null, visible: boolean): void {
   const node = typeof target === 'string' ? element(target) : target;
@@ -126,22 +128,27 @@ function cartesian(dark = false): Pick<EChartsOption, 'grid' | 'xAxis' | 'yAxis'
 function mount(id: string, option: EChartsOption): void {
   const host = element(id); if (!host) return;
   charts.get(id)?.dispose(); charts.delete(id);
-  const chart = echarts.init(host, undefined, { renderer: 'canvas' }); chart.setOption(option); charts.set(id, chart);
+  const chart = echarts.init(host, undefined, { renderer: 'canvas' });
+  // Charts must not animate on mount: their entrance would hide the content curtain.
+  chart.setOption({ ...option, animation: false });
+  charts.set(id, chart);
 }
 
-function mountGradually(entries: Array<[string, EChartsOption]>): void {
+function mountGradually(entries: Array<[string, EChartsOption]>): Promise<void> {
   window.cancelAnimationFrame(chartMountFrame);
   const generation = ++chartMountGeneration;
   let index = 0;
 
-  const mountNext = (): void => {
-    if (generation !== chartMountGeneration || index >= entries.length) return;
-    const [id, option] = entries[index++];
-    mount(id, option);
-    chartMountFrame = window.requestAnimationFrame(mountNext);
-  };
+  return new Promise<void>((resolve) => {
+    const mountNext = (): void => {
+      if (generation !== chartMountGeneration || index >= entries.length) { resolve(); return; }
+      const [id, option] = entries[index++];
+      mount(id, option);
+      chartMountFrame = window.requestAnimationFrame(mountNext);
+    };
 
-  chartMountFrame = window.requestAnimationFrame(mountNext);
+    chartMountFrame = window.requestAnimationFrame(mountNext);
+  });
 }
 
 function lineOption(points: Array<{ date: string; value: number }>, label: string, color = C.amber): EChartsOption {
@@ -252,7 +259,7 @@ function buildInsights(payload: DashboardPayload): void {
     : 'No hay suficiente relación entre objeciones y productos para mostrar concentración.');
 }
 
-function renderDashboard(payload: DashboardPayload): boolean {
+function renderDashboard(payload: DashboardPayload): { hasData: boolean; ready: Promise<void> } {
   const { summary } = payload;
   setText('dashboardRevenue', money.format(summary.revenue_minor)); setText('dashboardWon', integer.format(summary.won)); setText('dashboardConversion', percent(summary.conversion_rate)); setText('dashboardRecoveredRevenue', money.format(summary.recovered_revenue_minor));
   setText('dashboardConversations', integer.format(summary.conversations)); setText('dashboardRecoveredSales', integer.format(summary.recovered_sales)); setText('dashboardRecoveryRate', percent(summary.recovery_rate)); setProgress('dashboardRecoveryMeter', summary.recovery_rate);
@@ -279,9 +286,9 @@ function renderDashboard(payload: DashboardPayload): boolean {
     chartMountGeneration++;
     charts.forEach((chart) => chart.dispose());
     charts.clear();
-    return false;
+    return { hasData: false, ready: Promise.resolve() };
   }
-   mountGradually([
+   const ready = mountGradually([
      ['dashboardConversionChart', lineOption(payload.conversion_trend.map((point) => ({ date: point.date, value: point.conversion_rate })), 'Conversión')],
      ['dashboardRecoveryChart', recoveryOption(summary)],
      ['dashboardLossesChart', horizontalBarOption(payload.lost_reasons.map((item) => ({ label: item.reason, value: item.count })), 'Pérdidas')],
@@ -299,7 +306,7 @@ function renderDashboard(payload: DashboardPayload): boolean {
      is the expensive part of this view; spreading it avoids a main-thread spike
      right after the dashboard boots.
    */
-  return true;
+  return { hasData: true, ready };
 }
 
 export function bootDashboard(apiUrl: string, token: string): () => void {
@@ -321,22 +328,31 @@ export function bootDashboard(apiUrl: string, token: string): () => void {
     const errorState = element('dashboardError');
     showContentLoader(loading, content);
     const query = new URLSearchParams(); if (fromInput?.value) query.set('from', fromInput.value); if (toInput?.value) query.set('to', toInput.value);
+    const activeToken = sessionStorage.getItem(accessTokenKey)?.trim() || token;
     try {
-      const response = await fetch(`${apiUrl}/analytics/dashboard?${query}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+      const response = await fetch(`${apiUrl}/analytics/dashboard?${query}`, { headers: { Authorization: `Bearer ${activeToken}` }, signal: controller.signal });
       if (!response.ok) throw new Error(`dashboard ${response.status}`);
       const payload = parsePayload(await response.json());
       if (disposed || currentRequest !== requestId) return;
-      const hasData = renderDashboard(payload);
-      show(data, hasData);
-      show(empty, !hasData);
-      show(errorState, false);
-      await revealLoadedContent(loading, content);
+      // The content is shown (clipped) before rendering so chart hosts have a
+      // real size; the curtain only starts once every chart is mounted.
+      await revealLoadedContent(loading, content, undefined, async () => {
+        show(data, true);
+        const { hasData, ready } = renderDashboard(payload);
+        show(data, hasData);
+        show(empty, !hasData);
+        show(errorState, false);
+        await ready;
+        await nextPaint();
+      });
     } catch (error) {
       if (controller.signal.aborted || disposed || currentRequest !== requestId) return;
-      show(data, false);
-      show(empty, false);
-      show(errorState, true);
-      await revealLoadedContent(loading, content);
+      await revealLoadedContent(loading, content, undefined, async () => {
+        show(data, false);
+        show(empty, false);
+        show(errorState, true);
+        await nextPaint();
+      });
     }
   };
   const applyButton = element('dashboardApply'); const retryButton = element('dashboardRetry');

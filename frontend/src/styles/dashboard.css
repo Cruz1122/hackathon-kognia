@@ -7,6 +7,11 @@
 .dashboard-page { width: min(1480px, 100%); margin: 0 auto; padding: 72px 64px 120px; }
 .dashboard-page:has(> .content-loader:not([hidden])) { display: grid; height: 100%; place-items: center; padding: 0; }
 .dashboard-page > .content-loader { width: 100%; min-height: 100%; }
+.dashboard-page:has(#dashboardError:not([hidden])), .dashboard-page:has(#dashboardEmpty:not([hidden])), .dashboard-page:has(#callsError:not([hidden])) { display: grid; min-height: 100%; place-items: center; padding: 0; }
+.dashboard-page:has(#dashboardError:not([hidden])) .dashboard-topline, .dashboard-page:has(#dashboardEmpty:not([hidden])) .dashboard-topline, .dashboard-page:has(#callsError:not([hidden])) .dashboard-topline { display: none; }
+.dashboard-page:has(#dashboardError:not([hidden])) #dashboardContent, .dashboard-page:has(#dashboardEmpty:not([hidden])) #dashboardContent, .dashboard-page:has(#callsError:not([hidden])) #callsContent { width: 100%; }
+/* The dashboard reveal is deliberately slower so the curtain is clearly visible. */
+#dashboardContent.loading-curtain-fallback { animation-duration: 2.4s; animation-timing-function: cubic-bezier(.5, .05, .4, 1); }
 .dashboard-topline { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 26px; }
 .dashboard-topline h2 { margin: 0; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.05em; line-height: 1; }
 .dashboard-heading { min-width: 0; }
@@ -29,9 +34,11 @@
 .dashboard-secondary__recovery { display: flex; align-items: center; gap: 14px; }
 .dashboard-secondary__recovery > span:first-child { flex: 0 0 auto; }
 .dashboard-progress { flex: 1; min-width: 72px; height: 7px; overflow: hidden; border-radius: 999px; background: rgba(65,65,65,.1); }
-.dashboard-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: #f7c974; transition: width .5s ease; }
-.dashboard-signals { min-width: 0; margin-top: 18px; padding: 28px; border: 1px solid rgba(65,65,65,.1); border-radius: var(--radius-ui); background: rgba(248,248,248,.78); }
+.dashboard-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: #f7c974; }
+.dashboard-signals { min-width: 0; margin-top: 18px; }
 .dashboard-signals[hidden] { display: none; }
+/* Signals on the dashboard are not cards: keep the scales flat. */
+#dashboardAgentSignalsSection .signal-scale { min-height: 0; padding: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .dashboard-signals__head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
 .dashboard-signals__head h3 { margin: 3px 0 0; font-size: clamp(20px, 2.4vw, 30px); letter-spacing: -.035em; }
 .dashboard-signals__kicker, .dashboard-signals__sample { margin: 0; color: rgba(65,65,65,.54); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }

@@ -1,24 +1,9 @@
-::view-transition-group(kognia-loading-indicator),
-::view-transition-group(kognia-loaded-content) {
-  z-index: 20;
-  animation-duration: .78s !important;
-  animation-timing-function: cubic-bezier(.22, .8, .24, 1) !important;
-}
-
-::view-transition-old(kognia-loading-indicator) {
-  animation: kognia-loader-fade-out .24s ease both !important;
-  opacity: 1 !important;
-  mix-blend-mode: normal;
-}
-
 .content-loader.is-leaving {
   animation: kognia-loader-fade-out .24s ease both !important;
 }
 
-::view-transition-new(kognia-loaded-content) {
-  animation: kognia-content-curtain-in .78s cubic-bezier(.22, .8, .24, 1) both !important;
-  mix-blend-mode: normal;
-  transform-origin: top center;
+.loading-curtain-armed {
+  clip-path: inset(0 0 100% 0);
 }
 
 .loading-curtain-fallback {
@@ -31,15 +16,12 @@
 }
 
 @keyframes kognia-content-curtain-in {
-  from { clip-path: inset(0 0 100% 0); opacity: .45; }
-  to { clip-path: inset(0); opacity: 1; }
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(kognia-loading-indicator),
-  ::view-transition-group(kognia-loaded-content),
-  ::view-transition-old(kognia-loading-indicator),
-  ::view-transition-new(kognia-loaded-content),
+  .content-loader.is-leaving,
   .loading-curtain-fallback {
     animation-duration: .001ms !important;
   }

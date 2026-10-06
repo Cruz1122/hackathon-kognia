@@ -101,6 +101,7 @@ async def stream_agent(
 
 async def _generate(
     prompt: str, *, messages=None, llm=None, tool_context=None, system_context: str = '', tools_enabled: bool = True,
+    knowledge_sink: list[str] | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm
@@ -116,6 +117,8 @@ async def _generate(
 
     history = context_window(messages)
     knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, history)
+    if knowledge_sink is not None:
+        knowledge_sink[:] = [str(item.get('content') or '') for item in knowledge if item.get('content')]
     if system_context:
         knowledge = [{'role': 'system', 'content': system_context}, *knowledge]
 

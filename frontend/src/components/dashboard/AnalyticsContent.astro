@@ -32,7 +32,7 @@ import EmptyState from '../ui/EmptyState.astro';
           </div>
           <p class="dashboard-signals__sample" id="dashboardAgentSignalsSample">—</p>
         </div>
-        <AgentSignalsPanel id="dashboardAgentSignals" />
+        <AgentSignalsPanel id="dashboardAgentSignals" categories={false} />
       </section>
       <div class="dashboard-grid">
         <article class="dashboard-card dashboard-card--conversion"><div class="dashboard-card-head"><div><h3>Conversión diaria</h3><p>Qué proporción de oportunidades termina en venta.</p></div></div><div class="dashboard-chart-host" id="dashboardConversionChart" role="img" aria-describedby="dashboardConversionInsight" aria-label="Tasa de conversión por día"></div><p class="dashboard-chart-insight" id="dashboardConversionInsight"></p></article>

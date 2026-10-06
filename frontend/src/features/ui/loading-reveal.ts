@@ -1,14 +1,8 @@
-type TransitionHandle = {
-  finished: Promise<void>;
-};
-
-type TransitionDocument = Document & {
-  startViewTransition?: (update: () => void) => TransitionHandle;
-};
-
 type RevealTarget = HTMLElement | null | undefined;
 
 const ROUTE_SETTLE_MS = 680;
+/** Pause with the loader on screen before the content curtain starts. */
+const CURTAIN_DELAY_MS = 800;
 
 function targets(value: RevealTarget | RevealTarget[]): HTMLElement[] {
   return (Array.isArray(value) ? value : [value]).filter((node): node is HTMLElement => node instanceof HTMLElement);
@@ -24,6 +18,10 @@ function show(node: HTMLElement): void {
   node.hidden = false;
   node.setAttribute('aria-hidden', 'false');
   node.removeAttribute('inert');
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
 function waitForLoaderFade(loader: HTMLElement, reducedMotion: boolean): Promise<void> {
@@ -65,37 +63,37 @@ export async function revealLoadedContent(
   loader: RevealTarget,
   content: RevealTarget | RevealTarget[],
   beforeReveal?: () => void,
+  waitForReady?: () => Promise<void>,
 ): Promise<void> {
   const contentNodes = targets(content);
   if (!loader || !contentNodes.length || (loader.hidden && contentNodes.every((node) => !node.hidden))) return;
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Keep the loader on screen a beat longer so the reveal is perceivable.
+  if (!reducedMotion) await new Promise<void>((resolve) => window.setTimeout(resolve, CURTAIN_DELAY_MS));
   await waitForLoaderFade(loader, reducedMotion);
 
-  const update = (): void => {
-    loader.hidden = true;
-    loader.setAttribute('aria-hidden', 'true');
-    loader.classList.remove('is-leaving');
-    contentNodes.forEach(show);
-    beforeReveal?.();
-  };
-  const transitionDocument = document as TransitionDocument;
+  loader.hidden = true;
+  loader.setAttribute('aria-hidden', 'true');
+  loader.classList.remove('is-leaving');
+  contentNodes.forEach(show);
+  beforeReveal?.();
 
-  if (!reducedMotion && transitionDocument.startViewTransition) {
-    const primaryContent = contentNodes[0];
-    primaryContent.style.viewTransitionName = 'kognia-loaded-content';
-    const transition = transitionDocument.startViewTransition(update);
-    try {
-      await transition.finished;
-    } finally {
-      primaryContent.style.removeProperty('view-transition-name');
-    }
-    return;
-  }
-
-  update();
   if (reducedMotion) return;
   const primaryContent = contentNodes[0];
+  // Show the content clipped while it finishes rendering (charts, layout). The
+  // curtain then reveals a finished view instead of loading mid-animation.
+  primaryContent.classList.add('loading-curtain-armed');
+  try {
+    await (waitForReady ? waitForReady() : nextPaint());
+  } finally {
+    primaryContent.classList.remove('loading-curtain-armed');
+  }
   primaryContent.classList.add('loading-curtain-fallback');
-  primaryContent.addEventListener('animationend', () => primaryContent.classList.remove('loading-curtain-fallback'), { once: true });
+  const onCurtainEnd = (event: AnimationEvent): void => {
+    if (event.target !== primaryContent || event.animationName !== 'kognia-content-curtain-in') return;
+    primaryContent.classList.remove('loading-curtain-fallback');
+    primaryContent.removeEventListener('animationend', onCurtainEnd);
+  };
+  primaryContent.addEventListener('animationend', onCurtainEnd);
 }
