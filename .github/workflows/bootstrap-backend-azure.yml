@@ -8,15 +8,13 @@ name: Bootstrap backend database
 #   1. `alembic upgrade head` (idempotente)
 #   2. `python -m app.auth.bootstrap --demo-only` (crea org + admin demo)
 #
-# Se lanza automáticamente cuando termina "Deploy Azure" con éxito, y también a
-# mano desde la pestaña Actions. Asume que la infraestructura ya está levantada:
-# espera a que el backend tenga una réplica viva antes de entrar.
+# Se ejecuta a mano desde la pestaña Actions para recuperar la base. El deploy
+# normal ya corre este mismo bootstrap como job final de "Deploy Azure". Asume
+# que la infraestructura ya está levantada: espera a que el backend tenga una
+# réplica viva antes de entrar.
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Deploy Azure"]
-    types: [completed]
 
 permissions:
   contents: read
@@ -28,10 +26,6 @@ concurrency:
 jobs:
   bootstrap:
     name: Migrate and bootstrap inside the backend container
-    # En un workflow_run solo se procede si el despliegue terminó bien.
-    if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
