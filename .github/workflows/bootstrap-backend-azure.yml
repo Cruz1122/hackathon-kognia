@@ -98,9 +98,9 @@ jobs:
           test -n "$BACKEND_APP_NAME"
 
           # El contenedor del backend no tiene DEMO_ADMIN_*/DEMO_ORG_*, así que se
-          # inyectan inline. shlex.quote evita que caracteres especiales rompan el
-          # comando remoto.
-          remote_command="$(python - <<'PY'
+          # inyectan inline. Se arma el script completo y se transfiere en Base64
+          # para evitar el anidamiento de comillas de `az containerapp exec`.
+          bootstrap_script="$(python - <<'PY'
           import os
           import shlex
 
@@ -110,18 +110,29 @@ jobs:
               "DEMO_ORG_NAME": os.environ.get("DEMO_ORG_NAME") or "Demo Kognia",
               "DEMO_ORG_SLUG": os.environ.get("DEMO_ORG_SLUG") or "demo-kognia",
           }
-          assignments = " ".join(f"{key}={shlex.quote(value)}" for key, value in variables.items())
+
+          assignments = " ".join(
+              f"{key}={shlex.quote(value)}"
+              for key, value in variables.items()
+          )
+
           # `upgrade head` es idempotente y `--demo-only` también: si el admin ya
           # existe, el bootstrap lo detecta y no falla.
-          script = (
-              "cd /app/backend && "
-              "alembic -c alembic.ini upgrade head && "
-              f"{assignments} python -m app.auth.bootstrap --demo-only && "
-              "echo BOOTSTRAP_OK"
+          print(
+              "set -eu\n"
+              "cd /app/backend\n"
+              "alembic -c alembic.ini upgrade head\n"
+              f"{assignments} python -m app.auth.bootstrap --demo-only\n"
+              "printf '%s\\n' BOOTSTRAP_OK\n"
           )
-          print("/bin/sh -c " + shlex.quote(script))
           PY
           )"
+
+          payload="$(printf '%s' "$bootstrap_script" | base64 -w 0)"
+
+          # El payload Base64 solo tiene caracteres seguros; el `/bin/sh -c`
+          # garantiza que el pipe se interprete como comando.
+          remote_command="/bin/sh -c \"printf %s ${payload} | base64 -d | /bin/sh\""
           export REMOTE_COMMAND="$remote_command"
 
           # az containerapp exec rechaza stdin sin TTY; `script` le da una PTY.
