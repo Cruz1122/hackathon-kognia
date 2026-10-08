@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -1100,6 +1101,10 @@ async def _run_call_turn(
         conversation_id=str(conversation_id),
         organization_id=str(organization_id),
     )
+    # Start the root span before policy/runtime branching.  Deterministic
+    # turns can complete without entering the model generator, but they are
+    # still valuable replay telemetry and must be persisted.
+    recorder.start(prompt, history, [])
     await _send_call_event(
         websocket,
         "turn.started",
@@ -1111,7 +1116,9 @@ async def _run_call_turn(
     buffer = ""
     failed = False
     proposal_id = None
+    last_done: dict[str, Any] = {}
     reservation_confirmed = False
+    trace_saved = False
     pending: asyncio.Queue[str | None] = asyncio.Queue()
 
     async def speak_worker() -> None:
@@ -1127,6 +1134,20 @@ async def _run_call_turn(
             )
 
     speaker = asyncio.create_task(speak_worker())
+
+    async def finalize_trace() -> None:
+        nonlocal trace_saved
+        if trace_saved:
+            return
+        recorder.finish(
+            answer=answer,
+            provider=last_done.get('provider'),
+            model=last_done.get('model'),
+            status='error' if failed else 'ok',
+        )
+        await save_trace(recorder)
+        trace_saved = True
+
     try:
         async for name, payload in _agent_stream(
             prompt,
@@ -1147,6 +1168,7 @@ async def _run_call_turn(
                 )
                 break
             if name == 'done':
+                last_done = payload
                 proposal_id = payload.get('proposal_id')
             if name in {"tool.started", "tool.completed", "rag.started", "rag.completed", "agent.signals"}:
                 if (name == "tool.completed" and payload.get("tool") == "create_booking"
@@ -1204,6 +1226,9 @@ async def _run_call_turn(
                 [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}]
             )
             history[:] = context_window(history)
+        # Persist before announcing completion so a PCM client cannot submit
+        # another turn while the trace write is still keeping this task alive.
+        await finalize_trace()
         await _send_call_event(
             websocket,
             "turn.completed",
@@ -1213,6 +1238,7 @@ async def _run_call_turn(
         )
         return reservation_confirmed and not failed
     except asyncio.CancelledError:
+        failed = True
         speaker.cancel()
         try:
             await speaker
@@ -1230,6 +1256,7 @@ async def _run_call_turn(
             pass
         raise
     except Exception:
+        failed = True
         speaker.cancel()
         try:
             await speaker
@@ -1248,7 +1275,7 @@ async def _run_call_turn(
             pass
         return False
     finally:
-        await save_trace(recorder)
+        await finalize_trace()
 
 
 async def _receive_json_message(websocket: WebSocket) -> dict[str, object] | None:

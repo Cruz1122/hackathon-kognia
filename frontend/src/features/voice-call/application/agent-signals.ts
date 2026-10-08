@@ -21,6 +21,7 @@ export function applyCallAgentSignals(payload: unknown): boolean {
 export function resetCallAgentSignals(): void {
   const target = panel();
   if (!target) return;
+  target.dataset.hasObservedData = 'false';
   target.resetSignalHistory?.();
   updateAgentSignals(target, EMPTY_AGENT_SIGNALS);
 }

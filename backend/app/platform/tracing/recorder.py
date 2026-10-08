@@ -6,26 +6,25 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-MAX_TEXT = 2000
 MAX_MESSAGES = 40
 MAX_HITS = 8
 
 
-def _clip(value: Any, limit: int = MAX_TEXT) -> str:
+def _text(value: Any) -> str:
     text = value if isinstance(value, str) else str(value)
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "…"
+    return text
 
 
-def _clip_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     clipped: list[dict[str, Any]] = []
     for message in messages[:MAX_MESSAGES]:
         item: dict[str, Any] = {"role": message.get("role")}
         if message.get("content") is not None:
-            item["content"] = _clip(message.get("content"))
+            item["content"] = _text(message.get("content"))
         if message.get("name"):
             item["name"] = message["name"]
+        if message.get("tool_call_id"):
+            item["tool_call_id"] = message["tool_call_id"]
         if message.get("tool_calls"):
             item["tool_calls"] = message["tool_calls"]
         clipped.append(item)
@@ -40,7 +39,7 @@ def _clip_hit(hit: Any) -> dict[str, Any]:
         "score": getattr(hit, "score", None),
         "section": metadata.get("section") or metadata.get("heading_path"),
         "document": metadata.get("document_title") or metadata.get("source_filename"),
-        "content": _clip(getattr(hit, "content", "") or "", 600),
+        "content": _text(getattr(hit, "content", "") or ""),
     }
 
 
@@ -60,6 +59,7 @@ class TraceRecorder:
 
     prompt: str = ""
     history: list[dict[str, Any]] = field(default_factory=list)
+    history_total: int = 0
     tools_available: list[str] = field(default_factory=list)
     provider: str | None = None
     model: str | None = None
@@ -73,6 +73,7 @@ class TraceRecorder:
 
     _t0: float = field(default_factory=time.perf_counter)
     _turn: dict[str, Any] | None = None
+    _finished: bool = False
 
     def _elapsed(self) -> int:
         return int((time.perf_counter() - self._t0) * 1000)
@@ -83,9 +84,15 @@ class TraceRecorder:
 
     def start(self, prompt: str, history: list[dict[str, Any]] | None, tools_available: list[str]) -> None:
         self.prompt = prompt
-        self.history = _clip_messages(list(history or []))
+        raw_history = list(history or [])
+        self.history_total = len(raw_history)
+        self.history = _messages(raw_history)
         self.tools_available = list(tools_available)
-        self._turn = self.span("agent.turn")
+        # Transports initialize the recorder before entering the policy/runtime
+        # coordinator.  The model path calls ``start`` again once it knows the
+        # concrete tool list, so keep one root span for the complete turn.
+        if self._turn is None:
+            self._turn = self.span("agent.turn")
 
     def span(self, name: str, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
         span: dict[str, Any] = {
@@ -103,6 +110,22 @@ class TraceRecorder:
         span["duration_ms"] = max(0, self._elapsed() - int(span["start_ms"]))
         if attributes:
             span["attributes"].update(attributes)
+        if span.get("name") == "llm.request":
+            # Keep an application-level response separate from the request
+            # payload. Provider HTTP/SSE envelopes are intentionally not
+            # persisted; this is the observable result consumed by replay.
+            raw_response = span["attributes"].get("response")
+            response = dict(raw_response) if isinstance(raw_response, dict) else {}
+            response["text"] = _text(span["attributes"].get("text") or "")
+            response["tool_calls"] = span["attributes"].get("tool_calls") or []
+            usage = {
+                key: int(span["attributes"][key])
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                if isinstance(span["attributes"].get(key), (int, float))
+            }
+            if usage:
+                response["usage"] = usage
+            span["attributes"]["response"] = response
 
     def note_first_token(self, span: dict[str, Any] | None) -> None:
         if span is None:
@@ -115,7 +138,7 @@ class TraceRecorder:
         if span is None:
             return
         attributes = span["attributes"]
-        attributes["text"] = _clip(str(attributes.get("text") or "") + text)
+        attributes["text"] = _text(str(attributes.get("text") or "") + text)
 
     def note_usage(
         self,
@@ -153,18 +176,24 @@ class TraceRecorder:
         messages: list[dict[str, Any]],
         tools: list[str],
     ) -> dict[str, Any]:
+        raw_messages = list(messages)
+        captured_messages = _messages(raw_messages)
+        attributes = {
+            "provider": provider,
+            "model": model,
+            "attempt": attempt,
+            "round": round_index,
+            "messages": captured_messages,
+            "messages_captured": len(captured_messages),
+            "tools": list(tools),
+            "first_token_ms": None,
+            "tool_calls": [],
+        }
+        if len(raw_messages) > MAX_MESSAGES:
+            attributes.update({"messages_limited": True, "messages_total": len(raw_messages)})
         return self.span(
             "llm.request",
-            {
-                "provider": provider,
-                "model": model,
-                "attempt": attempt,
-                "round": round_index,
-                "messages": _clip_messages(messages),
-                "tools": list(tools),
-                "first_token_ms": None,
-                "tool_calls": [],
-            },
+            attributes,
         )
 
     def start_tool(self, *, name: str, tool_call_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -179,27 +208,36 @@ class TraceRecorder:
         inputs: list[dict[str, Any]],
         outputs: list[dict[str, Any]],
     ) -> None:
-        self.close_span(span, result=_clip(result), ok=ok, inputs=inputs, outputs=outputs)
+        self.close_span(span, result=_text(result), ok=ok, inputs=inputs, outputs=outputs)
 
     def record_retrieval(self, *, used_rag: bool, topic: str | None, hits: list[Any] | None) -> None:
+        raw_hits = list(hits or [])
+        captured_hits = [_clip_hit(hit) for hit in raw_hits[:MAX_HITS]]
+        attributes: dict[str, Any] = {
+            "used_rag": bool(used_rag),
+            "topic": topic,
+            "hits": captured_hits,
+            "hits_captured": len(captured_hits),
+        }
+        if len(raw_hits) > MAX_HITS:
+            attributes.update({"hits_limited": True, "hits_total": len(raw_hits)})
         span = self.span(
             "rag.retrieve",
-            {
-                "used_rag": bool(used_rag),
-                "topic": topic,
-                "hits": [_clip_hit(hit) for hit in (hits or [])][:MAX_HITS],
-            },
+            attributes,
         )
         self.close_span(span)
 
     def record_error(self, *, provider: str | None, model: str | None, attempt: int, message: str) -> None:
         span = self.span(
             "provider.error",
-            {"provider": provider, "model": model, "attempt": attempt, "message": _clip(message)},
+            {"provider": provider, "model": model, "attempt": attempt, "message": _text(message)},
         )
         self.close_span(span)
 
     def finish(self, *, answer: str, provider: str | None, model: str | None, status: str = "ok") -> None:
+        if self._finished:
+            return
+        self._finished = True
         self.answer = answer
         self.provider = provider
         self.model = model
@@ -224,6 +262,8 @@ class TraceRecorder:
             "status": self.status,
             "prompt": self.prompt,
             "history": self.history,
+            "history_captured": len(self.history),
+            **({"history_limited": True, "history_total": self.history_total} if self.history_total > MAX_MESSAGES else {}),
             "tools_available": self.tools_available,
             "answer": self.answer,
             "spans": self.spans,

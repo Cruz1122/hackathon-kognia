@@ -28,7 +28,7 @@
 }
 
 .empty-state--error .empty-state__icon {
-  background: var(--ui-cream);
+  background: var(--ui-accent-soft);
 }
 
 .empty-state__title {

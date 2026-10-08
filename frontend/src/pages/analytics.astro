@@ -23,7 +23,12 @@ import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
     lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
   }
 
+  function isAnalyticsRoute(): boolean {
+    return window.location.pathname === '/analytics' || window.location.pathname === '/analytics/';
+  }
+
   async function mountAnalytics(): Promise<void> {
+    if (!isAnalyticsRoute()) return;
     const root = document.querySelector<HTMLElement>('.analytics-dashboard');
     if (!root || mountedRoot === root || pendingRoot === root) return;
     const token = sessionStorage.getItem(accessTokenKey)?.trim();

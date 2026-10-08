@@ -14,6 +14,12 @@ importers:
       echarts:
         specifier: 6.0.0
         version: 6.0.0
+      flag-icons:
+        specifier: ^7.5.0
+        version: 7.5.0
+      libphonenumber-js:
+        specifier: ^1.13.14
+        version: 1.13.14
       lucide:
         specifier: 1.50.0
         version: 1.50.0
@@ -1006,6 +1012,9 @@ packages:
     resolution: {integrity: sha512-OaOpEYv2PiQ7SQ5LIrl+deA1XaWcxEjnpM6VuWXTUvn+teIXxeFTLDmu18/zDQpFmHN4o3oDBX+BT0AGwEhemg==}
     engines: {node: ^20.19.0 || >=22.12.0}
 
+  flag-icons@7.5.0:
+    resolution: {integrity: sha512-kd+MNXviFIg5hijH766tt+3x76ele1AXlo4zDdCxIvqWZhKt4T83bOtxUOOMlTx/EcFdUMH5yvQgYlFh1EqqFg==}
+
   flattie@1.1.1:
     resolution: {integrity: sha512-9UbaD6XdAL97+k/n+N7JwX46K/M6Zc6KcFYskrYL8wbBV/Uyk0CTAMY0VT+qiK5PM7AIc9aTWYtq65U7T+aCNQ==}
     engines: {node: '>=8'}
@@ -1083,6 +1092,9 @@ packages:
   kleur@4.1.5:
     resolution: {integrity: sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==}
     engines: {node: '>=6'}
+
+  libphonenumber-js@1.13.14:
+    resolution: {integrity: sha512-llihgCcx0BFLksecLP+x1J+6JDE1GsXS1RN/LoPF6qcwpeQcnjj0lcvZxY8AzbEpYwyZWPZW/nDuqkqzm3amiw==}
 
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
@@ -2663,6 +2675,8 @@ snapshots:
 
   find-proc@0.1.0: {}
 
+  flag-icons@7.5.0: {}
+
   flattie@1.1.1: {}
 
   fontace@0.4.1:
@@ -2739,6 +2753,8 @@ snapshots:
   jsonc-parser@3.3.1: {}
 
   kleur@4.1.5: {}
+
+  libphonenumber-js@1.13.14: {}
 
   lightningcss-android-arm64@1.33.0:
     optional: true

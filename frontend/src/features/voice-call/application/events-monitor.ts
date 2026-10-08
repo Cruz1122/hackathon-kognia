@@ -2,6 +2,7 @@ import { backendMessage } from '../infrastructure/backend-error';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { applyCallAgentSignals } from './agent-signals';
+import { mountConversationScroll } from './conversation-scroll';
 
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
@@ -10,10 +11,6 @@ function lucideRefresh(): void {
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
-}
-
-function isNearLiveEdge(container: HTMLElement): boolean {
-  return container.scrollHeight - container.scrollTop - container.clientHeight <= 120;
 }
 
 type RealtimeEnvelope = {
@@ -26,7 +23,6 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   const conversationEmpty = document.querySelector('#conversationEmpty');
   const hubChip = document.querySelector('#hubChipText');
   if (!conversation) return () => undefined;
-  const scrollOwner = document.getElementById('appContent') ?? (conversation instanceof HTMLElement ? conversation : null);
   bindDetailClicks(conversation);
   mountSessionPanel();
 
@@ -35,6 +31,10 @@ export function bootEventsMonitor(apiUrl: string): () => void {
     if (hubChip) hubChip.textContent = 'Demo local';
     return () => undefined;
   }
+  const scrollController = mountConversationScroll({
+    scroller: document.getElementById('appContent'),
+    conversation: conversation instanceof HTMLElement ? conversation : null,
+  });
   if (conversationId) {
     void fetch(`${apiUrl}/conversations/${conversationId}/agent-state`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -57,14 +57,13 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   }
 
   function appendRow(kind: string, html: string): HTMLElement {
-    const followLive = !scrollOwner || isNearLiveEdge(scrollOwner);
     setEmpty(true);
     const row = document.createElement('div');
     row.className = `${kind} visible enter`;
     row.innerHTML = html;
     conversation.append(row);
     lucideRefresh();
-    if (followLive) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    scrollController.follow(row);
     window.setTimeout(() => row.classList.remove('enter'), 900);
     return row;
   }
@@ -125,6 +124,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
     tokenNode.textContent = delta;
     customerBubble.append(tokenNode);
     customerShown = next;
+    scrollController.follow(customerBubble);
   }
 
   function finishCustomer(text: string): void {
@@ -166,7 +166,9 @@ export function bootEventsMonitor(apiUrl: string): () => void {
       const node = document.createElement('span');
       node.className = 'token';
       node.textContent = String(payload.text ?? '');
-      ensureAgent().append(node);
+      const bubble = ensureAgent();
+      bubble.append(node);
+      scrollController.follow(bubble);
     } else if (type === 'agent.signals') {
       applyCallAgentSignals(payload);
       patchSessionFromAgentState(payload);
@@ -262,6 +264,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   return () => {
     if (disposed) return;
     disposed = true;
+    scrollController.dispose();
     pendingTools.clear();
     pendingRetrievalId = null;
     agentBubble = null;

@@ -7,6 +7,25 @@ interface Props {
 }
 
 const { snapshot } = Astro.props;
+const DEV_GRADIENTS: Record<string, string> = {
+  '#faeccf': '#dcebff',
+  '#fff0bf': '#eaf3ff',
+  '#fadd8d': '#bed8ff',
+  '#f7c974': '#6ea8fe',
+  '#d8a745': '#3f7ccc',
+  '#ffe1a7': '#e4efff',
+  '#ffc978': '#b8d5ff',
+  '#f0a84c': '#6ea8fe',
+  '#d77735': '#3f7ccc',
+  '#edf5ad': '#e5f0ff',
+  '#d3e982': '#b7d4ff',
+  '#a8d864': '#8fb8f4',
+  '#78b54d': '#6f96cf',
+};
+const isDevMode = Astro.url.pathname === '/dev' || Astro.url.pathname.startsWith('/dev/');
+const renderedGradient = isDevMode
+  ? snapshot.gradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color)
+  : snapshot.gradient;
 const base = DEFAULT_EMOTIONS['default-happy'].state;
 const gradientId = `status-${snapshot.key}-${crypto.randomUUID()}`;
 const gradientCx = base.faceX - base.faceWidth * .25;
@@ -29,7 +48,7 @@ const gradientRadius = Math.max(base.faceWidth, base.faceHeight) * 1.22;
           r={gradientRadius}
           gradientTransform={rotationTransform(base.faceRotation, base.faceX, base.faceY)}
         >
-          {snapshot.gradient.map((color, index) => (
+          {renderedGradient.map((color, index) => (
             <stop data-category-stop={index} offset={['0%', '32%', '72%', '100%'][index]} stop-color={color} />
           ))}
         </radialGradient>
@@ -79,6 +98,8 @@ const gradientRadius = Math.max(base.faceWidth, base.faceHeight) * 1.22;
     display: block;
     overflow: visible;
   }
+
+  .categorical__face stop { transition: stop-color .36s ease; }
 
   .categorical__icon {
     position: absolute;

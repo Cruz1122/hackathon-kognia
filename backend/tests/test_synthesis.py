@@ -86,6 +86,21 @@ def test_stream_tts_audio_forwards_every_piper_chunk(monkeypatch) -> None:
     ]
 
 
+def test_stream_tts_audio_uses_phonetic_wane_cue_without_mutating_text_contract(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    class CapturingVoice(FakePiperVoice):
+        def synthesize(self, text, *, syn_config):
+            captured["text"] = text
+            yield SimpleNamespace(audio_int16_bytes=b"pcm")
+
+    monkeypatch.setattr(service, "_voice", CapturingVoice())
+    monkeypatch.setattr(service, "_synthesis_config", object())
+
+    assert list(service.stream_tts_audio("Soy Wane. WANE sigue aquí.")) == [b"pcm"]
+    assert captured["text"] == "Soy Güein. Güein sigue aquí."
+
+
 def test_semantic_chunker_does_not_cut_an_unfinished_spanish_sentence() -> None:
     unfinished = "Claro puedo ayudarte a revisar el problema paso"
     complete = f"{unfinished} a paso."

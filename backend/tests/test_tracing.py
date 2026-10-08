@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
 import pytest
 
 from app.features.agent.service import stream_agent
@@ -76,8 +79,6 @@ async def test_stream_agent_accumulates_token_usage(monkeypatch: pytest.MonkeyPa
 
 
 def test_call_summary_aggregates_token_usage() -> None:
-    from types import SimpleNamespace
-
     from app.features.dev.router import _call_summary
 
     rows = [
@@ -85,13 +86,19 @@ def test_call_summary_aggregates_token_usage() -> None:
             status="ok",
             duration_ms=120,
             model="gpt-4o-mini",
-            data={"usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14, "llm_calls": 1}},
+            data={
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14, "llm_calls": 1},
+                "spans": [{"name": "tool.lookup"}, {"name": "rag.retrieve"}],
+            },
         ),
         SimpleNamespace(
             status="ok",
             duration_ms=80,
             model="gpt-4o-mini",
-            data={"usage": {"prompt_tokens": 20, "completion_tokens": 6, "total_tokens": 26, "llm_calls": 2}},
+            data={
+                "usage": {"prompt_tokens": 20, "completion_tokens": 6, "total_tokens": 26, "llm_calls": 2},
+                "spans": [{"name": "tool.create_booking"}],
+            },
         ),
     ]
     summary = _call_summary(rows)
@@ -102,9 +109,193 @@ def test_call_summary_aggregates_token_usage() -> None:
     assert summary["completion_tokens"] == 10
     assert summary["total_tokens"] == 40
     assert summary["llm_calls"] == 3
+    assert summary["tools"] == 2
+    assert summary["rag_calls"] == 1
     assert summary["status"] == "ok"
     # gpt-4o-mini: 30 in / 10 out → 30/1e6*0.15 + 10/1e6*0.60
     assert summary["cost_usd"] == pytest.approx(0.0000105, abs=1e-6)
+
+
+def test_trace_payload_keeps_full_application_text() -> None:
+    recorder = TraceRecorder(organization_id="org", conversation_id="conv", call_id="call")
+    long_text = "x" * 3000
+    recorder.start(long_text, [{"role": "user", "content": long_text, "tool_call_id": "tool-1"}], [])
+    llm = recorder.start_llm(
+        provider="test",
+        model="model",
+        attempt=1,
+        round_index=0,
+        messages=[{"role": "user", "content": long_text, "tool_call_id": "tool-1"}],
+        tools=[],
+    )
+    recorder.note_text(llm, long_text)
+    recorder.close_tool(recorder.start_tool(name="lookup", tool_call_id="tool-1", arguments={"value": long_text}), result=long_text, ok=True, inputs=[], outputs=[])
+    data = recorder.to_dict()
+    assert data["history"][0]["content"] == long_text
+    assert data["spans"][1]["attributes"]["messages"][0]["content"] == long_text
+    assert data["spans"][1]["attributes"]["text"] == long_text
+    assert data["spans"][2]["attributes"]["result"] == long_text
+
+
+def test_trace_payload_keeps_response_separate_from_llm_payload() -> None:
+    recorder = TraceRecorder(organization_id="org", conversation_id="conv", call_id="call")
+    recorder.start("hola", [], [])
+    span = recorder.start_llm(
+        provider="test",
+        model="model",
+        attempt=1,
+        round_index=1,
+        messages=[{"role": "user", "content": "hola"}],
+        tools=[],
+    )
+    recorder.note_text(span, "respuesta")
+    recorder.note_usage(span, prompt_tokens=2, completion_tokens=3, total_tokens=5)
+    recorder.close_span(span, tool_calls=[])
+    payload = next(item for item in recorder.to_dict()["spans"] if item["name"] == "llm.request")
+    assert payload["attributes"]["messages"] != payload["attributes"]["response"]
+    assert payload["attributes"]["response"] == {
+        "text": "respuesta",
+        "tool_calls": [],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+    }
+
+
+def test_trace_capture_limits_are_explicit() -> None:
+    recorder = TraceRecorder(organization_id="org", conversation_id="conv", call_id="call")
+    history = [{"role": "user", "content": str(index)} for index in range(45)]
+    recorder.start("prompt", history, [])
+    recorder.start_llm(
+        provider="test",
+        model="model",
+        attempt=1,
+        round_index=0,
+        messages=history,
+        tools=[],
+    )
+    hits = [SimpleNamespace(content=f"hit-{index}") for index in range(10)]
+    recorder.record_retrieval(used_rag=True, topic="topic", hits=hits)
+    data = recorder.to_dict()
+    assert data["history_limited"] is True
+    assert data["history_total"] == 45
+    llm_attributes = data["spans"][1]["attributes"]
+    assert llm_attributes["messages_limited"] is True
+    assert llm_attributes["messages_total"] == 45
+    rag_attributes = data["spans"][2]["attributes"]
+    assert rag_attributes["hits_limited"] is True
+    assert rag_attributes["hits_total"] == 10
+
+
+def test_dev_replay_events_align_trace_and_post_call_messages() -> None:
+    from app.features.dev.router import _agent_event_turn_id, _call_event_view, _message_event_view, _trace_event_views
+
+    started = datetime(2026, 1, 1, tzinfo=UTC)
+    trace = SimpleNamespace(
+        id="trace-1",
+        started_at=started + timedelta(seconds=2),
+        data={
+            "spans": [{
+                "name": "llm.request",
+                "start_ms": 250,
+                "duration_ms": 1500,
+                "attributes": {
+                    "first_token_ms": 300,
+                    "total_tokens": 10,
+                    "response": {"text": "Respuesta", "tool_calls": []},
+                },
+            }],
+        },
+    )
+    events = _trace_event_views(trace, call_started_at=started, recording_offset_ms=1000, recording_duration_ms=5000)
+    assert events[0]["offset_ms"] == 2250
+    assert events[0]["playback_ms"] == 1250
+    assert events[0]["response"] == {"text": "Respuesta", "tool_calls": []}
+    assert events[0]["response"] != events[0]["payload"]
+    assert "response" not in events[0]["payload"]["attributes"]
+    message = SimpleNamespace(
+        id="message-1",
+        channel="whatsapp",
+        role="assistant",
+        content="Seguimos por WhatsApp",
+        created_at=started + timedelta(seconds=12),
+    )
+    post_call = _message_event_view(message, call_started_at=started, recording_offset_ms=1000, recording_duration_ms=5000, order=0)
+    assert post_call["offset_ms"] == 12000
+    assert post_call["playback_ms"] == 5000
+
+
+def test_agent_transcript_matching_skips_untraced_greeting() -> None:
+    from app.features.dev.router import _agent_event_turn_id, _call_event_view
+
+    started = datetime(2026, 1, 1, tzinfo=UTC)
+    traces = [
+        SimpleNamespace(id="turn-1", started_at=started + timedelta(seconds=10)),
+        SimpleNamespace(id="turn-2", started_at=started + timedelta(seconds=20)),
+    ]
+    greeting = SimpleNamespace(
+        id="event-greeting",
+        event_type="transcript.final",
+        occurred_at=started + timedelta(seconds=5),
+        payload={"speaker": "agent", "text": "Hola"},
+    )
+    first = SimpleNamespace(
+        id="event-first",
+        seq=2,
+        event_type="transcript.final",
+        occurred_at=started + timedelta(seconds=12),
+        offset_ms=12000,
+        payload={"speaker": "agent", "text": "Primera respuesta"},
+    )
+    second = SimpleNamespace(
+        id="event-second",
+        event_type="transcript.final",
+        occurred_at=started + timedelta(seconds=22),
+        payload={"speaker": "agent", "text": "Segunda respuesta"},
+    )
+
+    assert _agent_event_turn_id(greeting, traces) is None
+    assert _agent_event_turn_id(first, traces) == "turn-1"
+    assert _agent_event_turn_id(second, traces) == "turn-2"
+    view = _call_event_view(first, recording_offset_ms=0, recording_duration_ms=1000, turn_id="turn-1")
+    assert view["turn_id"] == "turn-1"
+
+
+def test_turn_view_recovers_answer_from_observable_llm_span() -> None:
+    from app.features.dev.router import _turn_view
+
+    row = SimpleNamespace(
+        id="trace-1",
+        provider="openrouter",
+        model="model",
+        status="ok",
+        started_at=datetime(2026, 1, 1, tzinfo=UTC),
+        duration_ms=100,
+        data={
+            "answer": "",
+            "spans": [
+                {"name": "llm.request", "attributes": {"text": "Respuesta observable"}},
+            ],
+        },
+    )
+
+    assert _turn_view(row)["answer"] == "Respuesta observable"
+
+
+def test_turn_view_uses_agent_transcript_when_historical_trace_is_empty() -> None:
+    from app.features.dev.router import _turn_view
+
+    row = SimpleNamespace(
+        id="trace-1",
+        provider=None,
+        model=None,
+        status="ok",
+        started_at=datetime(2026, 1, 1, tzinfo=UTC),
+        duration_ms=100,
+        data={"answer": "", "spans": []},
+    )
+
+    view = _turn_view(row, "Respuesta guardada en transcript")
+    assert view["answer"] == "Respuesta guardada en transcript"
+    assert view["data"]["answer"] == "Respuesta guardada en transcript"
 
 
 def test_estimate_cost_uses_published_prices() -> None:

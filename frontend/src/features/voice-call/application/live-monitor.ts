@@ -6,6 +6,7 @@ import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval
 import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
+import { mountConversationScroll, type ConversationScrollController } from './conversation-scroll';
 
 type CallMonitorAudio = {
   setLevels: (customer: number, agent: number) => void;
@@ -33,10 +34,6 @@ function formatTime(seconds: number): string {
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
-}
-
-function isNearLiveEdge(container: HTMLElement): boolean {
-  return container.scrollHeight - container.scrollTop - container.clientHeight <= 120;
 }
 
 async function waitForMonitor(timeoutMs = 4000): Promise<CallMonitorAudio> {
@@ -77,7 +74,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   if (!conversation) {
     return () => undefined;
   }
-  const scrollOwner = document.getElementById('appContent') ?? (conversation instanceof HTMLElement ? conversation : null);
   if (conversation instanceof HTMLElement && conversation.dataset.liveBooted === '1') return () => undefined;
   if (conversation instanceof HTMLElement) conversation.dataset.liveBooted = '1';
   bindDetailClicks(conversation);
@@ -89,6 +85,10 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   if (!callBtn || !restartBtn || !pauseBtn) {
     return () => undefined;
   }
+  const scrollController: ConversationScrollController = mountConversationScroll({
+    scroller: document.getElementById('appContent'),
+    conversation: conversation instanceof HTMLElement ? conversation : null,
+  });
 
   setControl(restartBtn, 'rotate-ccw', 'Reiniciar', 'Reiniciar llamada');
   setControl(callBtn, 'phone', 'Llamar', 'Empezar llamada');
@@ -176,14 +176,13 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   }
 
   function appendRow(kind: string, html: string): HTMLElement {
-    const followLive = !scrollOwner || isNearLiveEdge(scrollOwner);
     setEmpty(true);
     const row = document.createElement('div');
     row.className = `${kind} visible enter`;
     row.innerHTML = html;
     conversation.append(row);
     lucideRefresh();
-    if (followLive) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    scrollController.follow(row);
     window.setTimeout(() => row.classList.remove('enter'), 900);
     return row;
   }
@@ -270,6 +269,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (!delta) return;
     appendTokens(customerBubble, delta);
     customerShown = next;
+    scrollController.follow(customerBubble);
   }
 
   function finishCustomer(text: string): void {
@@ -306,7 +306,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   }
 
   function appendToken(text: string): void {
-    appendTokens(ensureAgent(), text);
+    const bubble = ensureAgent();
+    appendTokens(bubble, text);
+    scrollController.follow(bubble);
   }
 
   function finishAgent(): void {
@@ -744,6 +746,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
 
   return () => {
     disposed = true;
+    scrollController.dispose();
     window.clearTimeout(reconnectTimer);
     window.clearTimeout(connectionHideTimer);
     void hangup(false);

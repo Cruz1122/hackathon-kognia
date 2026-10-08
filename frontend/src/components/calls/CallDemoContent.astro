@@ -1,6 +1,12 @@
 ---
 import ContentLoader from '../ui/ContentLoader.astro';
 import EmptyState from '../ui/EmptyState.astro';
+
+interface Props {
+  mode?: 'call' | 'dev';
+}
+
+const { mode = 'call' } = Astro.props;
 ---
 
 <svg width="0" height="0" aria-hidden="true" style="position:absolute">
@@ -17,19 +23,19 @@ import EmptyState from '../ui/EmptyState.astro';
   </defs>
 </svg>
 
-<div class="call-demo-page">
+<div class:list={['call-demo-page', mode === 'dev' && 'call-demo-page--dev']} data-call-mode={mode}>
   <ContentLoader id="callLoading" copy="Preparando la llamada…" class="call-page-loader" />
   <section class="call-page-error" id="callError" role="alert" aria-live="assertive" aria-atomic="true" hidden inert>
     <div class="call-page-error__icon" aria-hidden="true"><i data-lucide="triangle-alert"></i></div>
-    <h1 class="call-page-error__title">No pudimos abrir esta llamada</h1>
-    <p class="call-page-error__reason" id="callErrorReason">La llamada no está disponible en este momento.</p>
+    <h1 class="call-page-error__title">{mode === 'dev' ? 'No pudimos abrir este replay' : 'No pudimos abrir esta llamada'}</h1>
+    <p class="call-page-error__reason" id="callErrorReason">{mode === 'dev' ? 'La repetición técnica no está disponible en este momento.' : 'La llamada no está disponible en este momento.'}</p>
   </section>
   <div class="app-content is-nav-ready" id="appContent" aria-hidden="true" inert hidden>
-    <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
+    <h1 id="screenTitle" class="sr-only">{mode === 'dev' ? 'Repetición técnica de llamada' : 'Llamada en tiempo real'}</h1>
     <div class="player-wrap">
       <div class="call-connection-status" id="callConnectionStatus" role="status" aria-live="polite" hidden>
         <span class="call-connection-status__dot" aria-hidden="true"></span>
-        <span id="callConnectionStatusText">Conectando…</span>
+        <span id="callConnectionStatusText">{mode === 'dev' ? 'Cargando replay técnico…' : 'Conectando…'}</span>
       </div>
       <section class="player" aria-label="Reproductor de llamada">
         <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
@@ -44,10 +50,10 @@ import EmptyState from '../ui/EmptyState.astro';
               <button class="control" type="button" id="rewindBtn" aria-label="Reiniciar llamada" title="Reiniciar llamada"><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>
               <span class="control-caption">Reiniciar</span>
             </div>
-            <div class="control-stack">
+              {mode !== 'dev' && <div class="control-stack">
               <button class="control primary" type="button" id="startBtn" aria-label="Empezar llamada" title="Empezar llamada"><i data-lucide="phone" aria-hidden="true"></i></button>
               <span class="control-caption">Llamar</span>
-            </div>
+              </div>}
             <div class="control-stack">
               <button class="control" type="button" id="playBtn" aria-label="Pausar llamada" title="Pausar llamada"><i data-lucide="pause" aria-hidden="true"></i></button>
               <span class="control-caption">Pausa</span>
@@ -56,6 +62,16 @@ import EmptyState from '../ui/EmptyState.astro';
         </div>
       </section>
     </div>
+    {mode === 'dev' && <section class="dev-replay-summary" id="devReplaySummary" aria-label="Resumen técnico" hidden>
+      <div class="dev-replay-summary__head">
+        <div>
+          <p class="dev-replay-summary__eyebrow">Replay técnico</p>
+          <h2>Lo que ocurrió en esta llamada</h2>
+        </div>
+        <span class="dev-replay-summary__hint">Los eventos siguen el playhead</span>
+      </div>
+      <div class="dev-replay-metrics" id="devReplayMetrics"></div>
+    </section>}
     <section class="conversation" id="conversation" aria-label="Transcripción de la llamada">
         <div class="conversation-empty" id="conversationEmpty" role="status">
           <EmptyState icon="message-circle" title="Aún no hay mensajes." />

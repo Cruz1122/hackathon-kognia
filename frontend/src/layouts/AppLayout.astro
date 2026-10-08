@@ -9,6 +9,7 @@ import '../styles/detail-panel.css';
 import '../styles/toast.css';
 import '../styles/loading-reveal.css';
 import '../styles/empty-state.css';
+import '../styles/phone.css';
 
 interface Props {
   title?: string;
@@ -22,15 +23,21 @@ const activeRoute = path === '/dev' || path.startsWith('/dev/')
   : path === '/calls' || path.startsWith('/calls/')
     ? 'calls'
     : 'analytics';
-const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved');
+const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved') || path.startsWith('/dev/replay');
 ---
 
 <!doctype html>
-<html lang="es" transition:animate="none">
+<html lang="es" data-ui-mode={activeRoute === 'dev' ? 'dev' : 'normal'} transition:animate="none">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
+    <script is:inline>
+      (() => {
+        const path = window.location.pathname;
+        document.documentElement.dataset.uiMode = path === '/dev' || path.startsWith('/dev/') ? 'dev' : 'normal';
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <ClientRouter fallback="swap" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -60,19 +67,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
           <i data-lucide="x" aria-hidden="true"></i>
         </button>
         <div class="detail-panel__session" id="sessionPanel">
-          <div id="sessionSummary">
-            <p class="detail-kicker">Cliente</p>
-            <h2 class="detail-title">Estado global del cliente</h2>
-            <div class="detail-sheet">
-              <section class="detail-group">
-                <dl class="detail-fields">
-                  <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
-                  <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-                  <div class="detail-field"><dt>Estado</dt><dd class="is-pending">Pendiente</dd></div>
-                </dl>
-              </section>
-            </div>
-          </div>
+          <div id="sessionSummary" hidden></div>
           <div class="detail-client-signals" id="callSignalCategories" aria-label="Estado global del cliente"></div>
           <div class="detail-panel__signals">
             <AgentSignalsPanel id="callAgentSignals" variant="compact" categoriesTarget="callSignalCategories" />
@@ -84,7 +79,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
     <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
     <script>
       import { installSessionGuard } from '../features/auth/session-guard';
-      import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
+      import { fillCallNav, stopCallNav } from '../features/voice-call/application/fill-call-nav';
 
       const sidebar = document.querySelector<HTMLElement>('.app-sidebar');
       const mobileNavToggle = document.querySelector<HTMLButtonElement>('.mobile-nav-toggle');
@@ -125,8 +120,20 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
         lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
       }
 
-      function syncNavActive(): void {
-        const path = window.location.pathname;
+      function syncUiMode(path = window.location.pathname): void {
+        document.documentElement.dataset.uiMode = path === '/dev' || path.startsWith('/dev/') ? 'dev' : 'normal';
+      }
+
+      syncUiMode();
+      document.addEventListener('astro:before-swap', (event) => {
+        const transition = event as Event & { newDocument?: Document };
+        const nextPath = transition.newDocument?.location.pathname ?? window.location.pathname;
+        syncUiMode(nextPath);
+        syncNavActive(nextPath);
+        if (nextPath === '/dev' || nextPath.startsWith('/dev/')) stopCallNav();
+      });
+
+      function syncNavActive(path = window.location.pathname): void {
         const route = path === '/dev' || path.startsWith('/dev/')
           ? 'dev'
           : path === '/calls' || path.startsWith('/calls/')
@@ -139,6 +146,15 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
           if (active) item.setAttribute('aria-current', 'page');
           else item.removeAttribute('aria-current');
         });
+      }
+
+      function syncCallNav(): void {
+        const path = window.location.pathname;
+        if (path === '/dev' || path.startsWith('/dev/')) {
+          stopCallNav();
+          return;
+        }
+        void fillCallNav(apiUrl);
       }
 
       const navWatch = window as Window & { __kogniaNavSync?: boolean };
@@ -162,11 +178,12 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
 
       syncNavActive();
       paintIcons();
-      void fillCallNav(apiUrl);
+      syncCallNav();
       document.addEventListener('astro:page-load', () => {
+        syncUiMode();
         syncNavActive();
         paintIcons();
-        void fillCallNav(apiUrl);
+        syncCallNav();
       });
     </script>
   </body>

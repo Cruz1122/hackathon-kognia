@@ -1,4 +1,5 @@
 import { Marked } from 'marked';
+import { phoneDisplayMarkup } from '../../phone/phone-display.ts';
 
 export type DetailField = { label: string; value: string };
 
@@ -15,7 +16,19 @@ export type SourceDetail = {
   content: string;
 };
 
-export type DetailPayload = ToolDetail | SourceDetail;
+export type TechnicalDetailSection = {
+  title: string;
+  value: unknown;
+};
+
+export type TechnicalDetail = {
+  kind: 'technical';
+  title: string;
+  kicker?: string;
+  sections: TechnicalDetailSection[];
+};
+
+export type DetailPayload = ToolDetail | SourceDetail | TechnicalDetail;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -68,8 +81,9 @@ function parseFields(value: unknown): DetailField[] {
   return value.flatMap((item) => {
     const record = asRecord(item);
     const label = String(record.label ?? '').trim();
-    if (!label) return [];
-    return [{ label, value: String(record.value ?? '') }];
+    const fieldValue = String(record.value ?? '').trim();
+    if (!label || !fieldValue || isPendingValue(fieldValue)) return [];
+    return [{ label, value: fieldValue }];
   });
 }
 
@@ -104,7 +118,7 @@ export function readDetail(card: HTMLElement): DetailPayload | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as DetailPayload;
-    if (parsed && (parsed.kind === 'tool' || parsed.kind === 'source')) return parsed;
+    if (parsed && (parsed.kind === 'tool' || parsed.kind === 'source' || parsed.kind === 'technical')) return parsed;
   } catch {
     return null;
   }
@@ -121,23 +135,57 @@ function isLongValue(value: string): boolean {
 
 function fieldRow(field: DetailField): string {
   const pending = isPendingValue(field.value);
+  if (pending || !field.value.trim()) return '';
   const long = !pending && isLongValue(field.value);
   const status = !pending && !long && field.label === 'Estado';
   const rowClass = ['detail-field', long ? 'is-long' : ''].filter(Boolean).join(' ');
   const valueClass = [pending ? 'is-pending' : '', long ? 'is-long' : '', status ? 'is-status' : ''].filter(Boolean).join(' ');
   const value = status
     ? `<span class="detail-chip">${escapeHtml(field.value)}</span>`
+    : field.label === 'Teléfono'
+      ? phoneDisplayMarkup(field.value)
     : escapeHtml(field.value);
   return `<div class="${rowClass}"><dt>${escapeHtml(field.label)}</dt><dd${valueClass ? ` class="${valueClass}"` : ''}>${value}</dd></div>`;
 }
 
-function fieldsMarkup(fields: DetailField[], empty = 'Sin datos'): string {
-  if (!fields.length) return `<p class="detail-empty">${escapeHtml(empty)}</p>`;
-  return `<dl class="detail-fields">${fields.map(fieldRow).join('')}</dl>`;
+function fieldsMarkup(fields: DetailField[], _empty = ''): string {
+  const visible = fields.filter((field) => field.value.trim() && !isPendingValue(field.value));
+  if (!visible.length) return '';
+  return `<dl class="detail-fields">${visible.map(fieldRow).join('')}</dl>`;
 }
 
 function groupedFields(groups: { title: string; fields?: DetailField[]; empty?: string }[]): string {
-  return `<div class="detail-sheet">${groups.map((group) => `<section class="detail-group"><h3>${escapeHtml(group.title)}</h3>${fieldsMarkup(group.fields ?? [], group.empty)}</section>`).join('')}</div>`;
+  const visibleGroups = groups.filter((group) => (group.fields ?? []).some((field) => field.value.trim() && !isPendingValue(field.value)));
+  if (!visibleGroups.length) return '';
+  return `<div class="detail-sheet">${visibleGroups.map((group) => `<section class="detail-group"><h3>${escapeHtml(group.title)}</h3>${fieldsMarkup(group.fields ?? [], group.empty)}</section>`).join('')}</div>`;
+}
+
+function prettyJson(value: unknown): string {
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(value, null, 2) ?? String(value ?? '');
+  } catch {
+    serialized = String(value);
+  }
+  const tokenPattern = /("(?:\\.|[^"\\])*")(\s*:)?|\b(?:true|false|null)\b|-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g;
+  let result = '';
+  let cursor = 0;
+  serialized.replace(tokenPattern, (token, quoted: string | undefined, colon: string | undefined, index: number) => {
+    result += escapeHtml(serialized.slice(cursor, index));
+    if (quoted) {
+      const className = colon ? 'json-key' : 'json-string';
+      result += `<span class="${className}">${escapeHtml(quoted)}</span>${colon ? escapeHtml(colon) : ''}`;
+    } else if (token === 'true' || token === 'false') {
+      result += `<span class="json-boolean">${token}</span>`;
+    } else if (token === 'null') {
+      result += `<span class="json-null">${token}</span>`;
+    } else {
+      result += `<span class="json-number">${token}</span>`;
+    }
+    cursor = index + token.length;
+    return token;
+  });
+  return result + escapeHtml(serialized.slice(cursor));
 }
 
 type SessionState = {
@@ -151,10 +199,6 @@ const session: SessionState = {
   phone: '',
   status: '',
 };
-
-function pendingValue(value: string): string {
-  return value.trim() || 'Pendiente';
-}
 
 export function patchSession(partial: { name?: string; phone?: string; status?: string }): void {
   if (typeof partial.name === 'string') session.name = partial.name.trim();
@@ -183,18 +227,29 @@ export function patchSessionFromAgentState(value: unknown): void {
   const nested = asRecord(envelope.state);
   const state = Object.keys(nested).length ? nested : asRecord(value);
   const slots = asRecord(state.booking_slots);
+  const stateRecord = state as JsonRecord;
+  const hasObservedState = Boolean(
+    Object.keys(asRecord(state.signals)).length
+      || Object.keys(asRecord(state.facts)).length
+      || Object.keys(slots).length
+      || (typeof stateRecord.last_turn_id === 'string' && stateRecord.last_turn_id)
+      || (typeof stateRecord.last_response === 'string' && stateRecord.last_response)
+      || (typeof state.phase === 'string' && state.phase !== 'understanding'),
+  );
+  if (!hasObservedState) return;
   const name = String(state.customer_name ?? slots.customer_name ?? '').trim();
+  const phase = typeof state.phase === 'string' && state.phase !== 'understanding' ? state.phase : '';
   patchSession({
     ...(name ? { name } : {}),
-    status: phaseLabel(state.phase),
+    ...(phase ? { status: phaseLabel(phase) } : {}),
   });
 }
 
 function sessionFields(): DetailField[] {
   return [
-    { label: 'Nombre', value: pendingValue(session.name) },
-    { label: 'Teléfono', value: pendingValue(session.phone) },
-    { label: 'Estado', value: pendingValue(session.status) },
+    ...(session.name ? [{ label: 'Nombre', value: session.name }] : []),
+    ...(session.phone ? [{ label: 'Teléfono', value: session.phone }] : []),
+    ...(session.status ? [{ label: 'Estado', value: session.status }] : []),
   ];
 }
 
@@ -202,7 +257,14 @@ function renderSession(): void {
   const root = document.getElementById('detailPanel');
   const panel = root?.querySelector('#sessionSummary');
   if (!panel) return;
-  panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">Estado global del cliente</h2><div class="detail-sheet"><section class="detail-group">${fieldsMarkup(sessionFields())}</section></div>`;
+  const hasData = Boolean(session.name || session.phone || session.status);
+  panel.toggleAttribute('hidden', !hasData);
+  if (!hasData) {
+    panel.replaceChildren();
+    return;
+  }
+  const title = session.status ? 'Estado global del cliente' : 'Cliente';
+  panel.innerHTML = `<p class="detail-kicker">Cliente</p><h2 class="detail-title">${title}</h2><div class="detail-sheet"><section class="detail-group">${fieldsMarkup(sessionFields())}</section></div>`;
 }
 
 function prefersReducedMotion(): boolean {
@@ -238,12 +300,19 @@ function showSessionView(): void {
 
 function renderBody(detail: DetailPayload): string {
   if (detail.kind === 'source') {
-    const content = detail.content ? renderMarkdown(detail.content) : 'Sin contenido recuperado';
-    return `<p class="detail-kicker">Fuente</p><h2 class="detail-title">${escapeHtml(detail.title)}</h2><div class="detail-content">${content}</div>`;
+    const content = detail.content ? `<div class="detail-content">${renderMarkdown(detail.content)}</div>` : '';
+    return `<p class="detail-kicker">Fuente</p><h2 class="detail-title">${escapeHtml(detail.title)}</h2>${content}`;
+  }
+  if (detail.kind === 'technical') {
+    const sections = detail.sections
+      .filter((section) => section.title.trim())
+      .map((section) => `<details class="detail-technical-section"><summary>${escapeHtml(section.title)}</summary><pre>${prettyJson(section.value)}</pre></details>`)
+      .join('');
+    return `<p class="detail-kicker">${escapeHtml(detail.kicker ?? 'Telemetría')}</p><h2 class="detail-title">${escapeHtml(detail.title)}</h2>${sections}`;
   }
   return `<p class="detail-kicker">Herramienta usada</p><h2 class="detail-title">${escapeHtml(detail.name)}</h2>${groupedFields([
     { title: 'Entrada', fields: detail.inputs },
-    { title: 'Resultado', fields: detail.outputs, empty: 'En curso…' },
+    { title: 'Resultado', fields: detail.outputs },
   ])}`;
 }
 
@@ -286,6 +355,9 @@ function ensurePanel(): HTMLElement | null {
 export function mountSessionPanel(): void {
   const root = ensurePanel();
   if (!root) return;
+  session.name = '';
+  session.phone = '';
+  session.status = '';
   showSessionView();
 }
 

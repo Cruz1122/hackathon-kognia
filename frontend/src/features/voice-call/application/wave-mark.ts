@@ -33,9 +33,15 @@ export function eventMarkIcon(item: HTMLElement): EventMarkIcon | null {
   return null;
 }
 
-export type WaveMark = { ratio: number; icon: EventMarkIcon };
+export type WaveMarkTone = 'default' | 'accent' | 'error';
+export type WaveMark = { ratio: number; icon: EventMarkIcon; tone?: WaveMarkTone };
 
 const waveSize = new WeakMap<HTMLCanvasElement, { width: number; height: number; dpr: number }>();
+
+function themeColor(variable: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+  return value || fallback;
+}
 
 export function measureWave(canvas: HTMLCanvasElement): { width: number; height: number; dpr: number } {
   const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
@@ -85,23 +91,26 @@ function drawEventMark(
   baseline: number,
   width: number,
   icon: EventMarkIcon,
+  tone: WaveMarkTone,
+  accent: string,
 ): void {
   const lineX = Math.min(width, Math.max(0, x));
   const ballX = lineX;
   const ballY = MARK_RADIUS;
+  const markColor = tone === 'error' ? '#d55353' : tone === 'accent' ? accent : '#414141';
   context.save();
   context.beginPath();
   context.setLineDash([2, 3]);
   context.moveTo(lineX, 0);
   context.lineTo(lineX, baseline);
-  context.strokeStyle = '#414141';
+  context.strokeStyle = markColor;
   context.lineWidth = 2;
   context.lineCap = 'butt';
   context.stroke();
   context.restore();
   context.beginPath();
   context.arc(ballX, ballY, MARK_RADIUS, 0, Math.PI * 2);
-  context.fillStyle = '#414141';
+  context.fillStyle = markColor;
   context.fill();
   context.save();
   context.translate(ballX, ballY);
@@ -124,6 +133,8 @@ export function paintCallWave(
   marks: WaveMark[],
   flat = false,
 ): void {
+  const accent = themeColor('--ui-accent', '#f7c974');
+  const accentSoft = themeColor('--ui-accent-soft', '#faeccf');
   const measured = measureWave(canvas);
   const cached = waveSize.get(canvas);
   if (!cached || cached.width !== measured.width || cached.height !== measured.height || cached.dpr !== measured.dpr) {
@@ -139,14 +150,14 @@ export function paintCallWave(
   const paintMarks = () => {
     for (const mark of marks) {
       if (mark.ratio < 0 || mark.ratio > 1) continue;
-      drawEventMark(context, mark.ratio * width, baseline, width, mark.icon);
+      drawEventMark(context, mark.ratio * width, baseline, width, mark.icon, mark.tone ?? 'default', accent);
     }
   };
   if (flat) {
     context.beginPath();
     context.moveTo(0, baseline);
     context.lineTo(head, baseline);
-    context.strokeStyle = '#f7c974';
+    context.strokeStyle = accent;
     context.lineWidth = 3;
     context.lineCap = 'butt';
     context.stroke();
@@ -206,7 +217,7 @@ export function paintCallWave(
   context.beginPath();
   context.rect(0, 0, head, height);
   context.clip();
-  context.fillStyle = '#f7c974';
+  context.fillStyle = accent;
   context.fill(shape);
   let runStart = -1;
   const paintAgentRun = (runEnd: number) => {
@@ -215,10 +226,10 @@ export function paintCallWave(
     const runWidth = Math.max(1, ((runEnd - runStart) / span) * width);
     const fade = Math.min(0.42, Math.max(0.12, 22 / runWidth));
     const voice = context.createLinearGradient(x0, 0, x0 + runWidth, 0);
-    voice.addColorStop(0, '#f7c974');
-    voice.addColorStop(fade, '#faeccf');
-    voice.addColorStop(1 - fade, '#faeccf');
-    voice.addColorStop(1, '#f7c974');
+    voice.addColorStop(0, accent);
+    voice.addColorStop(fade, accentSoft);
+    voice.addColorStop(1 - fade, accentSoft);
+    voice.addColorStop(1, accent);
     context.save();
     context.beginPath();
     context.rect(x0, 0, runWidth, height);

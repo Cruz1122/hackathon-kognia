@@ -1,58 +1,66 @@
 ---
 import AppLayout from '../layouts/AppLayout.astro';
 import ContentLoader from '../components/ui/ContentLoader.astro';
-import '../styles/dev.css';
+import EmptyState from '../components/ui/EmptyState.astro';
+import GooeyDropdown from '../components/ui/GooeyDropdown.astro';
+import '../styles/calls.css';
+
+const statusOptions = [
+  { value: 'all', label: 'Todas' },
+  { value: 'ended', label: 'Finalizadas' },
+  { value: 'failed', label: 'Fallidas' },
+];
 ---
 
 <AppLayout title="Kognia — Modo dev">
-  <section class="section-view section-view--dashboard analytics-dashboard" aria-label="Modo dev">
-    <div class="dashboard-page dev-page">
-      <ContentLoader id="devLoading" copy="Cargando trazas…" class="dashboard-state" />
-      <div id="devContent" hidden inert aria-hidden="true">
+  <section class="section-view section-view--dashboard analytics-dashboard" aria-label="Llamadas" data-dev-catalog>
+    <div class="dashboard-page calls-page">
+      <ContentLoader id="callsLoading" copy="Cargando llamadas…" class="dashboard-state" />
+      <div id="callsContent" hidden inert aria-hidden="true">
         <header class="dashboard-topline">
-          <div class="dashboard-heading">
-            <h2>Modo dev</h2>
-            <p class="dev-subtitle">Traza completa de cada llamada: transcripción, razonamiento del modelo y tools.</p>
-          </div>
-          <div class="dashboard-filters">
-            <label class="dev-search">
+          <div class="dashboard-heading"><h2>Llamadas</h2></div>
+          <div class="dashboard-filters" aria-label="Buscar y filtrar llamadas">
+            <label class="calls-search">
               <span class="sr-only">Buscar</span>
-              <i class="dev-search__icon" data-lucide="search" aria-hidden="true"></i>
-              <input id="devSearch" type="search" placeholder="Buscar por texto, modelo o llamada" autocomplete="off" />
+              <i class="calls-search__icon" data-lucide="search" aria-hidden="true"></i>
+              <input id="callsSearch" type="search" placeholder="Buscar cliente o teléfono" autocomplete="off" />
             </label>
-            <button id="devRefresh" type="button" class="dev-refresh">
-              <i data-lucide="refresh-cw" aria-hidden="true"></i>
-              <span>Actualizar</span>
-            </button>
+            <GooeyDropdown id="callsStatus" name="status" label="Estado" ariaLabel="Filtrar por estado" options={statusOptions} />
           </div>
         </header>
-
-        <div class="dashboard-state" id="devError" hidden role="alert">
-          <div>
-            <p>No pudimos cargar las trazas.</p>
-            <button id="devRetry" type="button">Reintentar</button>
+        <EmptyState id="callsError" class="dashboard-state" tone="error" icon="triangle-alert" title="No pudimos cargar las llamadas." role="alert" hidden>
+          <button id="callsRetry" type="button">Reintentar</button>
+        </EmptyState>
+        <div class="calls-board" id="callsBoard" hidden>
+          <div class="calls-table-card">
+            <div class="calls-table-scroll" id="callsTable">
+              <table class="calls-table">
+                <colgroup>
+                  <col class="calls-col-name" />
+                  <col class="calls-col-phone" />
+                  <col class="calls-col-start" />
+                  <col class="calls-col-duration" />
+                  <col class="calls-col-status" />
+                  <col class="calls-col-view" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col"><button type="button" data-sort="name">Cliente</button></th>
+                    <th scope="col"><button type="button" data-sort="phone">Teléfono</button></th>
+                    <th scope="col"><button type="button" data-sort="started">Inicio</button></th>
+                    <th scope="col"><button type="button" data-sort="duration">Duración</button></th>
+                    <th scope="col"><button type="button" data-sort="status">Estado</button></th>
+                    <th scope="col"><span class="calls-view-label">Ver</span></th>
+                  </tr>
+                </thead>
+                <tbody id="callsTableBody"></tbody>
+              </table>
+            </div>
+            <EmptyState id="callsEmpty" class="calls-empty" icon="phone-off" title="Aún no hay llamadas." hidden />
           </div>
-        </div>
-
-        <div class="dev-board" id="devBoard" hidden>
-          <aside class="dev-calls" aria-label="Llamadas con trazas">
-            <div class="dev-calls__head">
-              <span>Llamadas</span>
-              <span class="dev-calls__count" id="devCallsCount">0</span>
-            </div>
-            <div class="dev-calls__list" id="devCallsList"></div>
-            <p class="dev-empty" id="devCallsEmpty" hidden>Aún no hay trazas.</p>
-          </aside>
-
-          <section class="dev-detail" id="devDetail" aria-label="Detalle de la traza">
-            <div class="dev-detail__empty" id="devDetailEmpty">
-              <div class="dev-detail__empty-copy">
-                <i data-lucide="activity" aria-hidden="true"></i>
-                <p>Selecciona una llamada para ver su trazabilidad.</p>
-              </div>
-            </div>
-            <div class="dev-detail__body" id="devDetailBody" hidden></div>
-          </section>
+          <nav class="calls-pager" id="callsPager" aria-label="Paginación" hidden>
+            <div class="calls-pager__controls" id="callsPagerControls"></div>
+          </nav>
         </div>
       </div>
     </div>
@@ -67,18 +75,21 @@ import '../styles/dev.css';
   const apiUrl = document.body.dataset.apiUrl ?? '';
   let cleanup: (() => void) | null = null;
   let mounted = false;
-  let mountGeneration = 0;
+
+  function isDevCatalogRoute(): boolean {
+    return window.location.pathname === '/dev' || window.location.pathname === '/dev/';
+  }
 
   async function mountDev(): Promise<void> {
+    if (!isDevCatalogRoute()) return;
     if (mounted) return;
-    const generation = ++mountGeneration;
     const token = sessionStorage.getItem(accessTokenKey)?.trim();
     if (!token) {
       window.location.replace('/');
       return;
     }
     await waitForRouteSettle();
-    if (generation !== mountGeneration || !document.getElementById('devLoading')) return;
+    if (!document.getElementById('callsLoading')) return;
     if (await checkSession(apiUrl) === 'invalid') {
       redirectToLogin();
       return;
@@ -92,7 +103,6 @@ import '../styles/dev.css';
     cleanup?.();
     cleanup = null;
     mounted = false;
-    mountGeneration += 1;
   }
 
   document.addEventListener('astro:before-swap', unmountDev);

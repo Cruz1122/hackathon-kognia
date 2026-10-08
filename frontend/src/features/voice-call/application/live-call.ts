@@ -8,6 +8,7 @@ import {
 import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
+import { mountConversationScroll } from './conversation-scroll';
 
 type MonitorEvent = {
   type?: string;
@@ -67,6 +68,10 @@ export function bootLiveCall(
 
   bindDetailClicks(conversation);
   mountSessionPanel();
+  const scrollController = mountConversationScroll({
+    scroller: document.getElementById('appContent'),
+    conversation,
+  });
   patchSession({ status: 'En vivo' });
   const emptyCopy = conversationEmpty?.innerHTML ?? '';
   if (conversationEmpty) {
@@ -164,12 +169,6 @@ export function bootLiveCall(
     schedule(samples, view.getUint8(1) === CHANNEL_AGENT);
   }
 
-  function follow(row: HTMLElement): void {
-    const scroller = document.getElementById('appContent');
-    const nearEnd = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 120;
-    if (nearEnd) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
-
   function appendRow(className: string, html: string, atMs: number): HTMLElement {
     if (conversationEmpty) conversationEmpty.hidden = true;
     const row = document.createElement('div');
@@ -178,7 +177,7 @@ export function bootLiveCall(
     row.innerHTML = html;
     conversation.append(row);
     lucideRefresh();
-    follow(row);
+    scrollController.follow(row);
     window.setTimeout(() => row.classList.remove('enter'), 900);
     return row;
   }
@@ -199,7 +198,6 @@ export function bootLiveCall(
       `<span class="call-ended-label"><i data-lucide="phone-off" aria-hidden="true"></i><span>Llamada finalizada · ${formatTime(atMs / 1000)}</span></span>`,
       atMs,
     );
-    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     if (statusText) statusText.textContent = 'Conversación abierta';
     showToast('Terminó el tramo de voz. La conversación sigue abierta.', 'info');
   }
@@ -257,6 +255,7 @@ export function bootLiveCall(
       } else {
         const time = customerBubble.querySelector('.message-time')?.textContent ?? formatTime(atMs / 1000);
         customerBubble.innerHTML = `${escapeHtml(text)}<span class="message-time">${time}</span>`;
+        scrollController.follow(customerBubble);
       }
       return;
     }
@@ -264,6 +263,7 @@ export function bootLiveCall(
       const text = String(payload.text ?? '');
       if (customerBubble) {
         customerBubble.innerHTML = `${escapeHtml(text)}<span class="message-time">${formatTime(atMs / 1000)}</span>`;
+        scrollController.follow(customerBubble);
         customerBubble = null;
       } else {
         appendRow(`message-row customer${payload.channel === 'whatsapp' ? ' channel-whatsapp' : ''}`, messageHtml('customer', text, atMs), atMs);
@@ -429,5 +429,6 @@ export function bootLiveCall(
     audioSocket.close();
     monitorSocket.close();
     await context.close().catch(() => undefined);
+    scrollController.dispose();
   };
 }

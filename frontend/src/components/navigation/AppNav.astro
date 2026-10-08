@@ -17,7 +17,7 @@ const isLegacy = mode === 'legacy';
       </button>
     </>
   ) : (
-    <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="../analytics" data-route="analytics" aria-current={active === 'analytics' ? 'page' : undefined}>
+    <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="/analytics" data-route="analytics" aria-current={active === 'analytics' ? 'page' : undefined}>
       <span class="app-nav__icon" aria-hidden="true"><i data-lucide="layout-dashboard"></i></span>
       <span>Dashboard</span>
     </a>

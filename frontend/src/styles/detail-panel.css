@@ -96,6 +96,10 @@ body.detail-open .demo-switcher {
   border-top: 1px solid rgba(65, 65, 65, .12);
 }
 
+.detail-panel__signals:has(.agent-signals[data-has-observed-data="false"]) {
+  display: none;
+}
+
 .detail-client-signals {
   min-width: 0;
   margin-top: 18px;
@@ -153,7 +157,7 @@ body.detail-open .demo-switcher {
 }
 
 .detail-panel__close:focus-visible {
-  outline: 3px solid var(--ui-amber);
+  outline: 3px solid var(--ui-accent);
   outline-offset: 3px;
 }
 
@@ -260,7 +264,7 @@ body.detail-open .demo-switcher {
   min-width: 72px;
   padding: 0 14px;
   border-radius: calc(var(--detail-chip-height) / 2);
-  background: var(--ui-amber);
+  background: var(--ui-accent);
   color: var(--ui-graphite);
   font-size: 12px;
   font-weight: 800;
@@ -275,6 +279,41 @@ body.detail-open .demo-switcher {
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+
+.detail-technical-section {
+  margin-top: 10px;
+  border: 1px solid rgba(65, 65, 65, .12);
+  border-radius: min(var(--radius-min), 24%);
+  background: var(--ui-paper);
+  overflow: hidden;
+}
+
+.detail-technical-section summary {
+  padding: 13px 16px;
+  color: var(--ui-graphite);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detail-technical-section pre {
+  max-height: 28rem;
+  margin: 0;
+  overflow: auto;
+  border-top: 1px solid rgba(65, 65, 65, .1);
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--ui-accent-soft) 42%, var(--ui-paper));
+  color: var(--ui-graphite);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.detail-technical-section pre .json-key { color: color-mix(in srgb, var(--ui-accent) 82%, #2c4b78); }
+.detail-technical-section pre .json-string { color: #2f7d5b; }
+.detail-technical-section pre .json-number { color: #9a5f20; }
+.detail-technical-section pre .json-boolean { color: #7650a8; }
+.detail-technical-section pre .json-null { color: rgba(65, 65, 65, .56); }
 
 .detail-content > :first-child {
   margin-top: 0;
@@ -327,14 +366,14 @@ body.detail-open .demo-switcher {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   font-weight: 600;
-  background: var(--ui-cream);
+  background: var(--ui-accent-soft);
   border-radius: var(--radius-ui);
   padding: 1px 8px;
 }
 
 .detail-content pre {
   overflow: auto;
-  background: var(--ui-cream);
+  background: var(--ui-accent-soft);
   border-radius: var(--radius-ui);
   padding: 14px 18px;
   font-size: 13px;
@@ -352,7 +391,7 @@ body.detail-open .demo-switcher {
 .detail-content blockquote {
   margin-left: 0;
   padding-left: 14px;
-  border-left: 3px solid var(--ui-amber);
+  border-left: 3px solid var(--ui-accent);
 }
 
 .detail-content img {

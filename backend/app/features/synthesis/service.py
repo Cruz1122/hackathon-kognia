@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import wave
 from collections.abc import Iterator
 from importlib import import_module
@@ -14,6 +15,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 _lock = Lock()
 _voice = None
 _synthesis_config = None
+
+
+def _speech_text(text: str) -> str:
+    """Keep the written transcript intact while giving Piper a Spanish phonetic cue."""
+    return re.sub(r'(?i)\bwane\b', 'Güein', text)
 
 
 def _model_path() -> Path:
@@ -63,7 +69,7 @@ def stream_tts_audio(text: str) -> Iterator[bytes]:
     """Yield every signed-int16 PCM chunk synthesized by Piper."""
     voice, synthesis_config = _get_tts()
     with _lock:
-        for chunk in voice.synthesize(text, syn_config=synthesis_config):
+        for chunk in voice.synthesize(_speech_text(text), syn_config=synthesis_config):
             yield chunk.audio_int16_bytes
 
 

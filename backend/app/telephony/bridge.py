@@ -101,6 +101,10 @@ async def run_agent_turn(
         conversation_id=str(session.conversation_id) if session.conversation_id else None,
         organization_id=str(session.organization_id) if session.organization_id else None,
     )
+    # Policy-only turns do not reach the model generator.  Initialize the
+    # recorder at the transport boundary so those turns still leave a root
+    # span and appear in the technical replay.
+    recorder.start(transcript, list(session.history), [])
     agent_kwargs: dict[str, Any] = {
         "messages": list(session.history),
         "tool_context": tool_context,
@@ -109,6 +113,8 @@ async def run_agent_turn(
         agent_kwargs["trace"] = recorder
     generator = agent(transcript, **agent_kwargs)
     proposal_id = None
+    last_done: dict[str, Any] = {}
+    trace_status = 'ok'
     reservation_confirmed = False
     session.awaiting_agent_reply = True
     waiting = _with_holding(generator, session, voice)
@@ -117,6 +123,7 @@ async def run_agent_turn(
             if session.closed:
                 break
             if kind == 'done':
+                last_done = payload
                 proposal_id = payload.get('proposal_id')
             if (kind == 'tool.completed' and payload.get('tool') == 'create_booking'
                     and payload.get('ok') is True):
@@ -129,11 +136,21 @@ async def run_agent_turn(
                 customer_turn_offset_ms=customer_turn_offset_ms,
             )
     except asyncio.CancelledError:
+        trace_status = 'cancelled'
         await _cancel_playback(session)
+        raise
+    except Exception:
+        trace_status = 'error'
         raise
     finally:
         await waiting.aclose()
         await generator.aclose()
+        recorder.finish(
+            answer=''.join(answer),
+            provider=last_done.get('provider'),
+            model=last_done.get('model'),
+            status=trace_status,
+        )
         await save_trace(recorder)
     spoken = "".join(answer).strip()
     session.history.append({"role": "user", "content": transcript})

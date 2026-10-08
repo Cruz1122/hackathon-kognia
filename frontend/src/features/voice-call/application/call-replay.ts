@@ -1,18 +1,50 @@
 import {
   bindDetailClicks,
   mountSessionPanel,
+  openDetail,
   patchSession,
   patchSessionFromAgentState,
+  type TechnicalDetail,
   toolDetailFromEvent,
 } from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { eventMarkIcon, paintCallWave, resizeWave, type WaveMark } from './wave-mark';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
+import { mountConversationScroll } from './conversation-scroll';
 
 type TimelineEvent = {
-  type: string;
+  type?: string;
   offset_ms: number;
   payload?: Record<string, unknown>;
+  id?: string;
+  kind?: string;
+  name?: string;
+  span_name?: string;
+  playback_ms?: number;
+  duration_ms?: number;
+  occurred_at?: string;
+  turn_id?: string | null;
+  status?: string | null;
+  usage?: Record<string, number> | null;
+  response?: Record<string, unknown> | null;
+};
+
+type DevReplayPayload = {
+  call?: {
+    recording_offset_ms?: number;
+    conversation_id?: string;
+    caller?: string;
+    customer_name?: string;
+    status?: string;
+  };
+  summary?: Record<string, unknown>;
+  turns?: Array<Record<string, unknown>>;
+  events?: TimelineEvent[];
+  has_trace?: boolean;
+};
+
+type ReplayOptions = {
+  dev?: boolean;
 };
 
 function escapeHtml(value: string): string {
@@ -134,6 +166,7 @@ function alignCustomerMessages(buffer: AudioBuffer, originMs: number, rows: HTML
   for (const item of rows) {
     const sessionMs = Number(item.dataset.at ?? 0) * 1000;
     const audioMs = Math.max(0, sessionMs - originMs);
+    if (item.classList.contains('channel-whatsapp')) continue;
     if (!item.classList.contains('customer')) {
       earliest = Math.max(earliest, audioMs);
       continue;
@@ -152,6 +185,7 @@ export function bootCallReplay(
   callId: string,
   onReady?: () => void,
   onError?: (reason: string) => void,
+  options: ReplayOptions = {},
 ): () => void {
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector<HTMLElement>('#conversationEmpty');
@@ -169,13 +203,10 @@ export function bootCallReplay(
   }
   bindDetailClicks(conversation);
   mountSessionPanel();
-    const scroller = document.getElementById('appContent');
-    let scrollRest = 0;
-    scroller?.addEventListener('scroll', () => {
-      scroller.classList.add('is-scrolling');
-      window.clearTimeout(scrollRest);
-      scrollRest = window.setTimeout(() => scroller.classList.remove('is-scrolling'), 780);
-    }, { passive: true });
+  const scrollController = mountConversationScroll({
+    scroller: document.getElementById('appContent'),
+    conversation,
+  });
   const emptyCopy = conversationEmpty?.innerHTML ?? '';
   if (conversationEmpty) conversationEmpty.innerHTML = emptyCopy;
   if (status) status.hidden = false;
@@ -193,6 +224,30 @@ export function bootCallReplay(
   const items: HTMLElement[] = [];
   let signalEvents: TimelineEvent[] = [];
   let finalSignalsFallback: Record<string, unknown> | null = null;
+  const devMode = options.dev === true;
+  const devDetails = new Map<string, TechnicalDetail>();
+  let devProgressMarkers: Array<{ playbackMs: number; icon: WaveMark['icon']; tone?: WaveMark['tone'] }> = [];
+  let devDetailSequence = 0;
+
+  const registerDevDetail = (detail: Omit<TechnicalDetail, 'kind'>): string => {
+    const id = `dev-detail-${devDetailSequence += 1}`;
+    devDetails.set(id, { kind: 'technical', ...detail });
+    return id;
+  };
+
+  const devReaction = (id: string, icon: string, label: string, tone: 'error' | undefined = undefined): string => (
+    `<button class="dev-bubble-reaction${tone ? ` is-${tone}` : ''}" type="button" data-dev-reaction="${escapeHtml(id)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"><i data-lucide="${escapeHtml(icon)}" aria-hidden="true"></i></button>`
+  );
+
+  const onDevReaction = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest<HTMLElement>('[data-dev-reaction]');
+    if (!button) return;
+    const detail = devDetails.get(button.dataset.devReaction ?? '');
+    if (detail) openDetail(detail, button.dataset.devReaction);
+  };
+  conversation.addEventListener('click', onDevReaction);
 
   const notifyReady = (): void => {
     if (disposed || readyNotified || errorNotified) return;
@@ -245,6 +300,10 @@ export function bootCallReplay(
         if (ratio < 0 || ratio > 1) continue;
         marks.push({ ratio, icon });
       }
+      for (const marker of devProgressMarkers) {
+        const ratio = marker.playbackMs / (duration * 1000);
+        if (ratio >= 0 && ratio <= 1) marks.push({ ratio, icon: marker.icon, tone: marker.tone });
+      }
     }
     paintCallWave(context, canvas, customerPeaks, agentPeaks, progress, marks);
   }
@@ -265,9 +324,7 @@ export function bootCallReplay(
         }
         visible = true;
         if (crossed) {
-          const scroller = document.getElementById('appContent');
-          const follow = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 120;
-          if (follow) window.setTimeout(() => item.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 180);
+          window.setTimeout(() => scrollController.follow(item), 180);
         }
         if (item.dataset.doneAt && timelineMs >= Number(item.dataset.doneAt)) {
           const tool = item.querySelector<HTMLElement>('.tool-call');
@@ -320,6 +377,7 @@ export function bootCallReplay(
     audio.currentTime = Math.max(0, Math.min(duration, seconds));
     previousMs = Math.min(previousMs, audio.currentTime * 1000 + offsetMs);
     paint(audio.currentTime * 1000 + offsetMs, false);
+    scrollController.follow();
   }
 
   function setPlaying(next: boolean): void {
@@ -347,7 +405,350 @@ export function bootCallReplay(
     items.push(row);
   }
 
+  function renderDevMetrics(payload: DevReplayPayload): void {
+    const root = document.getElementById('devReplayMetrics');
+    if (!(root instanceof HTMLElement)) return;
+    const summaryRoot = document.getElementById('devReplaySummary');
+    const summary = payload.summary ?? {};
+    const formatCount = (value: unknown): string => {
+      const count = typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+      return new Intl.NumberFormat('es').format(count);
+    };
+    const formatCost = (value: unknown): string => {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '';
+      return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+    };
+    const formatDuration = (value: unknown): string => {
+      const ms = typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+      return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
+    };
+    const firstTurn = payload.turns?.[0] ?? {};
+    const model = [firstTurn.provider, firstTurn.model]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join(' / ');
+    const facts: Array<[string, string]> = [];
+    const addCount = (label: string, value: unknown): void => {
+      if (typeof value === 'number' && Number.isFinite(value) && value > 0) facts.push([label, formatCount(value)]);
+    };
+    addCount('Tokens', summary.total_tokens);
+    addCount('Entrada', summary.prompt_tokens);
+    addCount('Salida', summary.completion_tokens);
+    addCount('LLM', summary.llm_calls);
+    addCount('Tools', summary.tools ?? (payload.events ?? []).filter((event) => event.kind === 'tool' || event.name === 'tool.completed').length);
+    const formattedCost = formatCost(summary.cost_usd);
+    if (formattedCost) facts.push(['Costo', formattedCost]);
+    if (typeof summary.duration_ms === 'number' && Number.isFinite(summary.duration_ms) && summary.duration_ms > 0) {
+      facts.push(['Cómputo', formatDuration(summary.duration_ms)]);
+    }
+    if (model) facts.push(['Modelo', model]);
+    root.replaceChildren();
+    facts.forEach(([label, value]) => {
+      const item = document.createElement('div');
+      item.className = 'dev-replay-metric';
+      const valueNode = document.createElement('strong');
+      valueNode.textContent = value;
+      const labelNode = document.createElement('span');
+      labelNode.textContent = label;
+      item.append(valueNode, labelNode);
+      root.append(item);
+    });
+    root.hidden = facts.length === 0;
+    if (summaryRoot) {
+      summaryRoot.hidden = facts.length === 0;
+      const hint = summaryRoot.querySelector<HTMLElement>('.dev-replay-summary__hint');
+      if (hint) hint.textContent = 'Los eventos siguen el playhead';
+    }
+  }
+
+  function renderDevTimeline(payload: DevReplayPayload, originMs: number): void {
+    const events = payload.events ?? [];
+    const turns = payload.turns ?? [];
+    signalEvents = events.filter((event) => event.name === 'agent.signals' || event.type === 'agent.signals');
+    visibleSignalCount = -1;
+    devProgressMarkers = [];
+    let fallbackTurnIndex = 0;
+    let whatsappSeparatorAdded = false;
+    const clock = (playbackMs: number): string => formatTime(Math.max(0, playbackMs) / 1000);
+    const record = (value: unknown): Record<string, unknown> => (
+      value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+    );
+    const turnsById = new Map(turns.map((turn) => [String(turn.id ?? ''), turn]).filter(([id]) => id));
+    const turnForTranscript = (event: TimelineEvent): Record<string, unknown> | undefined => {
+      const explicit = event.turn_id ? turnsById.get(String(event.turn_id)) : undefined;
+      if (explicit) return explicit;
+      const occurredAt = Date.parse(String(event.occurred_at ?? ''));
+      if (Number.isFinite(occurredAt)) {
+        const prior = turns
+          .map((turn) => ({ turn, startedAt: Date.parse(String(turn.started_at ?? '')) }))
+          .filter((item) => Number.isFinite(item.startedAt) && item.startedAt <= occurredAt)
+          .sort((left, right) => left.startedAt - right.startedAt);
+        return prior.at(-1)?.turn;
+      }
+      // Last-resort support for very old traces without timestamps. This path
+      // is intentionally unreachable for current replay events.
+      const fallback = turns[fallbackTurnIndex];
+      fallbackTurnIndex += 1;
+      return fallback;
+    };
+    const turnResponse = (turn: Record<string, unknown> | undefined, transcriptText: string): string => {
+      const answer = turn?.answer;
+      if (typeof answer === 'string' && answer.trim()) return answer;
+      const data = record(turn?.data);
+      const spans = Array.isArray(data.spans) ? data.spans : [];
+      for (const span of spans.slice().reverse()) {
+        const spanRecord = record(span);
+        if (spanRecord.name !== 'llm.request') continue;
+        const attributes = record(spanRecord.attributes);
+        const text = attributes.text;
+        if (typeof text === 'string' && text.trim()) return text;
+      }
+      return transcriptText;
+    };
+    const responseFromAttributes = (attributes: Record<string, unknown>, fallbackText = ''): Record<string, unknown> => {
+      const explicit = record(attributes.response);
+      if (Object.keys(explicit).length) return explicit;
+      const response: Record<string, unknown> = {};
+      if (typeof attributes.text === 'string' && attributes.text.trim()) response.text = attributes.text;
+      if (Array.isArray(attributes.tool_calls) && attributes.tool_calls.length) response.tool_calls = attributes.tool_calls;
+      const usage = record(attributes.usage);
+      if (Object.keys(usage).length) response.usage = usage;
+      ['prompt_tokens', 'completion_tokens', 'total_tokens'].forEach((key) => {
+        if (typeof attributes[key] === 'number') {
+          const current = record(response.usage);
+          response.usage = { ...current, [key]: attributes[key] };
+        }
+      });
+      if (!Object.keys(response).length && fallbackText.trim()) response.text = fallbackText;
+      return response;
+    };
+    const withResponseFallback = (response: Record<string, unknown>, fallbackText: string): Record<string, unknown> => {
+      const text = response.text;
+      const hasToolCalls = Array.isArray(response.tool_calls) && response.tool_calls.length > 0;
+      if (fallbackText.trim() && (!((typeof text === 'string' && text.trim()) || hasToolCalls))) {
+        return { ...response, text: fallbackText };
+      }
+      return response;
+    };
+    const turnResponseJson = (turn: Record<string, unknown> | undefined, fallbackText: string): Record<string, unknown> => {
+      const data = record(turn?.data);
+      const spans = Array.isArray(data.spans) ? data.spans : [];
+      for (const span of spans.slice().reverse()) {
+        const spanRecord = record(span);
+        if (spanRecord.name !== 'llm.request') continue;
+        const response = responseFromAttributes(record(spanRecord.attributes));
+        if (Object.keys(response).length) return withResponseFallback(response, fallbackText);
+      }
+      const response = record(data.response);
+      return Object.keys(response).length ? response : { text: fallbackText };
+    };
+    const eventResponse = (event: TimelineEvent, fallbackText: string): Record<string, unknown> => {
+      const direct = record(event.response);
+      if (Object.keys(direct).length) return withResponseFallback(direct, fallbackText);
+      return responseFromAttributes(record(event.payload?.attributes), fallbackText);
+    };
+    const technicalKind = (event: TimelineEvent): 'llm' | 'tool' | 'rag' | 'error' | null => {
+      if (event.kind === 'llm' || event.name === 'llm.request') return 'llm';
+      if (event.kind === 'tool' || event.name === 'tool.completed') return 'tool';
+      if (event.kind === 'rag' || event.name === 'rag.completed') return 'rag';
+      if (event.kind === 'error' || event.name === 'agent.error' || event.name === 'provider.error') return 'error';
+      return null;
+    };
+    const failedModelAttempts = new Set(
+      events
+        .filter((event) => technicalKind(event) === 'error')
+        .map((event) => ({ event, attempt: record(event.payload?.attributes).attempt }))
+        .filter(({ attempt }) => typeof attempt === 'number' || typeof attempt === 'string')
+        .map(({ event, attempt }) => `${event.turn_id ?? ''}:${String(attempt)}`),
+    );
+    const agentTranscriptEvents = events.filter((event) => {
+      const isTranscript = event.kind === 'transcript' || (event.type ?? '').startsWith('transcript.');
+      return isTranscript && String(event.payload?.speaker ?? '') === 'agent';
+    });
+    const transcriptTargets = agentTranscriptEvents.length
+      ? agentTranscriptEvents
+      : events.filter((event) => event.kind === 'transcript' || (event.type ?? '').startsWith('transcript.'));
+    const technicalByTranscript = new Map<TimelineEvent, TimelineEvent[]>();
+    events.forEach((event) => {
+      const kind = technicalKind(event);
+      if (!kind) return;
+      const markerIcon = kind === 'rag' ? 'book-search' : kind === 'error' ? 'triangle-alert' : 'bot';
+      const attempt = record(event.payload?.attributes).attempt;
+      if (!(kind === 'llm' && failedModelAttempts.has(`${event.turn_id ?? ''}:${String(attempt)}`))) {
+        devProgressMarkers.push({
+          playbackMs: Math.max(0, Number(event.playback_ms ?? Math.max(0, event.offset_ms - originMs))),
+          icon: markerIcon,
+          tone: kind === 'error' ? 'error' : 'accent',
+        });
+      }
+      const target = transcriptTargets.find((candidate) => Number(candidate.playback_ms ?? candidate.offset_ms) >= Number(event.playback_ms ?? event.offset_ms))
+        ?? transcriptTargets.at(-1);
+      if (!target) return;
+      const related = technicalByTranscript.get(target) ?? [];
+      related.push(event);
+      technicalByTranscript.set(target, related);
+    });
+    events.forEach((event) => {
+      const playbackMs = Math.max(0, Number(event.playback_ms ?? Math.max(0, event.offset_ms - originMs)));
+      const atMs = originMs + playbackMs;
+      const eventPayload = event.payload ?? {};
+      const channel = eventPayload.channel === 'whatsapp' ? ' channel-whatsapp' : '';
+      const speaker = String(eventPayload.speaker ?? '');
+      const isTranscript = event.kind === 'transcript' || (event.type ?? '').startsWith('transcript.');
+      if (isTranscript) {
+        const text = String(eventPayload.text ?? '');
+        const customer = speaker !== 'agent';
+        const turn = !customer ? turnForTranscript(event) : undefined;
+        const turnAnswer = !customer ? turnResponse(turn, text) : text;
+        const displayText = text || (!customer ? turnAnswer : '');
+        if (!displayText) return;
+        const turnUsage = record(turn?.usage);
+        const rawTurnCost = turn?.cost_usd;
+        const turnTechnicalFacts: string[] = [];
+        if (typeof turn?.provider === 'string' && turn.provider) turnTechnicalFacts.push(turn.provider);
+        if (typeof turn?.model === 'string' && turn.model) turnTechnicalFacts.push(turn.model);
+        if (turnUsage && typeof turnUsage.total_tokens === 'number' && turnUsage.total_tokens > 0) {
+          turnTechnicalFacts.push(`${turnUsage.total_tokens} tokens`);
+        }
+        if (typeof rawTurnCost === 'number' && Number.isFinite(rawTurnCost) && rawTurnCost > 0) {
+          turnTechnicalFacts.push(rawTurnCost < 0.01 ? `$${rawTurnCost.toFixed(4)}` : `$${rawTurnCost.toFixed(2)}`);
+        }
+        if (typeof turn?.duration_ms === 'number' && turn.duration_ms > 0) turnTechnicalFacts.push(`${turn.duration_ms} ms`);
+        const turnReactions: string[] = [];
+        const rawTurnData = record(turn?.data);
+        const storedAnswer = rawTurnData.answer;
+        const turnData = turnAnswer && (typeof storedAnswer !== 'string' || !storedAnswer.trim())
+          ? { ...rawTurnData, answer: turnAnswer }
+          : rawTurnData;
+        const responseJson = !customer ? turnResponseJson(turn, turnAnswer || displayText) : {};
+        const transcriptTechnicalEvents = technicalByTranscript.get(event) ?? [];
+        const hasTechnicalData = Boolean(turn || transcriptTechnicalEvents.length);
+        const responseSections = [
+          ...(turnTechnicalFacts.length ? [{ title: 'Resumen', value: turnTechnicalFacts.join(' · ') }] : []),
+          ...(Object.keys(responseJson).length ? [{ title: 'Respuesta JSON', value: responseJson }] : []),
+          ...(Object.keys(turnData).length ? [{ title: 'Traza del turno', value: turnData }] : []),
+        ];
+        const responseDetailId = !customer && hasTechnicalData
+          ? registerDevDetail({
+              title: 'Respuesta del agente',
+              sections: responseSections,
+            })
+          : '';
+        const relatedEvents = [
+          ...(turn ? events.filter((candidate) => candidate.turn_id === turn.id && technicalKind(candidate)) : []),
+          ...transcriptTechnicalEvents,
+        ];
+        const uniqueRelated = Array.from(new Map(relatedEvents.map((related, index) => [related.id ?? `${related.name ?? 'event'}-${index}-${related.offset_ms}`, related])).values());
+        const relatedGroups: TimelineEvent[][] = [];
+        uniqueRelated.forEach((related) => {
+          const kind = technicalKind(related);
+          if (kind !== 'error') {
+            relatedGroups.push([related]);
+            return;
+          }
+          const attempt = record(related.payload?.attributes).attempt;
+          const matchingGroup = typeof attempt === 'number' || typeof attempt === 'string'
+            ? relatedGroups.find((group) => group.some((candidate) => {
+                if (technicalKind(candidate) !== 'llm') return false;
+                const candidateAttempt = record(candidate.payload?.attributes).attempt;
+                return String(candidateAttempt ?? '') === String(attempt);
+              }))
+            : undefined;
+          if (matchingGroup) matchingGroup.push(related);
+          else relatedGroups.push([related]);
+        });
+        let hasLlmReaction = false;
+        relatedGroups.forEach((group) => {
+          const related = group[0];
+          const kind = technicalKind(related);
+          if (!kind) return;
+          const modelEvent = group.find((candidate) => technicalKind(candidate) === 'llm');
+          const errorEvent = group.find((candidate) => technicalKind(candidate) === 'error');
+          const failedModel = Boolean(modelEvent && errorEvent);
+          if (modelEvent) hasLlmReaction = true;
+          const detailKind = modelEvent ? 'llm' : kind;
+          const detailSections = [
+            ...(modelEvent?.usage ? [{ title: 'Uso', value: modelEvent.usage }] : []),
+            ...(modelEvent?.status ? [{ title: 'Estado', value: modelEvent.status }] : []),
+            ...(modelEvent?.duration_ms ? [{ title: 'Duración', value: `${modelEvent.duration_ms} ms` }] : []),
+            ...(detailKind === 'llm' ? [{ title: 'Respuesta JSON', value: eventResponse(modelEvent ?? related, failedModel ? '' : turnAnswer || displayText) }] : []),
+            ...(detailKind === 'llm' && Object.keys(turnData).length ? [{ title: 'Traza del turno', value: turnData }] : []),
+            ...(errorEvent ? [{ title: 'Error', value: errorEvent.payload ?? {} }] : []),
+            { title: 'Payload', value: modelEvent?.payload ?? related.payload ?? {} },
+          ];
+          const relatedId = registerDevDetail({
+            title: failedModel ? 'Modelo · error' : detailKind === 'tool' ? `Tool ${related.name ?? String(related.payload?.tool ?? '')}`.trim() : detailKind === 'rag' ? 'RAG' : detailKind === 'error' ? 'Error del provider' : 'Ejecución del modelo',
+            sections: detailSections,
+          });
+          const isError = failedModel || detailKind === 'error';
+          turnReactions.push(devReaction(
+            relatedId,
+            detailKind === 'tool' ? 'wrench' : detailKind === 'rag' ? 'library' : isError ? 'triangle-alert' : 'cpu',
+            failedModel ? 'Abrir llamada al modelo y error' : detailKind === 'tool' ? 'Abrir tool' : detailKind === 'rag' ? 'Abrir RAG' : isError ? 'Abrir error' : 'Abrir modelo',
+            isError ? 'error' : undefined,
+          ));
+        });
+        if (!customer && responseDetailId && !hasLlmReaction) {
+          turnReactions.unshift(devReaction(responseDetailId, 'cpu', 'Abrir ejecución del modelo'));
+        }
+        const technical = !customer && turnTechnicalFacts.length
+          ? `<div class="dev-replay-message-tech">${escapeHtml(turnTechnicalFacts.join(' · '))}</div>`
+          : '';
+        const reactions = turnReactions.length
+          ? `<span class="dev-bubble-reactions">${turnReactions.map((reaction, reactionIndex) => `${reactionIndex ? '<span class="dev-reaction-arrow" aria-hidden="true"><i data-lucide="arrow-right"></i></span>' : ''}${reaction}`).join('')}</span>`
+          : '';
+        addItem(
+          atMs,
+          `message-row ${customer ? 'customer' : 'agent'}${channel}`,
+          `<div class="message-wrap"><div class="message-meta">${customer ? '<span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i>' : '<i data-lucide="headset" aria-hidden="true"></i><span>Wane</span>'}</div><div class="message complete">${escapeHtml(displayText)}<span class="message-time">${clock(playbackMs)}</span>${reactions}</div>${technical}</div>`,
+        );
+        return;
+      }
+      if (technicalKind(event)) return;
+      if (event.kind === 'whatsapp') {
+        const customer = String(eventPayload.role ?? '') !== 'assistant';
+        const text = String(eventPayload.content ?? '');
+        if (!text) return;
+        if (!whatsappSeparatorAdded) {
+          whatsappSeparatorAdded = true;
+          addItem(atMs, 'system-event dev-replay-whatsapp-divider', '<span class="call-ended-label"><i data-lucide="message-circle" aria-hidden="true"></i><span>Continuación por WhatsApp</span></span>');
+        }
+        let reactions = '';
+        if (!customer) {
+          const detailId = registerDevDetail({
+            title: 'Respuesta por WhatsApp',
+            sections: [
+              { title: 'Respuesta completa', value: text },
+              { title: 'Payload', value: eventPayload },
+            ],
+          });
+          reactions = `<span class="dev-bubble-reactions">${devReaction(detailId, 'cpu', 'Abrir respuesta de WhatsApp')}</span>`;
+        }
+        addItem(
+          atMs,
+          `message-row ${customer ? 'customer' : 'agent'} channel-whatsapp`,
+          `<div class="message-wrap"><div class="message-meta">${customer ? '<span>Cliente · WhatsApp</span><i data-lucide="message-circle" aria-hidden="true"></i>' : '<i data-lucide="message-circle" aria-hidden="true"></i><span>Wane · WhatsApp</span>'}</div><div class="message complete">${escapeHtml(text)}<span class="message-time">${escapeHtml(new Date(String(event.occurred_at ?? '')).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }))}</span>${reactions}</div></div>`,
+        );
+        return;
+      }
+      if (event.kind === 'system') {
+        if (!whatsappSeparatorAdded) {
+          whatsappSeparatorAdded = true;
+          addItem(atMs, 'system-event dev-replay-whatsapp-divider', '<span class="call-ended-label"><i data-lucide="message-circle" aria-hidden="true"></i><span>Continuación por WhatsApp</span></span>');
+        }
+        addItem(atMs, 'system-event', `<span class="call-ended-label"><i data-lucide="message-circle" aria-hidden="true"></i><span>${escapeHtml(String(eventPayload.content ?? 'Continuación de conversación'))}</span></span>`);
+        return;
+      }
+      if (technicalKind(event)) return;
+      if (event.name === 'lifecycle' || event.type === 'lifecycle') {
+        const state = String(eventPayload.state ?? '').toLowerCase();
+        addItem(atMs, 'system-event', `<span class="call-ended-label"><i data-lucide="${state === 'ended' ? 'phone-off' : 'phone'}" aria-hidden="true"></i><span>${state === 'ended' ? 'Llamada finalizada' : 'Llamada conectada'} · ${clock(playbackMs)}</span></span>`);
+      }
+    });
+    lucideRefresh();
+  }
+
   function renderTimeline(events: TimelineEvent[], originMs: number): void {
+    if (devMode) return;
     signalEvents = events.filter((event) => event.type === 'agent.signals');
     visibleSignalCount = -1;
     const tools = new Map<string, { start: number; payload: Record<string, unknown> }>();
@@ -462,17 +863,17 @@ export function bootCallReplay(
     const headers = { Authorization: `Bearer ${token}` };
     let loadStage = 'los datos de la llamada';
     const [callResponse, timelineResponse, recordingResponse] = await Promise.all([
-      fetch(`${apiUrl}/calls/${callId}`, { headers }),
-      fetch(`${apiUrl}/calls/${callId}/timeline`, { headers }),
+      fetch(devMode ? `${apiUrl}/dev/calls/${callId}/replay` : `${apiUrl}/calls/${callId}`, { headers }),
+      devMode ? Promise.resolve(null) : fetch(`${apiUrl}/calls/${callId}/timeline`, { headers }),
       fetch(`${apiUrl}/calls/${callId}/recording`, { headers }),
     ]);
     if (disposed) return;
-    if (!callResponse.ok || !timelineResponse.ok || !recordingResponse.ok) {
-      const failed = callResponse.ok
-        ? timelineResponse.ok ? recordingResponse : timelineResponse
-        : callResponse;
+    if (!callResponse.ok || (timelineResponse && !timelineResponse.ok) || !recordingResponse.ok) {
+      const failed = !callResponse.ok
+        ? callResponse
+        : timelineResponse && !timelineResponse.ok ? timelineResponse : recordingResponse;
       const label = failed === callResponse
-        ? 'La llamada solicitada'
+        ? devMode ? 'La repetición técnica solicitada' : 'La llamada solicitada'
         : failed === timelineResponse ? 'La línea de tiempo de la llamada' : 'La grabación de la llamada';
       const reason = failed.status === 404
         ? `${label} no existe o ya no está disponible.`
@@ -485,7 +886,8 @@ export function bootCallReplay(
       return;
     }
     loadStage = 'los datos de la llamada';
-    const call = await callResponse.json() as {
+    const devPayload = devMode ? await callResponse.json() as DevReplayPayload : null;
+    const call = (devMode ? devPayload?.call ?? {} : await callResponse.json()) as {
       recording_offset_ms?: number;
       conversation_id?: string;
       caller?: string;
@@ -495,11 +897,11 @@ export function bootCallReplay(
     patchSession({
       name: call.customer_name ?? '',
       phone: call.caller ?? '',
-      status: call.status === 'active' ? 'En vivo' : 'Llamada finalizada',
+      status: devMode ? '' : call.status === 'active' ? 'En vivo' : 'Llamada finalizada',
     });
     loadStage = 'la línea de tiempo de la llamada';
-    const timeline = await timelineResponse.json() as { events: TimelineEvent[] };
-    const events = timeline.events ?? [];
+    const timeline = timelineResponse ? await timelineResponse.json() as { events: TimelineEvent[] } : null;
+    const events = devPayload?.events ?? timeline?.events ?? [];
     if (call.conversation_id) {
       const stateResponse = await fetch(`${apiUrl}/conversations/${call.conversation_id}/agent-state`, { headers });
       if (stateResponse.ok) {
@@ -512,7 +914,12 @@ export function bootCallReplay(
     }
     const active = events.find((event) => event.type === 'lifecycle' && event.payload?.state === 'ACTIVE');
     offsetMs = call.recording_offset_ms || active?.offset_ms || 0;
-    renderTimeline(events, offsetMs);
+    if (devMode) {
+      renderDevMetrics(devPayload ?? {});
+      renderDevTimeline(devPayload ?? {}, offsetMs);
+    } else {
+      renderTimeline(events, offsetMs);
+    }
     loadStage = 'la grabación de la llamada';
     const blob = await recordingResponse.blob();
     if (disposed) return;
@@ -581,5 +988,8 @@ export function bootCallReplay(
     audio.pause();
     if (audio.src) URL.revokeObjectURL(audio.src);
     resizeObserver.disconnect();
+    scrollController.dispose();
+    conversation.removeEventListener('click', onDevReaction);
+    devDetails.clear();
   };
 }

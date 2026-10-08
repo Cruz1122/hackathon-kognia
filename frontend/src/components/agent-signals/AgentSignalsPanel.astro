@@ -33,6 +33,7 @@ const {
 
 const projector = new AgentSignalsProjector();
 const initial = projector.project(initialData);
+const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
 ---
 
 <section
@@ -43,6 +44,7 @@ const initial = projector.project(initialData);
   data-demo={JSON.stringify(demoFrames)}
   data-auto-demo={String(autoDemo)}
   data-demo-interval={String(demoIntervalMs)}
+  data-has-observed-data={String(hasInitialData)}
   data-categories-target={categoriesTarget}
   aria-label="Indicadores del agente"
 >
@@ -56,7 +58,7 @@ const initial = projector.project(initialData);
           <CompactSignalScale snapshot={initial.scales.hallucination} />
         </div>
       </section>
-      <dl class="agent-signals__categories detail-fields" data-agent-signal-categories>
+      <dl class="agent-signals__categories detail-fields" data-agent-signal-categories hidden>
           <CompactCategoricalIndicator snapshot={initial.categories.intent} />
           <CompactCategoricalIndicator snapshot={initial.categories.human} />
           <CompactCategoricalIndicator snapshot={initial.categories.schedule} />
@@ -72,7 +74,7 @@ const initial = projector.project(initialData);
       </div>
 
       {categories && (
-        <div class="agent-signals__categories">
+        <div class="agent-signals__categories" data-agent-signal-categories hidden>
           <CategoricalIndicator snapshot={initial.categories.intent} />
           <CategoricalIndicator snapshot={initial.categories.human} />
           <CategoricalIndicator snapshot={initial.categories.schedule} />
@@ -97,7 +99,7 @@ const initial = projector.project(initialData);
     createIcons,
   } from 'lucide';
   import { AgentSignalsProjector, snapScale } from '../../lib/agent-signals/model';
-  import type { AgentSignalsEnvelope, AgentSignalsSnapshot, CategoryKey, ScaleKey } from '../../lib/agent-signals/types';
+  import type { AgentSignalsEnvelope, AgentSignalsSnapshot, CategoryKey, CategorySnapshot, ScaleKey } from '../../lib/agent-signals/types';
 
   interface MascotElement extends HTMLElement {
     setEmotion?: (emotion: string) => void;
@@ -126,6 +128,27 @@ const initial = projector.project(initialData);
     UserRoundX,
     X,
   };
+
+  const DEV_GRADIENTS: Record<string, string> = {
+    '#faeccf': '#dcebff',
+    '#fff0bf': '#eaf3ff',
+    '#fadd8d': '#bed8ff',
+    '#f7c974': '#6ea8fe',
+    '#d8a745': '#3f7ccc',
+    '#ffe1a7': '#e4efff',
+    '#ffc978': '#b8d5ff',
+    '#f0a84c': '#6ea8fe',
+    '#d77735': '#3f7ccc',
+    '#edf5ad': '#e5f0ff',
+    '#d3e982': '#b7d4ff',
+    '#a8d864': '#8fb8f4',
+    '#78b54d': '#6f96cf',
+  };
+
+  function paletteGradient(gradient: readonly string[]): string[] {
+    if (document.documentElement.dataset.uiMode !== 'dev') return [...gradient];
+    return gradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color);
+  }
 
   function parse<T>(value: string | undefined, fallback: T): T {
     if (!value) return fallback;
@@ -197,6 +220,7 @@ const initial = projector.project(initialData);
       let gazeEnabled = true;
       let demoTimer: number | undefined;
       let demoIndex = 0;
+      const categorySnapshots = new Map<CategoryKey, CategorySnapshot>();
 
       const schedule = (callback: () => void, delay: number, group?: Set<number>): number => {
         const timer = window.setTimeout(() => {
@@ -282,6 +306,7 @@ const initial = projector.project(initialData);
       };
 
       const updateCategory = (key: CategoryKey, snapshot: AgentSignalsSnapshot['categories'][CategoryKey]): void => {
+        categorySnapshots.set(key, snapshot);
         const card = categoryScope.querySelector<HTMLElement>(`[data-category="${key}"]`);
         if (!card || card.dataset.value === snapshot.value) return;
         card.dataset.value = snapshot.value;
@@ -297,7 +322,8 @@ const initial = projector.project(initialData);
         categoryTimers.set(key, pending);
 
         const commit = (): void => {
-          stops.forEach((stop, index) => stop?.setAttribute('stop-color', snapshot.gradient[index]));
+          const gradient = paletteGradient(snapshot.gradient);
+          stops.forEach((stop, index) => stop?.setAttribute('stop-color', gradient[index]));
           if (label) label.textContent = snapshot.label;
           if (icon) icon.innerHTML = `<i data-lucide="${snapshot.icon}"></i>`;
           card.setAttribute('aria-label', `${snapshot.title}: ${snapshot.label}`);
@@ -318,8 +344,30 @@ const initial = projector.project(initialData);
         }, 140, pending);
       };
 
+      const reconcileCategoryPalette = (): void => {
+        categorySnapshots.forEach((snapshot, key) => {
+          const card = categoryScope.querySelector<HTMLElement>(`[data-category="${key}"]`);
+          if (!card) return;
+          const gradient = paletteGradient(snapshot.gradient);
+          [0, 1, 2, 3].forEach((index) => {
+            card.querySelector<SVGStopElement>(`[data-category-stop="${index}"]`)?.setAttribute('stop-color', gradient[index]);
+          });
+        });
+      };
+      const paletteObserver = new MutationObserver((mutations) => {
+        if (mutations.some((mutation) => mutation.attributeName === 'data-ui-mode')) reconcileCategoryPalette();
+      });
+      paletteObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-ui-mode'] });
+
       const setSignals = (data: AgentSignalsEnvelope): void => {
+        root.dataset.hasObservedData = 'true';
         const snapshot = projector.project(data);
+        const categoriesReady = [
+          data.signals.intent?.value,
+          data.signals.human?.value,
+          data.signals.schedule_flexibility?.value,
+        ].some((value) => typeof value === 'string' && value !== 'unknown');
+        if (categoryBlock) categoryBlock.hidden = !categoriesReady;
         (Object.keys(snapshot.scales) as ScaleKey[]).forEach((key) => updateScale(key, snapshot.scales[key]));
         (Object.keys(snapshot.categories) as CategoryKey[]).forEach((key) => updateCategory(key, snapshot.categories[key]));
         root.dispatchEvent(new CustomEvent('agent-signals:rendered', { detail: snapshot }));
@@ -357,6 +405,7 @@ const initial = projector.project(initialData);
         timers.forEach((timer) => window.clearTimeout(timer));
         timers.clear();
         categoryTimers.clear();
+        paletteObserver.disconnect();
         root.removeEventListener('agent-signals:update', onUpdate);
         reducedMotion.removeEventListener('change', onMotionChange);
         document.removeEventListener('astro:before-swap', cleanup);
@@ -377,7 +426,8 @@ const initial = projector.project(initialData);
       renderLucide(root);
       reducedMotion.addEventListener('change', onMotionChange);
       startGaze();
-      if (initial) setSignals(initial);
+      if (initial && root.dataset.hasObservedData === 'true') setSignals(initial);
+      reconcileCategoryPalette();
       if (root.dataset.autoDemo === 'true') startDemo();
     });
   }
@@ -389,8 +439,8 @@ const initial = projector.project(initialData);
 <style>
   .agent-signals {
     --ui-graphite: #414141;
-    --ui-amber: #f7c974;
-    --ui-cream: #faeccf;
+    --ui-accent: #f7c974;
+    --ui-accent-soft: #faeccf;
     --ui-paper: #f8f8f8;
     --radius-max: 32px;
     --radius-ui: min(var(--radius-max), 50%);
@@ -401,6 +451,10 @@ const initial = projector.project(initialData);
     gap: 18px;
     align-items: start;
     font-family: "Urbanist", sans-serif;
+  }
+
+  .agent-signals[data-has-observed-data="false"] {
+    display: none;
   }
 
   .agent-signals__scales {

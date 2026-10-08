@@ -11,8 +11,9 @@ import '../styles/detail-panel.css';
 import '../styles/dashboard.css';
 import '../styles/loading-reveal.css';
 import '../styles/empty-state.css';
+import '../styles/phone.css';
 ---
-<html lang="es" transition:animate="none">
+<html lang="es" data-ui-mode="normal" transition:animate="none">
   <head>
 
   <meta charset="utf-8" />
@@ -30,6 +31,7 @@ import '../styles/empty-state.css';
       --ui-amber: #f7c974;
       --ui-cream: #faeccf;
       --ui-paper: #f8f8f8;
+      --ui-brand-face-size: 64px;
       --ui-control: var(--ui-cream);
       --rail-share: min(17.5%, 21rem);
       --rail: var(--rail-share);
@@ -268,7 +270,7 @@ import '../styles/empty-state.css';
     }
 
     .auth-panel.is-app .login-face-wrap {
-      width: 48px;
+      width: var(--ui-brand-face-size);
       /* Keep width (not flex-basis) as the animated main size so the face
          shrinks together with the label during the login wipe. */
       flex: 0 0 auto;
@@ -521,7 +523,7 @@ import '../styles/empty-state.css';
       scrollbar-width: thin;
       scrollbar-color: transparent transparent;
       width: 100%;
-      padding: 0 clamp(16px, 3vw, 40px) 84px;
+      padding: 0 clamp(16px, 3vw, 40px) clamp(144px, 18vh, 220px);
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
@@ -531,6 +533,7 @@ import '../styles/empty-state.css';
         opacity .9s cubic-bezier(.32, .04, .18, 1),
         transform 1.35s cubic-bezier(.32, .04, .18, 1),
         visibility 0s 1.4s;
+      scroll-behavior: smooth;
     }
 
     .app-content.is-scrolling {
@@ -993,11 +996,35 @@ import '../styles/empty-state.css';
     .control i, .control svg { width: 19px; height: 19px; stroke-width: 2.5; }
     .control.primary i, .control.primary svg { width: 22px; height: 22px; }
 
+    .call-scroll-jump {
+      position: absolute;
+      right: clamp(22px, 3vw, 48px);
+      bottom: 26px;
+      z-index: 24;
+      display: grid;
+      width: 46px;
+      height: 46px;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: var(--ui-accent);
+      color: var(--ui-graphite);
+      cursor: pointer;
+      box-shadow: 0 8px 22px rgba(65, 65, 65, .16);
+      transition: opacity .28s cubic-bezier(.22, .8, .24, 1), transform .28s cubic-bezier(.22, .8, .24, 1), background-color .36s cubic-bezier(.22, .8, .24, 1), color .36s cubic-bezier(.22, .8, .24, 1);
+    }
+    .call-scroll-jump[hidden] { display: none !important; }
+    .call-scroll-jump:hover { transform: translateY(-2px) scale(1.04); }
+    .call-scroll-jump:active { transform: translateY(1px) scale(.95); }
+    .call-scroll-jump:focus-visible { outline: 3px solid var(--ui-accent); outline-offset: 3px; }
+    .call-scroll-jump svg { width: 20px; height: 20px; stroke-width: 2.6; }
+
     .conversation {
       position: relative;
       width: 100%;
       margin: 26px auto 0;
-      padding: 8px 10px 32px;
+      padding: 8px 10px clamp(144px, 18vh, 220px);
       min-height: 620px;
     }
 
@@ -1419,11 +1446,12 @@ import '../styles/empty-state.css';
       .auth-panel.is-app.is-nav-ready .mobile-nav-toggle { display: grid; width: 32px; height: 32px; place-items: center; align-self: center; margin-top: 0; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ui-amber); cursor: pointer; padding: 4px; }
       .auth-panel.is-app .mobile-nav-toggle svg { width: 20px; height: 20px; transition: transform .3s ease; }
       .auth-panel.is-app:not(.is-rail-collapsed) .mobile-nav-toggle svg { transform: rotate(180deg); }
-      .auth-panel.is-app .app-content { padding: 0 16px 72px; }
+      .auth-panel.is-app .app-content { padding: 0 16px max(150px, 20vh); }
       .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
       .auth-panel.is-app .login-face-wrap { width: 40px; }
       .auth-panel.is-app .login-name { font-size: 1.35rem; margin-top: 0; }
       .auth-panel.is-app .login-right { min-height: 58dvh; }
+      .call-scroll-jump { position: fixed; right: 18px; bottom: max(18px, env(safe-area-inset-bottom)); }
       .auth-panel.is-app.is-nav-ready .app-nav { height: 0; margin-top: 0; opacity: 0; overflow: hidden; pointer-events: none; visibility: hidden; transform: translateY(-8px); }
       .auth-panel.is-app.is-nav-ready:not(.is-rail-collapsed) .app-nav { height: auto; margin-top: 14px; opacity: 1; overflow-x: hidden; overflow-y: auto; pointer-events: auto; visibility: visible; transform: none; }
       .auth-panel.is-app .app-nav { align-items: stretch; }
@@ -1451,6 +1479,7 @@ import '../styles/empty-state.css';
     }
 
     @media (prefers-reduced-motion: reduce) {
+      .app-content { scroll-behavior: auto; }
       *, *::before, *::after {
         animation-duration: .001ms !important;
         animation-iteration-count: 1 !important;
@@ -1604,19 +1633,7 @@ import '../styles/empty-state.css';
       <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
         <i data-lucide="x" aria-hidden="true"></i>
       </button>
-      <div class="detail-panel__session" id="sessionPanel">
-        <p class="detail-kicker">Cliente</p>
-        <h2 class="detail-title">Estado de la llamada</h2>
-        <div class="detail-sheet">
-          <section class="detail-group">
-            <dl class="detail-fields">
-              <div class="detail-field"><dt>Nombre</dt><dd class="is-pending">Pendiente</dd></div>
-              <div class="detail-field"><dt>Teléfono</dt><dd class="is-pending">Pendiente</dd></div>
-              <div class="detail-field"><dt>Estado</dt><dd class="is-pending">Pendiente</dd></div>
-            </dl>
-          </section>
-        </div>
-      </div>
+      <div class="detail-panel__session" id="sessionPanel" hidden></div>
       <div class="detail-panel__body" hidden></div>
     </aside>
     </section>
@@ -1684,16 +1701,100 @@ import '../styles/empty-state.css';
     const reconnect = document.getElementById('reconnect');
     const reconnectText = document.getElementById('reconnectText');
     const isAppShellReady = () => authPanel?.classList.contains('is-nav-ready') ?? true;
-    if (appContent) {
+    const callScroll = (() => {
+      if (!(appContent instanceof HTMLElement)) {
+        return { follow() {}, scrollToLatest() {}, dispose() {} };
+      }
+      const anchor = appContent.parentElement;
+      let jump = anchor?.querySelector('[data-conversation-scroll-jump]');
+      if (!(jump instanceof HTMLButtonElement) && anchor) {
+        jump = document.createElement('button');
+        jump.type = 'button';
+        jump.className = 'call-scroll-jump';
+        jump.dataset.conversationScrollJump = 'true';
+        jump.setAttribute('aria-label', 'Ir a los mensajes recientes');
+        jump.setAttribute('title', 'Ir a los mensajes recientes');
+        jump.hidden = true;
+        jump.innerHTML = '<i data-lucide="arrow-down" aria-hidden="true"></i>';
+        anchor.append(jump);
+        const lucide = window.lucide;
+        lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+      }
+      const threshold = 112;
+      let pausedByUser = false;
+      let userGesturePending = false;
+      let programmaticUntil = 0;
       let scrollRestTimer = 0;
-      appContent.addEventListener('scroll', () => {
+      let followFrame = 0;
+      let disposed = false;
+      const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const atBottom = () => appContent.scrollHeight - appContent.scrollTop - appContent.clientHeight <= threshold;
+      const sync = () => {
+        if (!(jump instanceof HTMLButtonElement)) return;
+        const away = !atBottom();
+        jump.hidden = !away;
+        jump.setAttribute('aria-hidden', String(!away));
+      };
+      const onScroll = () => {
+        if (disposed) return;
         appContent.classList.add('is-scrolling');
         window.clearTimeout(scrollRestTimer);
-        scrollRestTimer = window.setTimeout(() => {
-          appContent.classList.remove('is-scrolling');
-        }, 780);
-      }, { passive: true });
-    }
+        scrollRestTimer = window.setTimeout(() => appContent.classList.remove('is-scrolling'), 780);
+        if (userGesturePending) {
+          pausedByUser = !atBottom();
+          userGesturePending = false;
+        } else if (performance.now() >= programmaticUntil) {
+          if (atBottom()) pausedByUser = false;
+          else if (appContent.scrollHeight > appContent.clientHeight) pausedByUser = true;
+        }
+        sync();
+      };
+      const cancelProgrammatic = () => { programmaticUntil = 0; userGesturePending = true; };
+      const scrollToLatest = () => {
+        if (disposed) return;
+        pausedByUser = false;
+        userGesturePending = false;
+        const reduced = reducedMotion();
+        programmaticUntil = performance.now() + (reduced ? 80 : 1100);
+        appContent.scrollTo({ top: appContent.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
+        window.setTimeout(() => { if (!disposed) sync(); }, reduced ? 90 : 1120);
+      };
+      const onJump = () => scrollToLatest();
+      const onKeyGesture = (event) => {
+        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelProgrammatic();
+      };
+      appContent.addEventListener('scroll', onScroll, { passive: true });
+      appContent.addEventListener('wheel', cancelProgrammatic, { passive: true });
+      appContent.addEventListener('touchstart', cancelProgrammatic, { passive: true });
+      appContent.addEventListener('pointerdown', cancelProgrammatic, { passive: true });
+      appContent.addEventListener('keydown', onKeyGesture);
+      jump?.addEventListener('click', onJump);
+      sync();
+      return {
+        follow() {
+          if (pausedByUser) { sync(); return; }
+          if (followFrame) return;
+          followFrame = requestAnimationFrame(() => {
+            followFrame = 0;
+            if (!pausedByUser) scrollToLatest();
+          });
+        },
+        scrollToLatest,
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          appContent.removeEventListener('scroll', onScroll);
+          appContent.removeEventListener('wheel', cancelProgrammatic);
+          appContent.removeEventListener('touchstart', cancelProgrammatic);
+          appContent.removeEventListener('pointerdown', cancelProgrammatic);
+          appContent.removeEventListener('keydown', onKeyGesture);
+          jump?.removeEventListener('click', onJump);
+          window.clearTimeout(scrollRestTimer);
+          if (followFrame) cancelAnimationFrame(followFrame);
+          jump?.remove();
+        },
+      };
+    })();
     const timelineItems = [...document.querySelectorAll('.timeline-item')];
     const messages = [...document.querySelectorAll('.message[data-text]')];
     const tokenTimers = new Map();
@@ -2056,7 +2157,7 @@ import '../styles/empty-state.css';
       }
       const message = item.querySelector('.message[data-text]');
       if (message) animate ? animateMessage(message) : renderMessageInstant(message);
-      if (animate && mode === 'live' && !seeking && followLive) setTimeout(() => item.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 180);
+      if (animate && !seeking) setTimeout(() => callScroll.follow(), 180);
     }
 
     function hideItem(item) {
@@ -2815,6 +2916,7 @@ import '../styles/empty-state.css';
 
        document.addEventListener('astro:before-swap', () => {
          window.__kogniaPageLeaving = true;
+         callScroll.dispose();
          dashboardCleanup?.();
          dashboardCleanup = null;
          stopSessionGuard?.();

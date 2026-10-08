@@ -13,6 +13,8 @@
   "dependencies": {
     "astro": "7.3.1",
     "echarts": "6.0.0",
+    "flag-icons": "^7.5.0",
+    "libphonenumber-js": "^1.13.14",
     "lucide": "1.50.0",
     "marked": "^18.0.13"
   },

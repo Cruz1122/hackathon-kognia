@@ -20,9 +20,9 @@
 }
 
     .toast-stage {
-      --toast-color: var(--ui-amber);
+      --toast-color: var(--ui-accent);
       --icon-color: var(--ui-graphite);
-      --outer-bg: var(--ui-cream);
+      --outer-bg: var(--ui-accent-soft);
       --message-color: var(--ui-graphite);
 
       position: relative;
@@ -188,14 +188,14 @@
     }
 
     .toast--success {
-      --toast-color: var(--ui-amber);
+      --toast-color: var(--ui-accent);
       --icon-color: var(--ui-graphite);
-      --outer-bg: var(--ui-cream);
+      --outer-bg: var(--ui-accent-soft);
       --message-color: var(--ui-graphite);
     }
 
     .toast--info {
-      --toast-color: var(--ui-amber);
+      --toast-color: var(--ui-accent);
       --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-graphite);
       --message-color: var(--ui-paper);
@@ -204,12 +204,12 @@
     .toast--warning {
       --toast-color: var(--ui-graphite);
       --icon-color: var(--ui-paper);
-      --outer-bg: var(--ui-amber);
+      --outer-bg: var(--ui-accent);
       --message-color: var(--ui-graphite);
     }
 
     .toast--error {
-      --toast-color: var(--ui-cream);
+      --toast-color: var(--ui-accent-soft);
       --icon-color: var(--ui-graphite);
       --outer-bg: var(--ui-graphite);
       --message-color: var(--ui-paper);
@@ -218,7 +218,7 @@
     .toast--neutral {
       --toast-color: var(--ui-graphite);
       --icon-color: var(--ui-paper);
-      --outer-bg: var(--ui-cream);
+      --outer-bg: var(--ui-accent-soft);
       --message-color: var(--ui-graphite);
     }
 

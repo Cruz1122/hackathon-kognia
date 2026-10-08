@@ -45,6 +45,25 @@ const initialState = initialDefinition.state;
 const initialEyeStyle = initialDefinition.eyeStyle ?? 'rect';
 const initialMouthStyle = initialDefinition.mouthStyle ?? 'line';
 const initialGradient = initialDefinition.gradient ?? [AMBER, AMBER, AMBER, AMBER];
+const DEV_GRADIENTS: Record<string, string> = {
+  '#faeccf': '#dcebff',
+  '#fff0bf': '#eaf3ff',
+  '#fadd8d': '#bed8ff',
+  '#f7c974': '#6ea8fe',
+  '#d8a745': '#3f7ccc',
+  '#ffe1a7': '#e4efff',
+  '#ffc978': '#b8d5ff',
+  '#f0a84c': '#6ea8fe',
+  '#d77735': '#3f7ccc',
+  '#edf5ad': '#e5f0ff',
+  '#d3e982': '#b7d4ff',
+  '#a8d864': '#8fb8f4',
+  '#78b54d': '#6f96cf',
+};
+const isDevMode = Astro.url.pathname === '/dev' || Astro.url.pathname.startsWith('/dev/');
+const renderedGradient = isDevMode
+  ? initialGradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color)
+  : initialGradient;
 const gradientId = `${id.replace(/[^a-zA-Z0-9_-]/g, '-')}-gradient`;
 const gradientCx = initialState.faceX - initialState.faceWidth * 0.25;
 const gradientCy = initialState.faceY - initialState.faceHeight * 0.32;
@@ -74,10 +93,10 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
         r={gradientRadius}
         gradientTransform={rotationTransform(initialState.faceRotation, initialState.faceX, initialState.faceY)}
       >
-        <stop data-stop="0" offset="0%" stop-color={initialGradient[0]} />
-        <stop data-stop="1" offset="32%" stop-color={initialGradient[1]} />
-        <stop data-stop="2" offset="72%" stop-color={initialGradient[2]} />
-        <stop data-stop="3" offset="100%" stop-color={initialGradient[3]} />
+        <stop data-stop="0" offset="0%" stop-color={renderedGradient[0]} />
+        <stop data-stop="1" offset="32%" stop-color={renderedGradient[1]} />
+        <stop data-stop="2" offset="72%" stop-color={renderedGradient[2]} />
+        <stop data-stop="3" offset="100%" stop-color={renderedGradient[3]} />
       </radialGradient>
     </defs>
     <path
@@ -136,9 +155,25 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
   }
 
   const FLAT_AMBER: GradientStops = ['#f7c974', '#f7c974', '#f7c974', '#f7c974'];
+  const DEV_GRADIENTS: Record<string, string> = {
+    '#faeccf': '#dcebff',
+    '#fff0bf': '#eaf3ff',
+    '#fadd8d': '#bed8ff',
+    '#f7c974': '#6ea8fe',
+    '#d8a745': '#3f7ccc',
+    '#ffe1a7': '#e4efff',
+    '#ffc978': '#b8d5ff',
+    '#f0a84c': '#6ea8fe',
+    '#d77735': '#3f7ccc',
+    '#edf5ad': '#e5f0ff',
+    '#d3e982': '#b7d4ff',
+    '#a8d864': '#8fb8f4',
+    '#78b54d': '#6f96cf',
+  };
   const TRACKING_DEADZONE = 0.07;
   const MIRROR_ENTER = 0.38;
   const MIRROR_EXIT = 0.1;
+  const MODE_TRANSITION_MS = 560;
 
   function applyDeadzone(value: number): number {
     const absolute = Math.abs(value);
@@ -159,6 +194,11 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
     return `#${start.map((channel, index) => Math.round(lerp(channel, end[index], progress)).toString(16).padStart(2, '0')).join('')}`;
   }
 
+  function paletteGradient(gradient: readonly string[], dev: boolean): string[] {
+    if (!dev) return [...gradient];
+    return gradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color);
+  }
+
   function initializeMascots(): void {
     document.querySelectorAll<MascotElement>('[data-mascot-face]:not([data-mascot-ready])').forEach((root) => {
       root.dataset.mascotReady = 'true';
@@ -169,7 +209,9 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
       root.dataset.eyeStyle = eyeStyleOf(selectedEmotion);
       root.dataset.mouthStyle = mouthStyleOf(selectedEmotion);
       let displayState = { ...emotions[selectedEmotion].state };
-      let displayGradient = [...(emotions[selectedEmotion].gradient ?? FLAT_AMBER)];
+      let baseGradient = [...(emotions[selectedEmotion].gradient ?? FLAT_AMBER)];
+      let appliedMode = document.documentElement.dataset.uiMode === 'dev';
+      let displayGradient = paletteGradient(baseGradient, appliedMode);
       let transitionFrom = { ...displayState };
       let transitionTo = { ...displayState };
       let gradientFrom = [...displayGradient];
@@ -214,8 +256,9 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
         root.dataset.mouthStyle = mouthStyleOf(next);
         transitionFrom = { ...displayState };
         transitionTo = { ...emotions[next].state };
+        baseGradient = [...(emotions[next].gradient ?? FLAT_AMBER)];
         gradientFrom = [...displayGradient];
-        gradientTo = [...(emotions[next].gradient ?? FLAT_AMBER)];
+        gradientTo = paletteGradient(baseGradient, appliedMode);
         transitionStartedAt = performance.now();
         transitionActive = !reducedMotion.matches;
         if (!transitionActive) {
@@ -314,8 +357,17 @@ const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight)
       }
 
       function render(now: number): void {
+        const nextMode = document.documentElement.dataset.uiMode === 'dev';
+        if (nextMode !== appliedMode) {
+          appliedMode = nextMode;
+          gradientFrom = [...displayGradient];
+          gradientTo = paletteGradient(baseGradient, appliedMode);
+          transitionStartedAt = now;
+          transitionActive = !reducedMotion.matches;
+          if (!transitionActive) displayGradient = [...gradientTo];
+        }
         if (transitionActive) {
-          const raw = clamp((now - transitionStartedAt) / 360, 0, 1);
+          const raw = clamp((now - transitionStartedAt) / MODE_TRANSITION_MS, 0, 1);
           const eased = easeInOutCubic(raw);
           displayState = interpolateFaceState(transitionFrom, transitionTo, eased);
           displayGradient = gradientFrom.map((color, index) => interpolateColor(color, gradientTo[index], eased));

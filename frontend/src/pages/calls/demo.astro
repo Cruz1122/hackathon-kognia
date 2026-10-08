@@ -20,12 +20,17 @@ import '../../styles/call-demo.css';
   let mountedRoot: HTMLElement | null = null;
   let pendingRoot: HTMLElement | null = null;
 
+  function isCallDemoRoute(): boolean {
+    return window.location.pathname === '/calls/demo' || window.location.pathname === '/calls/demo/';
+  }
+
   function lucideRefresh(): void {
     const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
     lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
   }
 
   async function mountCallDemo(): Promise<void> {
+    if (!isCallDemoRoute()) return;
     const root = document.querySelector<HTMLElement>('.call-demo-page');
     if (!root || mountedRoot === root || pendingRoot === root) return;
     pendingRoot = root;

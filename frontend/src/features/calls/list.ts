@@ -1,5 +1,6 @@
 import { showToast } from '../voice-call/infrastructure/toast';
 import { revealLoadedContent, showContentLoader } from '../ui/loading-reveal';
+import { phoneDisplayMarkup } from '../phone/phone-display';
 
 type ListedCall = {
   id: string;
@@ -20,6 +21,9 @@ type SortKey = 'name' | 'phone' | 'started' | 'duration' | 'status';
 type SortDir = 'asc' | 'desc';
 
 export function bootCallsList(apiUrl: string, token: string): () => void {
+  if (document.querySelector('[data-dev-catalog]') || window.location.pathname.startsWith('/dev')) {
+    return () => undefined;
+  }
   const search = document.querySelector<HTMLInputElement>('#callsSearch');
   const status = document.querySelector<HTMLElement>('#callsStatus');
   const body = document.querySelector<HTMLTableSectionElement>('#callsTableBody');
@@ -242,7 +246,7 @@ function renderRow(call: ListedCall, live: boolean): HTMLTableRowElement {
   const phone = call.caller?.trim() || '—';
   row.append(
     cell(name, name === 'Sin nombre' ? 'calls-name calls-muted' : 'calls-name'),
-    cell(phone, phone === '—' ? 'calls-muted' : ''),
+    phoneCell(phone),
     cell(formatWhen(call.started_at)),
     cell(durationLabel(call, live)),
     statusCell(call, live),
@@ -299,6 +303,17 @@ function cell(text: string, className = ''): HTMLTableCellElement {
   const node = document.createElement('td');
   if (className) node.className = className;
   node.textContent = text;
+  return node;
+}
+
+function phoneCell(value: string): HTMLTableCellElement {
+  const node = document.createElement('td');
+  if (!value || value === '—') {
+    node.className = 'calls-muted';
+    node.textContent = '—';
+    return node;
+  }
+  node.innerHTML = phoneDisplayMarkup(value);
   return node;
 }
 
@@ -382,14 +397,15 @@ function formatDuration(durationMs: number): string {
 }
 
 export function watchLiveCalls(apiUrl: string): void {
-  const watch = window as Window & { __kogniaCallNav?: boolean };
+  const watch = window as Window & { __kogniaCallNav?: boolean; __kogniaCallNavStop?: () => void };
   if (watch.__kogniaCallNav) return;
   watch.__kogniaCallNav = true;
   const seen = new Set<string>();
   let primed = false;
   let refreshing = false;
+  let stopped = false;
   const tick = async (): Promise<void> => {
-    if (refreshing) return;
+    if (stopped || refreshing) return;
     const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
     if (!token) return;
     refreshing = true;
@@ -397,6 +413,7 @@ export function watchLiveCalls(apiUrl: string): void {
       const response = await fetch(`${apiUrl}/calls`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) return;
       const body = await response.json() as CallsPayload;
+      if (stopped) return;
       const live = body.calls ?? [];
       if (primed) {
         live.forEach((call) => {
@@ -410,6 +427,17 @@ export function watchLiveCalls(apiUrl: string): void {
       refreshing = false;
     }
   };
+  const timer = window.setInterval(() => { void tick(); }, 2000);
+  watch.__kogniaCallNavStop = () => {
+    stopped = true;
+    window.clearInterval(timer);
+    watch.__kogniaCallNav = false;
+    watch.__kogniaCallNavStop = undefined;
+  };
   void tick();
-  window.setInterval(() => { void tick(); }, 2000);
+}
+
+export function stopLiveCalls(): void {
+  const watch = window as Window & { __kogniaCallNavStop?: () => void };
+  watch.__kogniaCallNavStop?.();
 }
