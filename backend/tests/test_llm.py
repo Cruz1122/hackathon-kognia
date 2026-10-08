@@ -376,6 +376,43 @@ def test_context_window_keeps_last_turns() -> None:
     assert windowed[0]["role"] == "user"
 
 
+def test_context_window_merges_cut_user_speech() -> None:
+    from app.features.agent.service import context_window
+
+    # A slow speaker cut by the turn-taking logic leaves two user messages in a
+    # row; the window must present them as a single request, not as a new one.
+    history = [
+        {"role": "assistant", "content": "¿En qué puedo ayudarte?"},
+        {"role": "user", "content": "quiero cancelar..."},
+        {"role": "user", "content": "reserva."},
+    ]
+    windowed = context_window(history)
+
+    assert windowed == [
+        {"role": "assistant", "content": "¿En qué puedo ayudarte?"},
+        {"role": "user", "content": "quiero cancelar... reserva."},
+    ]
+
+
+def test_merge_consecutive_user_messages_keeps_role_boundaries() -> None:
+    from app.features.agent.service import merge_consecutive_user_messages
+
+    merged = merge_consecutive_user_messages([
+        {"role": "user", "content": "uno"},
+        {"role": "user", "content": "dos"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "tres"},
+        {"role": "user", "content": "cuatro"},
+        {"role": "user", "content": "cinco"},
+    ])
+
+    assert merged == [
+        {"role": "user", "content": "uno dos"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "tres cuatro cinco"},
+    ]
+
+
 def test_context_window_keeps_consecutive_user_fragments_with_their_turn() -> None:
     from app.features.agent.service import context_window
 
@@ -479,6 +516,40 @@ async def test_ask_truncates_history_to_context_window(
 
     assert response.status_code == 200
     assert captured == [*history[:2], *history[-12:], {"role": "user", "content": "¿Y ahora?"}]
+
+
+@pytest.mark.asyncio
+async def test_ask_merges_prompt_with_cut_user_fragment(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+) -> None:
+    """A prompt that continues a cut-off user fragment reaches the model as one message."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    captured: list[dict[str, str]] = []
+
+    async def fake_stream(config, prompt, *, messages):
+        captured.extend(messages)
+        yield "respuesta"
+
+    install_message_llm(monkeypatch, fake_stream)
+    history = [
+        {"role": "assistant", "content": "¿En qué puedo ayudarte?"},
+        {"role": "user", "content": "quiero cancelar..."},
+    ]
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/ask",
+            headers=auth_headers,
+            json={"prompt": "reserva.", "messages": history, "channel": "voice-demo"},
+        )
+
+    assert response.status_code == 200
+    assert captured == [
+        {"role": "assistant", "content": "¿En qué puedo ayudarte?"},
+        {"role": "user", "content": "quiero cancelar... reserva."},
+    ]
 
 
 @pytest.mark.asyncio

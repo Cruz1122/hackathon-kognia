@@ -96,6 +96,34 @@ def normalize_relative_booking_date(
     return {**arguments, 'date': (local_now().date() + timedelta(days=days)).isoformat()}
 
 
+def merge_consecutive_user_messages(messages: Sequence[Message]) -> list[Message]:
+    """Fold consecutive ``user`` fragments into a single utterance.
+
+    A slow speaker can be cut by the turn-taking logic and persisted as two
+    ``user`` messages in a row (for example "quiero cancelar..." then
+    "reserva."). Sent as separate messages the model reads the tail as a new
+    request; joined as one it recovers the original intent. Only user messages
+    are merged, so the agent's own replies keep their role boundaries.
+    """
+    merged: list[Message] = []
+    for message in messages:
+        content = message.get("content")
+        if not content:
+            continue
+        if (
+            message.get("role") == "user"
+            and merged
+            and merged[-1].get("role") == "user"
+        ):
+            merged[-1] = {
+                "role": "user",
+                "content": f'{merged[-1]["content"]} {content}'.strip(),
+            }
+        else:
+            merged.append({"role": message.get("role"), "content": content})
+    return merged
+
+
 def context_window(
     messages: Sequence[Message] | None,
     limit: int = MAX_CONTEXT_TURNS,
@@ -103,9 +131,10 @@ def context_window(
     """Return the last `limit` complete turns of user/assistant history.
 
     A turn starts at a ``user`` message and includes every following message
-    until the next ``user``. This keeps consecutive ``user`` fragments together
-    with the assistant reply that answered them, instead of cutting mid-turn.
-    Non-conversational roles (system/tool) are dropped.
+    until the next ``user``. Consecutive ``user`` fragments (broken speech) are
+    first joined into one message, so a turn is never cut mid-utterance and the
+    model reads a cut-off request as a single message. Non-conversational roles
+    (system/tool) are dropped.
 
     If the opening user turn falls outside the sliding window, it is still
     prepended so the model can answer questions about how the call started.
@@ -117,18 +146,19 @@ def context_window(
         for message in messages
         if message.get("role") in {"user", "assistant"} and message.get("content")
     ]
-    if not conversational:
+    grouped = merge_consecutive_user_messages(conversational)
+    if not grouped:
         return []
-    boundaries = [index for index, message in enumerate(conversational) if message["role"] == "user"]
+    boundaries = [index for index, message in enumerate(grouped) if message["role"] == "user"]
     if not boundaries:
-        return conversational
+        return grouped
     if len(boundaries) <= limit:
-        return conversational
-    window = conversational[boundaries[-limit] :]
+        return grouped
+    window = grouped[boundaries[-limit] :]
     if boundaries[-limit] <= boundaries[0]:
         return window
-    opening_end = boundaries[1] if len(boundaries) > 1 else len(conversational)
-    return [*conversational[boundaries[0] : opening_end], *window]
+    opening_end = boundaries[1] if len(boundaries) > 1 else len(grouped)
+    return [*grouped[boundaries[0] : opening_end], *window]
 
 
 async def stream_agent(
@@ -192,7 +222,9 @@ async def _generate(
         emitted_tokens = False
         try:
             if use_tools:
-                conversation: list[Message] = [*knowledge, *history, {"role": "user", "content": prompt}]
+                conversation: list[Message] = merge_consecutive_user_messages(
+                    [*knowledge, *history, {"role": "user", "content": prompt}]
+                )
                 used_tools = False
                 for round_index in range(MAX_TOOL_ROUNDS):
                     tool_calls: list[dict[str, str]] = []
@@ -320,7 +352,9 @@ async def _generate(
                 yield "done", {"provider": config.provider.value, "model": config.model}
                 return
 
-            conversation: list[Message] | None = [*knowledge, *history, {"role": "user", "content": prompt}]
+            conversation: list[Message] | None = merge_consecutive_user_messages(
+                [*knowledge, *history, {"role": "user", "content": prompt}]
+            )
             llm_span = recorder.start_llm(
                 provider=config.provider.value,
                 model=config.model,
