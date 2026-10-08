@@ -313,6 +313,11 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
           TELNYX_ENABLED: ${{ vars.TELNYX_ENABLED }}
           TELNYX_WEBHOOK_HOST: ${{ vars.TELNYX_WEBHOOK_HOST }}
           TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
@@ -394,6 +399,9 @@ jobs:
           if [[ -n "${ANALYTICS_CACHE_TTL_SECONDS:-}" ]]; then
             env_args+=("ANALYTICS_CACHE_TTL_SECONDS=$ANALYTICS_CACHE_TTL_SECONDS")
           fi
+          if [[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]]; then
+            env_args+=("WHATSAPP_PHONE_NUMBER_ID=$WHATSAPP_PHONE_NUMBER_ID")
+          fi
 
           add_secret() {
             if [[ -n "$3" ]]; then
@@ -406,7 +414,11 @@ jobs:
           add_secret GEMINI_API_KEY gemini-api-key "${GEMINI_API_KEY:-}"
           add_secret OPENROUTER_API_KEY openrouter-api-key "${OPENROUTER_API_KEY:-}"
           add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
+          add_secret TYPESAFE_API_KEY typesafe-api-key "${TYPESAFE_API_KEY:-}"
           add_secret TELNYX_API_KEY telnyx-api-key "${TELNYX_API_KEY:-}"
+          add_secret WHATSAPP_ACCESS_TOKEN whatsapp-access-token "${WHATSAPP_ACCESS_TOKEN:-}"
+          add_secret WHATSAPP_APP_SECRET whatsapp-app-secret "${WHATSAPP_APP_SECRET:-}"
+          add_secret WHATSAPP_VERIFY_TOKEN whatsapp-verify-token "${WHATSAPP_VERIFY_TOKEN:-}"
 
           if [[ -n "${TELNYX_PUBLIC_KEY:-}" ]]; then
             env_args+=("TELNYX_PUBLIC_KEY=$TELNYX_PUBLIC_KEY")
@@ -460,6 +472,11 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+      WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+      WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+      WHATSAPP_PHONE_NUMBER_ID: ${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
     steps:
       - name: Azure login
         uses: azure/login@v3
@@ -527,6 +544,9 @@ jobs:
           if [[ -n "${ANALYTICS_CACHE_TTL_SECONDS:-}" ]]; then
             env_args+=("ANALYTICS_CACHE_TTL_SECONDS=$ANALYTICS_CACHE_TTL_SECONDS")
           fi
+          if [[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]]; then
+            env_args+=("WHATSAPP_PHONE_NUMBER_ID=$WHATSAPP_PHONE_NUMBER_ID")
+          fi
 
           add_secret() {
             if [[ -n "$3" ]]; then
@@ -538,6 +558,10 @@ jobs:
           add_secret GEMINI_API_KEY gemini-api-key "${GEMINI_API_KEY:-}"
           add_secret OPENROUTER_API_KEY openrouter-api-key "${OPENROUTER_API_KEY:-}"
           add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
+          add_secret TYPESAFE_API_KEY typesafe-api-key "${TYPESAFE_API_KEY:-}"
+          add_secret WHATSAPP_ACCESS_TOKEN whatsapp-access-token "${WHATSAPP_ACCESS_TOKEN:-}"
+          add_secret WHATSAPP_APP_SECRET whatsapp-app-secret "${WHATSAPP_APP_SECRET:-}"
+          add_secret WHATSAPP_VERIFY_TOKEN whatsapp-verify-token "${WHATSAPP_VERIFY_TOKEN:-}"
 
           # El worker arranca con un script del repo: `--args` no puede pasar
           # `-m app.worker` como dos argv porque argparse rechaza tokens que

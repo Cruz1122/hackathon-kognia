@@ -112,6 +112,9 @@ confirma igualmente que el esquema existe).
 | `OPENROUTER_API_KEY` | Provider LLM |
 | `GROQ_API_KEY` | Provider LLM |
 | `TELNYX_API_KEY` | API key de Telnyx (webhooks y llamadas entrantes) |
+| `WHATSAPP_ACCESS_TOKEN` | Token de Graph API de Meta (envío y recepción de WhatsApp) |
+| `WHATSAPP_APP_SECRET` | App Secret de Meta para validar la firma `X-Hub-Signature-256` |
+| `WHATSAPP_VERIFY_TOKEN` | Token del challenge de verificación del webhook de Meta |
 | `DEMO_ADMIN_PASSWORD` | Password del admin que crea el Job de bootstrap |
 
 Los cuatro providers son opcionales: el workflow solo añade los que tengan
@@ -140,6 +143,7 @@ valor, y `APP_ENV=test` funciona con uno solo. Si ninguno está, `/ask` responde
 | `APP_ENV` | `test` | `test` o `production` (cadena LLM) |
 | `CHROMA_RAG_COLLECTION` | `rag_documents` | Colección de RAG |
 | `ANALYTICS_CACHE_TTL_SECONDS` | `60` | TTL de la caché en Redis |
+| `WHATSAPP_PHONE_NUMBER_ID` | — | Phone Number ID de WhatsApp Business (`WHATSAPP_ACCESS_TOKEN` es secret) |
 | `DEMO_ADMIN_EMAIL` | — | Admin de la demo (opcional) |
 | `DEMO_ORG_NAME` | `Demo Kognia` | Organización de la demo |
 | `DEMO_ORG_SLUG` | `demo-kognia` | Slug de la organización de la demo |
@@ -170,20 +174,32 @@ Solo el **backend** recibe esta configuración. El worker se queda únicamente c
 `TELNYX_RECORDINGS_DIR`: `download_recording` consume la URL pre-firmada que
 trae la fila de la grabación en PostgreSQL, así que no necesita la API key.
 
-### Reservadas (ningún código las lee todavía)
+### WhatsApp
 
-Declaradas para cuando aterrice el canal, pero hoy el backend no las consume y el
-workflow no las inyecta:
+El webhook vive en el backend (`GET/POST /webhooks/whatsapp`) y necesita las
+cuatro credenciales a la vez: `settings().whatsapp_enabled` es `True` solo si
+están todas. Sin ellas el endpoint responde `503 WhatsApp is not configured` y
+Meta no puede verificar la Callback URL.
 
-| Secret | Variable |
-| --- | --- |
-| `TYPESAFE_API_KEY` | — |
-| `WHATSAPP_ACCESS_TOKEN` | `WHATSAPP_PHONE_NUMBER_ID` |
-| `WHATSAPP_APP_SECRET` | `WHATSAPP_WABA_ID` |
-| `WHATSAPP_VERIFY_TOKEN` | — |
+| Secret / Variable | Tipo | Lo usa | Para qué |
+| --- | --- | --- | --- |
+| `WHATSAPP_ACCESS_TOKEN` | secret | backend + worker | Enviar mensajes por Graph API |
+| `WHATSAPP_APP_SECRET` | secret | backend | Validar `X-Hub-Signature-256` en el `POST` |
+| `WHATSAPP_VERIFY_TOKEN` | secret | backend | Challenge de verificación en el `GET` |
+| `WHATSAPP_PHONE_NUMBER_ID` | variable | backend + worker | Gate de `whatsapp_enabled` + URL de envío |
 
-`whatsapp` ya existe como valor de `Message.channel` y
-`Opportunity.recovery_channel` en el esquema, pero no hay integración.
+El workflow inyecta los tres secrets en el **backend** y en el **worker** solo
+`WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`, que son los únicos que
+necesita para procesar y responder. `WHATSAPP_WABA_ID` no lo lee ningún código:
+no hace falta configurarla.
+
+Callback URL a registrar en Meta: `https://<FQDN backend>/webhooks/whatsapp`.
+
+### Pendiente de cablear
+
+`TYPESAFE_API_KEY` lo lee `app/agent/jev.py`, pero el workflow **aún no lo
+inyecta**: sin él Jev queda no disponible (degradación segura) y la conversación
+sigue funcionando.
 
 ## Primer despliegue
 
