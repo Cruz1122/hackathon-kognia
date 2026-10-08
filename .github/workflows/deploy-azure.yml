@@ -477,6 +477,10 @@ jobs:
       WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
       WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
       WHATSAPP_PHONE_NUMBER_ID: ${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
+      TELNYX_ENABLED: ${{ vars.TELNYX_ENABLED }}
+      TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+      TELNYX_CONNECTION_ID: ${{ vars.TELNYX_CONNECTION_ID }}
+      TELNYX_PHONE_NUMBER: ${{ vars.TELNYX_PHONE_NUMBER }}
     steps:
       - name: Azure login
         uses: azure/login@v3
@@ -535,8 +539,9 @@ jobs:
             "CHROMA_SSL=false"
             "CHROMA_RAG_COLLECTION=${CHROMA_RAG_COLLECTION:-rag_documents}"
             "AGENT_TOOL_MODULES=app.domains.demo_booking.tools,app.domains.business_analytics.tools"
-            # El worker solo persiste grabaciones: `download_recording` usa la URL
-            # pre-firmada de la fila en la BD, no la API key de Telnyx.
+            # Los turnos de WhatsApp corren en el worker y `call_customer` marca
+            # por Telnyx, así que aquí también hace falta la API key y la conexión.
+            "TELNYX_ENABLED=${TELNYX_ENABLED:-false}"
             "TELNYX_RECORDINGS_DIR=/var/lib/kognia/recordings"
             "PYTHONPATH=/app/backend"
           )
@@ -546,6 +551,12 @@ jobs:
           fi
           if [[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]]; then
             env_args+=("WHATSAPP_PHONE_NUMBER_ID=$WHATSAPP_PHONE_NUMBER_ID")
+          fi
+          if [[ -n "${TELNYX_CONNECTION_ID:-}" ]]; then
+            env_args+=("TELNYX_CONNECTION_ID=$TELNYX_CONNECTION_ID")
+          fi
+          if [[ -n "${TELNYX_PHONE_NUMBER:-}" ]]; then
+            env_args+=("TELNYX_PHONE_NUMBER=$TELNYX_PHONE_NUMBER")
           fi
 
           add_secret() {
@@ -559,6 +570,7 @@ jobs:
           add_secret OPENROUTER_API_KEY openrouter-api-key "${OPENROUTER_API_KEY:-}"
           add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
           add_secret TYPESAFE_API_KEY typesafe-api-key "${TYPESAFE_API_KEY:-}"
+          add_secret TELNYX_API_KEY telnyx-api-key "${TELNYX_API_KEY:-}"
           add_secret WHATSAPP_ACCESS_TOKEN whatsapp-access-token "${WHATSAPP_ACCESS_TOKEN:-}"
           add_secret WHATSAPP_APP_SECRET whatsapp-app-secret "${WHATSAPP_APP_SECRET:-}"
           add_secret WHATSAPP_VERIFY_TOKEN whatsapp-verify-token "${WHATSAPP_VERIFY_TOKEN:-}"

@@ -170,9 +170,12 @@ variable queda solo como override para un dominio propio.
 `TELNYX_ORGANIZATION_ID` y `TELNYX_SYSTEM_USER_ID` **no** se configuran a nivel
 de despliegue: el runtime los escribe por tenant.
 
-Solo el **backend** recibe esta configuración. El worker se queda únicamente con
-`TELNYX_RECORDINGS_DIR`: `download_recording` consume la URL pre-firmada que
-trae la fila de la grabación en PostgreSQL, así que no necesita la API key.
+El **backend** y el **worker** reciben `TELNYX_ENABLED`, `TELNYX_API_KEY`,
+`TELNYX_CONNECTION_ID` y `TELNYX_PHONE_NUMBER`. El worker no solo guarda
+grabaciones: los turnos de WhatsApp se procesan allí y `call_customer` marca la
+llamada de vuelta por Telnyx, así que sin esas variables el callback falla con
+`Telnyx is not configured`. `TELNYX_PUBLIC_KEY` y `TELNYX_WEBHOOK_HOST` solo los
+necesita el backend, que recibe los webhooks.
 
 ### WhatsApp
 
@@ -195,11 +198,17 @@ no hace falta configurarla.
 
 Callback URL a registrar en Meta: `https://<FQDN backend>/webhooks/whatsapp`.
 
-### Pendiente de cablear
+### Jev (TypeSafe)
 
-`TYPESAFE_API_KEY` lo lee `app/agent/jev.py`, pero el workflow **aún no lo
-inyecta**: sin él Jev queda no disponible (degradación segura) y la conversación
-sigue funcionando.
+| Secret | Tipo | Lo usa | Para qué |
+| --- | --- | --- | --- |
+| `TYPESAFE_API_KEY` | secret | backend + worker | Señales de Jev: sentimiento, handoff, confirmación y detección de callback |
+
+El workflow lo inyecta en el **backend** y en el **worker**. Sin él Jev queda no
+disponible (degradación segura) y, como la autorización de `call_customer` no
+tiene fallback, un pedido de "vuelve a llamar" deja al cliente atrapado en la
+propuesta de reserva pendiente. Los turnos de WhatsApp corren en el worker, por
+eso también lo necesita.
 
 ## Primer despliegue
 
