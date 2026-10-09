@@ -238,6 +238,7 @@ jobs:
       always() && !cancelled() &&
       needs.detect-changes.result == 'success' &&
       (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') &&
+      (needs.detect-changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') &&
       needs.deploy-postgres.result == 'success' &&
       needs.disable-legacy-infra.result == 'success'
     runs-on: ubuntu-latest
@@ -389,7 +390,8 @@ jobs:
     if: >-
       always() && !cancelled() &&
       needs.detect-changes.result == 'success' &&
-      (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
+      (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped') &&
+      (needs.detect-changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
