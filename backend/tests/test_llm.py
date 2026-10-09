@@ -718,7 +718,11 @@ def test_loads_environment_from_repository_root(tmp_path: Path, monkeypatch: pyt
     assert main.os.getenv("KOGNIA_ENV_LOAD_TEST") == "loaded"
 
 
-def test_demo_knowledge_corpus_is_packaged() -> None:
-    path = main.demo_knowledge_path()
-    assert path is not None
-    assert "POL-R48329" in path.read_text(encoding="utf-8")
+def test_ips_runtime_has_no_dummy_knowledge_seed_or_document_upload() -> None:
+    assert not hasattr(main, "seed_demo_knowledge")
+    assert not hasattr(main, "demo_knowledge_path")
+    assert "/api/rag/document" not in main.app.openapi()["paths"]
+    assert not (
+        main.REPOSITORY_ROOT / "backend" / "app" / "platform" / "rag" / "demo_corpus.md"
+    ).exists()
+    assert not list((main.REPOSITORY_ROOT / "tests" / "fixtures" / "rag").glob("*"))

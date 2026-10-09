@@ -1,4 +1,6 @@
 ---
+import MascotFace from '../mascot/MascotFace.astro';
+import { SIGNAL_EMOTIONS } from '../../lib/agent-signals/fleybo-emotions';
 import { DEFAULT_EMOTIONS, roundedRectPath, rotationTransform } from '../mascot/mascot-core';
 import type { CategorySnapshot } from '../../lib/agent-signals/types';
 
@@ -35,6 +37,16 @@ const gradientRadius = Math.max(base.faceWidth, base.faceHeight) * 1.22;
 
 <article class="categorical" role="img" aria-label={`${snapshot.title}: ${snapshot.label}`} data-category={snapshot.key} data-value={snapshot.value}>
   <div class="categorical__visual" aria-hidden="true">
+    {snapshot.face ? (
+      <MascotFace
+        emotion={snapshot.face}
+        emotions={SIGNAL_EMOTIONS}
+        mergeDefaultEmotions={false}
+        pointerTracking={false}
+        ariaLabel={`${snapshot.title}: ${snapshot.label}`}
+      />
+    ) : (
+    <>
     <svg class="categorical__face" viewBox="-180 -180 360 360">
       <defs>
         <radialGradient
@@ -61,11 +73,14 @@ const gradientRadius = Math.max(base.faceWidth, base.faceHeight) * 1.22;
       />
     </svg>
     <span class="categorical__icon" data-category-icon><i data-lucide={snapshot.icon}></i></span>
+    </>
+    )}
   </div>
 
   <div class="categorical__copy">
     <h2 class="categorical__title">{snapshot.title}</h2>
     <p class="categorical__label" data-category-label>{snapshot.label}</p>
+    <p class="categorical__detail" data-category-detail hidden={!snapshot.detail}>{snapshot.detail}</p>
   </div>
 </article>
 
@@ -100,6 +115,12 @@ const gradientRadius = Math.max(base.faceWidth, base.faceHeight) * 1.22;
   }
 
   .categorical__face stop { transition: stop-color .36s ease; }
+
+  .categorical__detail {
+    margin: 4px 0 0;
+    color: color-mix(in srgb, var(--ui-graphite, #414141) 72%, transparent);
+    font: 600 .78rem/1.3 "Urbanist", sans-serif;
+  }
 
   .categorical__icon {
     position: absolute;

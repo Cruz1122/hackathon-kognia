@@ -1,4 +1,5 @@
 import type {
+  AgentBehavior,
   AgentSignalsEnvelope,
   AgentSignalsSnapshot,
   CategoryKey,
@@ -6,6 +7,7 @@ import type {
   GradientStops,
   ScaleKey,
   ScaleSnapshot,
+  Signal,
 } from './types';
 
 const RED: GradientStops = ['#ffc0b7', '#ff9586', '#eb6856', '#c94232'];
@@ -14,6 +16,7 @@ const YELLOW: GradientStops = ['#fff0bf', '#fadd8d', '#f7c974', '#d8a745'];
 const YELLOW_GREEN: GradientStops = ['#edf5ad', '#d3e982', '#a8d864', '#78b54d'];
 const GREEN: GradientStops = ['#d4f5bf', '#a8e68b', '#78cf62', '#4aa847'];
 const NEUTRAL: GradientStops = ['#f8f8f8', '#faeccf', '#f7c974', '#414141'];
+const GRAY: GradientStops = ['#ebebeb', '#d7d7d7', '#b8b8b8', '#939393'];
 
 export const SIGNAL_EMOTION_GRADIENTS = {
   angry: RED,
@@ -21,20 +24,25 @@ export const SIGNAL_EMOTION_GRADIENTS = {
   surprised: YELLOW,
   intimidated: YELLOW_GREEN,
   'default-happy': GREEN,
+  unknown: GRAY,
+} as const;
+
+export const JEV_EMOTION_FACES = {
+  frustrated: 'angry',
+  sad: 'sad',
+  surprised: 'surprised',
+  worried: 'intimidated',
+  relieved: 'default-happy',
+  unknown: 'unknown',
 } as const;
 
 const SATISFACTION = { very_low: 0, low: 1.25, neutral: 2.5, high: 3.75, very_high: 5 } as const;
 const TENSION = { very_low: 5, low: 3.75, neutral: 2.5, high: 1.25, very_high: 0 } as const;
-const CONFIRMATION = { rejected: 0, uncertain: 2.5, explicit: 5 } as const;
 const INTEGRITY_RISK = { supported: 0, uncertain: 2.5, unsupported: 5 } as const;
 
 const EMOTIONS = ['angry', 'sad', 'surprised', 'intimidated', 'default-happy'] as const;
 
 const clamp = (value: number, min = 0, max = 5): number => Math.min(max, Math.max(min, value));
-
-function mean(values: readonly number[]): number {
-  return values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
-}
 
 function centroid<TLabel extends string>(
   probabilities: Partial<Record<TLabel, number>>,
@@ -49,28 +57,6 @@ function centroid<TLabel extends string>(
     probabilityMass += probability;
   }
   return probabilityMass > 0 ? clamp(weighted / probabilityMass) : 2.5;
-}
-
-class RollingWindow {
-  readonly #values: number[] = [];
-  readonly #size: number;
-
-  constructor(size = 10) {
-    this.#size = size;
-  }
-
-  push(value: number): void {
-    this.#values.push(value);
-    if (this.#values.length > this.#size) this.#values.shift();
-  }
-
-  average(fallback = 2.5): number {
-    return this.#values.length ? mean(this.#values) : fallback;
-  }
-
-  clear(): void {
-    this.#values.length = 0;
-  }
 }
 
 class IntegrityRiskWindow {
@@ -91,6 +77,10 @@ class IntegrityRiskWindow {
     return clamp(current);
   }
 
+  get empty(): boolean {
+    return this.#values.length === 0;
+  }
+
   clear(): void {
     this.#values.length = 0;
   }
@@ -109,112 +99,133 @@ function scale(
   score: number,
   topLabel: string,
   bottomLabel: string,
+  unknown = false,
   stale = false,
   invertPercentage = false,
 ): ScaleSnapshot {
-  const normalized = clamp(score);
-  const percentage = Math.round((invertPercentage ? 1 - normalized / 5 : normalized / 5) * 100);
-  return { key, title, score: normalized, percentage, stale, topLabel, bottomLabel };
+  const normalized = unknown ? 2.5 : clamp(score);
+  const percentage = unknown ? 0 : Math.round((invertPercentage ? 1 - normalized / 5 : normalized / 5) * 100);
+  return { key, title, score: normalized, percentage, unknown, stale, topLabel, bottomLabel };
+}
+
+function readOrdinal<TLabel extends string>(
+  signal: Signal<TLabel> | undefined,
+  anchors: Readonly<Record<TLabel, number>>,
+): { score: number; unknown: boolean } {
+  if (!signal || signal.value === 'unknown') return { score: 2.5, unknown: true };
+  return { score: centroid(signal.probabilities, anchors), unknown: false };
 }
 
 interface CategoryDefinition {
   label: string;
   icon: string;
   gradient: GradientStops;
+  face?: string;
 }
 
 const CATEGORY_CONFIG: Record<CategoryKey, { title: string; unknown: CategoryDefinition; values: Record<string, CategoryDefinition> }> = {
+  emotion: {
+    title: 'Emoción',
+    unknown: { label: 'Sin identificar', icon: '', gradient: GRAY, face: JEV_EMOTION_FACES.unknown },
+    values: {
+      frustrated: { label: 'Frustración', icon: '', gradient: RED, face: JEV_EMOTION_FACES.frustrated },
+      sad: { label: 'Tristeza', icon: '', gradient: ORANGE, face: JEV_EMOTION_FACES.sad },
+      surprised: { label: 'Sorpresa', icon: '', gradient: YELLOW, face: JEV_EMOTION_FACES.surprised },
+      worried: { label: 'Preocupación', icon: '', gradient: YELLOW_GREEN, face: JEV_EMOTION_FACES.worried },
+      relieved: { label: 'Alivio', icon: '', gradient: GREEN, face: JEV_EMOTION_FACES.relieved },
+    },
+  },
   intent: {
     title: 'Intención',
-    unknown: { label: 'Desconocido', icon: 'circle-help', gradient: NEUTRAL },
+    unknown: { label: 'Sin identificar', icon: 'circle-question-mark', gradient: GRAY },
     values: {
-      continue: { label: 'Continuar', icon: 'arrow-right', gradient: GREEN },
-      correct: { label: 'Corregir', icon: 'pencil', gradient: YELLOW },
-      callback: { label: 'Devolver llamada', icon: 'phone', gradient: YELLOW_GREEN },
-      human: { label: 'Transferir a humano', icon: 'user-round', gradient: ORANGE },
-      cancel: { label: 'Cancelar', icon: 'x', gradient: RED },
+      buscar_ips: { label: 'Buscar IPS', icon: 'search', gradient: NEUTRAL },
+      informacion_ips: { label: 'Información de IPS', icon: 'hospital', gradient: NEUTRAL },
+      capacidad_ips: { label: 'Capacidad', icon: 'bed-double', gradient: NEUTRAL },
+      comparar_ips: { label: 'Comparar IPS', icon: 'chart-column', gradient: NEUTRAL },
+      orientacion_salud: { label: 'Orientación', icon: 'compass', gradient: NEUTRAL },
+      fuera_alcance: { label: 'Fuera de alcance', icon: 'circle-slash', gradient: ORANGE },
+      emergencia: { label: 'Emergencia', icon: 'siren', gradient: RED },
     },
   },
-  human: {
-    title: 'Humano',
-    unknown: { label: 'Desconocido', icon: 'circle-help', gradient: NEUTRAL },
+  behavior: {
+    title: 'Comportamiento',
+    unknown: { label: 'Sin identificar', icon: 'circle-question-mark', gradient: GRAY },
     values: {
-      requested: { label: 'Solicitado', icon: 'user-round-check', gradient: YELLOW },
-      not_requested: { label: 'No solicitado', icon: 'user-round-x', gradient: NEUTRAL },
-    },
-  },
-  schedule: {
-    title: 'Flexibilidad',
-    unknown: { label: 'Desconocido', icon: 'circle-help', gradient: NEUTRAL },
-    values: {
-      flexible: { label: 'Flexible', icon: 'clock-arrow-up', gradient: GREEN },
-      fixed: { label: 'Fijo', icon: 'lock-keyhole', gradient: RED },
+      emergency_services: { label: 'Orientar a emergencias', icon: 'siren', gradient: RED },
+      rephrase_with_evidence: { label: 'Reformular con evidencia', icon: 'shield-check', gradient: ORANGE },
+      explain_scope: { label: 'Explicar alcance', icon: 'circle-slash', gradient: YELLOW },
+      correct_search: { label: 'Corregir y simplificar', icon: 'rotate-ccw', gradient: YELLOW },
+      ask_one_clarification: { label: 'Pedir una aclaración', icon: 'message-circle-question-mark', gradient: YELLOW },
+      offer_alternative: { label: 'Ofrecer alternativa', icon: 'split', gradient: YELLOW },
+      facilitate_closing: { label: 'Facilitar el cierre', icon: 'check-check', gradient: GREEN },
+      query_data: { label: 'Consultar datos', icon: 'search', gradient: NEUTRAL },
+      compare_data: { label: 'Comparar datos', icon: 'chart-column', gradient: NEUTRAL },
+      explain_simply: { label: 'Explicar en simple', icon: 'lightbulb', gradient: NEUTRAL },
+      continue: { label: 'Continuar', icon: 'message-circle', gradient: NEUTRAL },
     },
   },
 };
 
-function category(key: CategoryKey, value: string): CategorySnapshot {
+function category(key: CategoryKey, value: string, detail?: string): CategorySnapshot {
   const config = CATEGORY_CONFIG[key];
   const selected = config.values[value] ?? config.unknown;
-  return { key, title: config.title, value, ...selected };
+  return { key, title: config.title, value: config.values[value] ? value : 'unknown', ...selected, detail };
+}
+
+function behaviorDetail(behavior: AgentBehavior | undefined): string | undefined {
+  if (!behavior) return undefined;
+  const tone = behavior.tone === 'calm' ? 'Tono calmado' : 'Tono natural';
+  const length = behavior.response_length === 'short' ? 'Respuesta corta' : 'Respuesta normal';
+  return `${tone} · ${length}`;
 }
 
 export class AgentSignalsProjector {
-  readonly #confirmation = new RollingWindow(10);
   readonly #integrityRisk = new IntegrityRiskWindow();
 
   reset(): void {
-    this.#confirmation.clear();
     this.#integrityRisk.clear();
   }
 
   project(envelope: AgentSignalsEnvelope): AgentSignalsSnapshot {
     const signals = envelope.signals;
-    const satisfaction = centroid(signals.satisfaction.probabilities, SATISFACTION);
-    const tension = centroid(signals.frustration.probabilities, TENSION);
+    const satisfaction = readOrdinal(signals.satisfaction, SATISFACTION);
+    const tension = readOrdinal(signals.frustration, TENSION);
+    const fluency = readOrdinal(signals.fluency, SATISFACTION);
 
-    if (!envelope.aggregated) {
-      if (signals.confirmation) this.#confirmation.push(CONFIRMATION[signals.confirmation.value]);
-      if (signals.integrity) this.#integrityRisk.push(INTEGRITY_RISK[signals.integrity.value]);
+    if (!envelope.aggregated && signals.integrity) {
+      const anchor = INTEGRITY_RISK[signals.integrity.value];
+      if (typeof anchor === 'number') this.#integrityRisk.push(anchor);
     }
-
-    const fluency = signals.fluency
-      ? centroid(signals.fluency.probabilities, SATISFACTION)
-      : envelope.aggregated && signals.confirmation
-        ? centroid(signals.confirmation.probabilities, CONFIRMATION)
-        : this.#confirmation.average();
+    const hallucinationUnknown = envelope.aggregated ? !signals.integrity : this.#integrityRisk.empty;
     const integrityRisk = envelope.aggregated && signals.integrity
       ? aggregateIntegrityRisk(signals.integrity.probabilities)
       : this.#integrityRisk.risk();
-    const hallucinationDisplay = 5 - integrityRisk;
+    const hallucinationDisplay = hallucinationUnknown ? 2.5 : 5 - integrityRisk;
 
     return {
       scales: {
-        satisfaction: scale('satisfaction', 'Satisfacción', satisfaction, 'Muy alta', 'Muy baja'),
-        tension: scale('tension', 'Tensión', tension, 'Calma', 'Tensión', false, true),
-        fluency: scale('fluency', 'Fluidez de conversación', fluency, 'Fluida', 'Trabada', !signals.fluency && !signals.confirmation),
-        hallucination: scale('hallucination', 'Alucinaciones del agente', hallucinationDisplay, 'Muy bajo', 'Muy alto', !signals.integrity, true),
+        satisfaction: scale('satisfaction', 'Satisfacción', satisfaction.score, 'Muy alta', 'Muy baja', satisfaction.unknown),
+        tension: scale('tension', 'Tensión', tension.score, 'Calma', 'Tensión', tension.unknown, false, true),
+        fluency: scale('fluency', 'Fluidez de conversación', fluency.score, 'Fluida', 'Trabada', fluency.unknown),
+        hallucination: scale(
+          'hallucination', 'Alucinaciones del agente', hallucinationDisplay, 'Muy bajo', 'Muy alto',
+          hallucinationUnknown, !signals.integrity && !hallucinationUnknown, true,
+        ),
       },
       categories: {
-        intent: category('intent', signals.intent.value),
-        human: category('human', signals.human.value),
-        schedule: category('schedule', signals.schedule_flexibility.value),
+        emotion: category('emotion', signals.emotion?.value ?? 'unknown'),
+        intent: category('intent', signals.intent?.value ?? 'unknown'),
+        behavior: category('behavior', envelope.behavior?.next_step ?? 'unknown', behaviorDetail(envelope.behavior)),
       },
     };
   }
 }
 
-export function snapScale(score: number): { index: number; position: number; score: number; emotion: typeof EMOTIONS[number] } {
+export function snapScale(score: number, unknown = false): { index: number; position: number; score: number; emotion: string } {
+  if (unknown) return { index: 2, position: .5, score: 2.5, emotion: 'unknown' };
   const index = Math.min(4, Math.max(0, Math.round((clamp(score) / 5) * 4)));
   return { index, position: index / 4, score: index * 1.25, emotion: EMOTIONS[index] };
 }
 
-export const EMPTY_AGENT_SIGNALS: AgentSignalsEnvelope = {
-  signals: {
-    satisfaction: { value: 'neutral', probabilities: { neutral: 1 } },
-    frustration: { value: 'neutral', probabilities: { neutral: 1 } },
-    intent: { value: 'unknown', probabilities: { unknown: 1 } },
-    human: { value: 'unknown', probabilities: { unknown: 1 } },
-    schedule_flexibility: { value: 'unknown', probabilities: { unknown: 1 } },
-  },
-};
+export const EMPTY_AGENT_SIGNALS: AgentSignalsEnvelope = { signals: {} };

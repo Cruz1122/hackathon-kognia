@@ -34,6 +34,7 @@ import '../styles/detail-panel.css';
             <button type="button" data-anchor="neutral">2.5 · surprised</button>
             <button type="button" data-anchor="high">3.75 · intimidated</button>
             <button type="button" data-anchor="very_high">5 · happy</button>
+            <button type="button" data-anchor="unknown">Desconocido</button>
           </div>
           <div class="validation-controls__group">
             <strong>Mirada</strong>
@@ -79,12 +80,13 @@ import '../styles/detail-panel.css';
         lookAt?: (clientX: number, clientY: number) => void;
       }
 
-      const anchors: Record<OrdinalValue, AgentSignalsEnvelope['signals']['satisfaction']['probabilities']> = {
+      const anchors: Record<OrdinalValue, NonNullable<AgentSignalsEnvelope['signals']['satisfaction']>['probabilities']> = {
         very_low: { very_low: 1 },
         low: { low: 1 },
         neutral: { neutral: 1 },
         high: { high: 1 },
         very_high: { very_high: 1 },
+        unknown: { unknown: 1 },
       };
 
       function installValidationControls(): void {

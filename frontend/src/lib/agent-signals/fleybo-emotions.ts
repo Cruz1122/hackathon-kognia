@@ -56,6 +56,7 @@ export const SIGNAL_EMOTIONS: GradientEmotionMap = {
   surprised: { ...SURPRISED, gradient: SIGNAL_EMOTION_GRADIENTS.surprised },
   intimidated: { ...DEFAULT_EMOTIONS.intimidated, gradient: SIGNAL_EMOTION_GRADIENTS.intimidated },
   'default-happy': { ...DEFAULT_EMOTIONS['default-happy'], gradient: SIGNAL_EMOTION_GRADIENTS['default-happy'] },
+  unknown: { ...SURPRISED, gradient: SIGNAL_EMOTION_GRADIENTS.unknown },
   privacy: {
     ...DEFAULT_EMOTIONS.privacy,
     gradient: SIGNAL_EMOTION_GRADIENTS.surprised,

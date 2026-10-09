@@ -4,9 +4,10 @@ import EmptyState from '../ui/EmptyState.astro';
 
 interface Props {
   mode?: 'call' | 'dev';
+  hangup?: boolean;
 }
 
-const { mode = 'call' } = Astro.props;
+const { mode = 'call', hangup = false } = Astro.props;
 ---
 
 <svg width="0" height="0" aria-hidden="true" style="position:absolute">
@@ -58,6 +59,10 @@ const { mode = 'call' } = Astro.props;
               <button class="control" type="button" id="playBtn" aria-label="Pausar llamada" title="Pausar llamada"><i data-lucide="pause" aria-hidden="true"></i></button>
               <span class="control-caption">Pausa</span>
             </div>
+            {hangup && <div class="control-stack">
+              <button class="control" type="button" id="hangupBtn" aria-label="Colgar" title="Colgar"><i data-lucide="phone-off" aria-hidden="true"></i></button>
+              <span class="control-caption">Colgar</span>
+            </div>}
           </div>
         </div>
       </section>

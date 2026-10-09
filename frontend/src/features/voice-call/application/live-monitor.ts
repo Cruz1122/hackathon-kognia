@@ -82,7 +82,8 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const restartBtn = stealButton('rewindBtn');
   const callBtn = stealButton('startBtn');
   const pauseBtn = stealButton('playBtn');
-  if (!callBtn || !restartBtn || !pauseBtn) {
+  const hangupBtn = stealButton('hangupBtn');
+  if (!callBtn || !restartBtn || !pauseBtn || !hangupBtn) {
     return () => undefined;
   }
   const scrollController: ConversationScrollController = mountConversationScroll({
@@ -93,6 +94,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   setControl(restartBtn, 'rotate-ccw', 'Reiniciar', 'Reiniciar llamada');
   setControl(callBtn, 'phone', 'Llamar', 'Empezar llamada');
   setControl(pauseBtn, 'pause', 'Pausa', 'Pausar llamada');
+  setControl(hangupBtn, 'phone-off', 'Colgar', 'Colgar');
   lucideRefresh();
 
   const capture = new AudioCaptureAdapter();
@@ -165,6 +167,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   function syncControls(): void {
     callBtn.disabled = live && !paused;
     pauseBtn.disabled = !live || paused;
+    hangupBtn.disabled = !live;
     restartBtn.disabled = false;
     setControl(callBtn, 'phone', paused ? 'Reanudar' : 'Llamar', paused ? 'Reanudar llamada' : live ? 'Llamada en curso' : 'Empezar llamada');
     lucideRefresh();
@@ -697,6 +700,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (notify) setConnectionStatus('hidden');
     if (notify) {
       patchSession({ status: 'Finalizada' });
+      showToast('Llamada finalizada', 'success');
       appendRow(
         'system-event call-ended',
         `<span class="call-ended-label"><i data-lucide="phone-off"></i><span>Llamada finalizada · ${stamp()}</span></span>`,
@@ -722,6 +726,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   });
   pauseBtn.addEventListener('click', () => {
     pauseCall();
+  });
+  hangupBtn.addEventListener('click', () => {
+    void hangup();
   });
   restartBtn.addEventListener('click', () => {
     void restartCall().catch((error) => {

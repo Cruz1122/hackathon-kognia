@@ -107,6 +107,8 @@ El backend carga automáticamente el archivo `.env` ubicado en la raíz del repo
 - `API_KEY_SODA3`: token de aplicación enviado únicamente desde el backend como `X-App-Token` a la API SODA3 del catálogo de IPS.
 - `SECRET_SODA3`: identificador de la aplicación SODA3; se conserva en el entorno, pero no se envía porque el contrato SODA3 solo requiere el token de aplicación.
 - `IPS_CACHE_TTL_SECONDS`, `IPS_CACHE_EMPTY_TTL_SECONDS`, `IPS_CACHE_STALE_TTL_SECONDS`, `IPS_HTTP_TIMEOUT_SECONDS`, `IPS_HTTP_MAX_ATTEMPTS`: política de caché, timeout y reintentos del adapter IPS.
+- `IPS_CHROMA_COLLECTION`: colección Chroma del snapshot oficial; por defecto `ips_facilities`.
+- `IPS_EMBEDDING_BATCH_SIZE`: tamaño de lote para embeddings e indexación; por defecto `128`.
 - `PIPER_MODEL_DIR`: carpeta que contiene la voz Piper. Por defecto, `backend/models/piper-es`.
 - `PIPER_TTS_VOICE`: nombre de la voz local. Por defecto, `es_MX-claude-high`.
 
@@ -139,6 +141,20 @@ docker compose exec -w /app/backend \
 ```
 
 El comando requiere `DATABASE_URL` si no se usa el valor local predeterminado y no se ejecuta automáticamente durante el startup del backend.
+
+La ingesta oficial de IPS también es explícita e idempotente; no se ejecuta en
+el `lifespan` de FastAPI:
+
+```bash
+cd backend
+.venv/bin/alembic -c alembic.ini upgrade head
+.venv/bin/python -m app.domains.ips.bootstrap
+```
+
+El mismo flujo está disponible como `make ingest-ips`. Descarga todas las
+páginas de `s2ru-bqt6`, materializa el snapshot en PostgreSQL e indexa una
+representación por sede en la colección Chroma `ips_facilities`. La versión
+anterior sigue activa hasta verificar que el índice nuevo está completo.
 
 Puedes exportar las variables antes de iniciar cada proceso, por ejemplo:
 

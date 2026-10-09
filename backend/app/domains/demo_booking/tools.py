@@ -20,12 +20,8 @@ CONTEXT_INSTRUCTIONS = (
     'This demo cannot accommodate groups larger than ten at any time; changing the hour does not resolve that limit. '
     'Explain that concrete limit and offer assistance, never an invented available slot. '
     'Do not promise split-group reservations, neighboring tables or a multi-table arrangement; those options are '
-    'not supported by this demo. Offer human assistance to assess larger groups instead. '
-    'When schedule_flexibility is flexible and the requested slot is unavailable, offer a different time instead of repeating the same search.'
+    'not supported by this demo. Offer human assistance to assess larger groups instead.'
 )
-JEV_QUESTIONS = {
-    'schedule_flexibility': ('Has the customer indicated willingness to change their requested booking time?', ['flexible', 'fixed', 'unknown']),
-}
 
 
 class BookingArgs(BaseModel):

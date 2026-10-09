@@ -28,13 +28,13 @@ from .schemas import (
 
 
 _SIGNAL_DEFAULTS = {
-    "satisfaction": "neutral",
-    "frustration": "neutral",
+    "satisfaction": "unknown",
+    "frustration": "unknown",
+    "fluency": "unknown",
+    "emotion": "unknown",
     "intent": "unknown",
-    "human": "unknown",
-    "schedule_flexibility": "unknown",
 }
-_DISPLAY_SIGNAL_KEYS = {*_SIGNAL_DEFAULTS, "confirmation", "integrity", "fluency"}
+_DISPLAY_SIGNAL_KEYS = {*_SIGNAL_DEFAULTS, "integrity"}
 
 
 def _aggregate_agent_signals(snapshots: list[dict]) -> AgentSignalsAggregate | None:
@@ -54,8 +54,6 @@ def _aggregate_agent_signals(snapshots: list[dict]) -> AgentSignalsAggregate | N
             value = raw_signal.get("value")
             if not isinstance(value, str) or not value:
                 continue
-            if key in {"satisfaction", "frustration"} and value == "unknown":
-                value = "neutral"
             raw_probabilities = raw_signal.get("probabilities")
             probabilities = {
                 str(label): float(probability)
@@ -65,8 +63,6 @@ def _aggregate_agent_signals(snapshots: list[dict]) -> AgentSignalsAggregate | N
                 and isinstance(probability, (int, float))
                 and probability >= 0
             } if isinstance(raw_probabilities, dict) else {}
-            if key in {"satisfaction", "frustration"} and "unknown" in probabilities:
-                probabilities["neutral"] = probabilities.get("neutral", 0.0) + probabilities.pop("unknown")
             mass = sum(probabilities.values())
             if mass <= 0:
                 probabilities = {value: 1.0}

@@ -42,6 +42,8 @@ Plantilla: `backend/.env.example`. No versionar `.env` ni keys.
 | `IPS_CACHE_STALE_TTL_SECONDS` | `86400` | TTL de fallback stale ante errores transitorios |
 | `IPS_HTTP_TIMEOUT_SECONDS` | `10` | timeout por solicitud a SODA3 |
 | `IPS_HTTP_MAX_ATTEMPTS` | `3` | máximo de intentos para 429/5xx/transporte |
+| `IPS_CHROMA_COLLECTION` | `ips_facilities` | colección semántica independiente de sedes |
+| `IPS_EMBEDDING_BATCH_SIZE` | `128` | sedes procesadas por lote de embeddings/upsert |
 
 El dataset se consulta por `POST` a la URL fija de SODA3 para `s2ru-bqt6`; no
 se expone el token al frontend.

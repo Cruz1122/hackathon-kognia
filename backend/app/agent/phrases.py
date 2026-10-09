@@ -16,6 +16,12 @@ SILENCE = (
     '¿Me escuchas bien? Estoy aquí para ayudarte.',
     '¿Continuamos? Dime si necesitas un momento.',
 )
+EMERGENCY_GUIDANCE = 'Si es una emergencia, llama ahora al 123 o ve al servicio de urgencias más cercano.'
+IPS_GREETING = (
+    'Hola, soy un asistente de información de IPS y hospitales de Colombia. '
+    'Puedo ayudarte a encontrar instituciones, consultar su información registrada '
+    'y conocer las capacidades registradas.'
+)
 
 def pick(pool: tuple[str, ...], previous: str | None = None) -> str:
     return random.choice(tuple(text for text in pool if text != previous) or pool)

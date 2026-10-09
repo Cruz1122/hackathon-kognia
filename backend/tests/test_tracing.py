@@ -13,6 +13,12 @@ from app.providers import FakeLLM
 @pytest.mark.asyncio
 async def test_stream_agent_populates_trace_recorder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
+    from app.domains.ips import tools as ips_tools
+
+    async def no_snapshot():
+        return None
+
+    monkeypatch.setattr(ips_tools.repository, "active_snapshot", no_snapshot)
 
     async def handler(config, prompt, *, messages=None, tools=None):
         del config, prompt
@@ -20,7 +26,7 @@ async def test_stream_agent_populates_trace_recorder(monkeypatch: pytest.MonkeyP
             yield "token", {"text": "7"}
             return
         yield "tool_calls", {
-            "calls": [{"id": "call_1", "name": "sum_numbers", "arguments": '{"numbers":[3,4]}'}]
+            "calls": [{"id": "call_1", "name": "search_ips", "arguments": '{"query":"Hospital"}'}]
         }
 
     recorder = TraceRecorder(
@@ -43,14 +49,14 @@ async def test_stream_agent_populates_trace_recorder(monkeypatch: pytest.MonkeyP
     assert names[0] == "agent.turn"
     assert "rag.retrieve" in names
     assert names.count("llm.request") == 2
-    assert "tool.sum_numbers" in names
+    assert "tool.search_ips" in names
     assert data["status"] == "ok"
     assert data["answer"] == "7"
 
-    tool_span = next(span for span in data["spans"] if span["name"] == "tool.sum_numbers")
+    tool_span = next(span for span in data["spans"] if span["name"] == "tool.search_ips")
     assert tool_span["attributes"]["ok"] is True
-    assert tool_span["attributes"]["result"] == "7"
-    assert tool_span["attributes"]["arguments"] == {"numbers": [3, 4]}
+    assert "no_active_snapshot" in tool_span["attributes"]["result"]
+    assert tool_span["attributes"]["arguments"] == {"query": "Hospital"}
 
 
 @pytest.mark.asyncio

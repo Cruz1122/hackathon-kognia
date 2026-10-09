@@ -670,8 +670,8 @@ class TelephonyRuntime:
                 await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
             session.idle_since = time.monotonic()
             return
-        from ..agent.state import ASSISTANT_NAME, greeting
-        text = f'{greeting()}. Soy {ASSISTANT_NAME}, tu asistente del restaurante. Para empezar, ¿cómo te llamas?'
+        from ..agent.phrases import IPS_GREETING
+        text = IPS_GREETING
         session.greeted = True
         session.turn_task = asyncio.current_task()  # barge-in can cancel the greeting
         session.history.append({'role': 'assistant', 'content': text})

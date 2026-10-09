@@ -649,7 +649,7 @@ async def test_model_cannot_claim_a_call_it_did_not_place(fixture, monkeypatch):
 
     events = await turn(fixture, 'cuéntame de la reserva', 'no-call-claim', model_lie, channel='whatsapp')
     assert dial.await_count == 0
-    assert 'no he podido iniciar la llamada' in next(data['text'] for kind, data in events if kind == 'token')
+    assert 'No puedo hacer llamadas desde aquí' in next(data['text'] for kind, data in events if kind == 'token')
 
 
 async def test_jev_receives_persisted_history_before_first_turn(fixture, monkeypatch):

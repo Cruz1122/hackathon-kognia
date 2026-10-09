@@ -176,6 +176,7 @@ async def stream_agent(
 async def _generate(
     prompt: str, *, messages=None, llm=None, tool_context=None, system_context: str = '', tools_enabled: bool = True,
     knowledge_sink: list[str] | None = None, trace: TraceRecorder | None = None,
+    use_document_rag: bool = True, history_limit: int | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm
@@ -190,12 +191,15 @@ async def _generate(
         else [config for config in chain for _ in range(attempts_per_model)]
     )
 
-    history = context_window(messages)
+    history = context_window(messages, limit=history_limit)
     tools_available = (
         [tool.name for tool in CANONICAL_TOOLS] if provider.capabilities.supports_tools else []
     )
     recorder.start(prompt, history, tools_available)
-    knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, history)
+    if use_document_rag:
+        knowledge, used_rag, retrieval_topic, retrieval_hits = await _retrieve_knowledge(prompt, history)
+    else:
+        knowledge, used_rag, retrieval_topic, retrieval_hits = [], False, None, []
     recorder.record_retrieval(used_rag=used_rag, topic=retrieval_topic, hits=retrieval_hits)
     if knowledge_sink is not None:
         knowledge_sink[:] = [str(item.get('content') or '') for item in knowledge if item.get('content')]
@@ -456,6 +460,10 @@ async def _retrieve_knowledge(
     prompt: str,
     messages: Sequence[Message] | None,
 ) -> tuple[list[Message], bool, str | None, list[RetrievalHit]]:
+    if TOOL_REGISTRY.resolve("search_ips") is not None:
+        # The IPS runtime is grounded through versioned tools and its dedicated
+        # Chroma collection. Never expose a retained legacy rag_documents corpus.
+        return [], False, None, []
     recent = list(messages or [])[-4:]
     query = _contextual_query(prompt, recent)
     try:

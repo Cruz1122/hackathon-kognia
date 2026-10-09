@@ -4,6 +4,9 @@ import {
   updateAgentSignals,
   type AgentSignalsPanelElement,
 } from '../../../lib/agent-signals/dom';
+import { showToast } from '../infrastructure/toast';
+
+let announcedEmergency = false;
 
 function panel(): AgentSignalsPanelElement | null {
   const target = document.getElementById('callAgentSignals');
@@ -14,11 +17,17 @@ export function applyCallAgentSignals(payload: unknown): boolean {
   const target = panel();
   const envelope = parseAgentSignalsEnvelope(payload);
   if (!target || !envelope) return false;
+  const emergency = envelope.behavior?.next_step === 'emergency_services';
+  if (emergency && !announcedEmergency) {
+    showToast('Posible emergencia: el agente prioriza la línea 123', 'warning');
+  }
+  announcedEmergency = emergency;
   updateAgentSignals(target, envelope);
   return true;
 }
 
 export function resetCallAgentSignals(): void {
+  announcedEmergency = false;
   const target = panel();
   if (!target) return;
   target.dataset.hasObservedData = 'false';

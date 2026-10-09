@@ -1,5 +1,4 @@
-import type { AgentSignalsEnvelope } from './types';
-import { EMPTY_AGENT_SIGNALS } from './model';
+import type { AgentBehavior, AgentSignalsEnvelope, EmotionValue, IntentValue, NextStep, OrdinalValue } from './types';
 
 export interface AgentSignalsPanelElement extends HTMLElement {
   setSignals?: (data: AgentSignalsEnvelope) => void;
@@ -20,6 +19,18 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
+const ORDINAL = ['very_low', 'low', 'neutral', 'high', 'very_high', 'unknown'] as const;
+const EMOTIONS = ['frustrated', 'sad', 'surprised', 'worried', 'relieved', 'unknown'] as const;
+const INTENTS = [
+  'buscar_ips', 'informacion_ips', 'capacidad_ips', 'comparar_ips',
+  'orientacion_salud', 'fuera_alcance', 'emergencia', 'unknown',
+] as const;
+const NEXT_STEPS = [
+  'emergency_services', 'rephrase_with_evidence', 'explain_scope', 'correct_search',
+  'ask_one_clarification', 'offer_alternative', 'facilitate_closing', 'query_data',
+  'compare_data', 'explain_simply', 'continue',
+] as const;
+
 function signal<TValue extends string>(
   value: unknown,
   allowed: readonly TValue[],
@@ -39,39 +50,44 @@ function signal<TValue extends string>(
   return { value: selected, probabilities };
 }
 
-function ordinalSignal(value: unknown, fallback: typeof EMPTY_AGENT_SIGNALS.signals.satisfaction.value) {
-  const labels = ['very_low', 'low', 'neutral', 'high', 'very_high'] as const;
-  const parsed = signal(value, labels, fallback);
-  const unknown = record(record(value).probabilities).unknown;
-  if (typeof unknown === 'number' && Number.isFinite(unknown) && unknown >= 0) {
-    parsed.probabilities.neutral = (parsed.probabilities.neutral ?? 0) + unknown;
-  }
-  return parsed;
+function optionalSignal<TValue extends string>(
+  value: unknown,
+  allowed: readonly TValue[],
+  fallback: TValue,
+): { value: TValue; probabilities: Partial<Record<TValue, number>> } | undefined {
+  if (value == null) return undefined;
+  return signal(value, allowed, fallback);
+}
+
+function parseBehavior(value: unknown): AgentBehavior | undefined {
+  const source = record(value);
+  const nextStep = source.next_step;
+  if (typeof nextStep !== 'string' || !NEXT_STEPS.includes(nextStep as NextStep)) return undefined;
+  return {
+    tone: source.tone === 'calm' ? 'calm' : 'natural',
+    response_length: source.response_length === 'short' ? 'short' : 'normal',
+    next_step: nextStep as NextStep,
+  };
 }
 
 export function parseAgentSignalsEnvelope(value: unknown, aggregated = false): AgentSignalsEnvelope | null {
   const source = record(value);
   const signals = record(source.signals);
-  if (!Object.keys(signals).length) return null;
-  const confirmation = signals.confirmation
-    ? signal(signals.confirmation, ['rejected', 'uncertain', 'explicit'] as const, 'uncertain')
-    : undefined;
-  const integrity = signals.integrity
-    ? signal(signals.integrity, ['unsupported', 'uncertain', 'supported'] as const, 'uncertain')
-    : undefined;
+  const behavior = parseBehavior(source.behavior);
+  if (!Object.keys(signals).length && !behavior) return null;
+  const integrity = optionalSignal(signals.integrity, ['unsupported', 'uncertain', 'supported'] as const, 'uncertain');
   const sampleCount = typeof source.sample_count === 'number' ? source.sample_count : undefined;
   return {
     aggregated,
     sampleCount,
+    behavior,
     signals: {
-      satisfaction: ordinalSignal(signals.satisfaction, EMPTY_AGENT_SIGNALS.signals.satisfaction.value),
-      frustration: ordinalSignal(signals.frustration, EMPTY_AGENT_SIGNALS.signals.frustration.value),
-      fluency: signals.fluency ? ordinalSignal(signals.fluency, 'neutral') : undefined,
-      confirmation,
+      satisfaction: optionalSignal(signals.satisfaction, ORDINAL, 'unknown' satisfies OrdinalValue),
+      frustration: optionalSignal(signals.frustration, ORDINAL, 'unknown'),
+      fluency: optionalSignal(signals.fluency, ORDINAL, 'unknown'),
       integrity,
-      intent: signal(signals.intent, ['continue', 'correct', 'cancel', 'callback', 'human', 'unknown'] as const, 'unknown'),
-      human: signal(signals.human, ['requested', 'not_requested', 'unknown'] as const, 'unknown'),
-      schedule_flexibility: signal(signals.schedule_flexibility, ['flexible', 'fixed', 'unknown'] as const, 'unknown'),
+      emotion: optionalSignal(signals.emotion, EMOTIONS, 'unknown' satisfies EmotionValue),
+      intent: optionalSignal(signals.intent, INTENTS, 'unknown' satisfies IntentValue),
     },
   };
 }

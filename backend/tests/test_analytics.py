@@ -161,8 +161,14 @@ def test_final_jev_probabilities_are_averaged_per_conversation() -> None:
     assert aggregate.sample_count == 2
     assert aggregate.signals["satisfaction"].probabilities == {"high": .4, "neutral": .3, "low": .3}
     assert aggregate.signals["fluency"].probabilities == {"high": .375, "neutral": .375, "low": .25}
-    assert aggregate.signals["confirmation"].probabilities == {"explicit": .5, "uncertain": .5}
-    assert aggregate.signals["human"].value == "unknown"
+    assert "confirmation" not in aggregate.signals
+    assert aggregate.signals["emotion"].value == "unknown"
+    assert aggregate.signals["intent"].probabilities == {"continue": .5, "correct": .5}
+    unknown = _aggregate_agent_signals([
+        {"signals": {"satisfaction": {"value": "unknown", "probabilities": {"unknown": 1}}}},
+    ])
+    assert unknown.signals["satisfaction"].value == "unknown"
+    assert unknown.signals["satisfaction"].probabilities == {"unknown": 1.0}
 
 
 @pytest.mark.asyncio

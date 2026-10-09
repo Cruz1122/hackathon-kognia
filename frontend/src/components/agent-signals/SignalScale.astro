@@ -9,12 +9,14 @@ interface Props {
 }
 
 const { snapshot } = Astro.props;
-const snapped = snapScale(snapshot.score);
+const snapped = snapScale(snapshot.score, snapshot.unknown);
+const percentageLabel = snapshot.unknown ? '—' : `${snapshot.percentage}%`;
+const valueText = snapshot.unknown ? 'sin datos' : `${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`;
 ---
 
 <article class="signal-scale" data-signal-scale={snapshot.key}>
   <h2 class="signal-scale__title">{snapshot.title}</h2>
-  <p class="signal-scale__percentage" data-scale-percentage>{snapshot.percentage}%</p>
+  <p class="signal-scale__percentage" data-scale-percentage>{percentageLabel}</p>
 
   <div
     class="signal-scale__meter"
@@ -22,8 +24,8 @@ const snapped = snapScale(snapshot.score);
     aria-valuemin="0"
     aria-valuemax="5"
     aria-valuenow={snapshot.score.toFixed(2)}
-    aria-valuetext={`${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`}
-    aria-label={`${snapshot.title}: ${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`}
+    aria-valuetext={valueText}
+    aria-label={`${snapshot.title}: ${valueText}`}
     data-scale-meter
   >
     <div class="signal-scale__rail">
@@ -40,7 +42,7 @@ const snapped = snapScale(snapshot.score);
           emotions={SIGNAL_EMOTIONS}
           mergeDefaultEmotions={false}
           pointerTracking={false}
-          ariaLabel={`${snapshot.title}: ${snapshot.percentage}%`}
+          ariaLabel={`${snapshot.title}: ${valueText}`}
         />
       </div>
     </div>

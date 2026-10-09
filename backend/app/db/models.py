@@ -550,6 +550,110 @@ class ProductInterest(Base):
     )
 
 
+class IPSSnapshot(Base):
+    """Immutable normalized copy of the official ``s2ru-bqt6`` dataset."""
+
+    __tablename__ = "ips_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dataset_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="staging", server_default="staging")
+    source_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    site_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    cutoff_values: Mapped[list] = mapped_column(JSON, nullable=False)
+    source_values: Mapped[list] = mapped_column(JSON, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False
+    )
+
+    sites: Mapped[list[IPSSite]] = relationship(
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="noload",
+    )
+
+    __table_args__ = (
+        CheckConstraint("status IN ('staging', 'active', 'inactive', 'failed')", name="ck_ips_snapshots_status"),
+        CheckConstraint("source_row_count > 0", name="ck_ips_snapshots_source_rows_positive"),
+        CheckConstraint("site_count > 0", name="ck_ips_snapshots_sites_positive"),
+        Index("ix_ips_snapshots_status_created_at", "status", "created_at"),
+    )
+
+
+class IPSSite(Base):
+    """One consolidated physical IPS site within one immutable snapshot."""
+
+    __tablename__ = "ips_sites"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("ips_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    site_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    nit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    verification_digit: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    nature: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    care_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    site_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    site_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    manager: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    department: Mapped[str] = mapped_column(String(128), nullable=False)
+    municipality: Mapped[str] = mapped_column(String(128), nullable=False)
+    cutoff: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+
+    snapshot: Mapped[IPSSnapshot] = relationship(back_populates="sites", lazy="noload")
+    capacities: Mapped[list[IPSCapacity]] = relationship(
+        back_populates="site",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "site_code", name="uq_ips_sites_snapshot_site_code"),
+        Index("ix_ips_sites_snapshot_department_municipality", "snapshot_id", "department", "municipality"),
+        Index("ix_ips_sites_snapshot_name", "snapshot_id", "site_name"),
+        Index("ix_ips_sites_snapshot_provider_name", "snapshot_id", "provider_name"),
+    )
+
+
+class IPSCapacity(Base):
+    """Installed capacity category; it is not real-time availability."""
+
+    __tablename__ = "ips_capacities"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("ips_sites.id", ondelete="CASCADE"), nullable=False
+    )
+    group_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_record: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source_row_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    site: Mapped[IPSSite] = relationship(back_populates="capacities", lazy="noload")
+
+    __table_args__ = (
+        CheckConstraint("quantity >= 0", name="ck_ips_capacities_quantity_nonnegative"),
+        UniqueConstraint("site_id", "source_row_hash", name="uq_ips_capacities_site_source_row"),
+        Index("ix_ips_capacities_site_id", "site_id"),
+        Index("ix_ips_capacities_group_description", "group_name", "description"),
+    )
+
+
 class AgentTrace(Base):
     __tablename__ = "agent_traces"
 
@@ -588,6 +692,9 @@ __all__ = [
     "CallStatus",
     "Conversation",
     "Customer",
+    "IPSCapacity",
+    "IPSSite",
+    "IPSSnapshot",
     "Message",
     "MessageRole",
     "Organization",

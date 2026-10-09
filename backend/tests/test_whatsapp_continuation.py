@@ -88,12 +88,12 @@ def test_render_transcript_labels_roles_and_truncates():
 
 
 def test_continuation_tone_reads_jev_signals():
-    assert 'solution-focused' in continuation_tone(_state(frustration='high'))
-    assert 'move smoothly' in continuation_tone(_state(satisfaction='very_high'))
+    assert 'acknowledge the specific mistake' in continuation_tone(_state(frustration='high'))
+    assert 'at most two short sentences' in continuation_tone(_state(frustration='very_high'))
     assert 'frustrado' not in continuation_tone(_state(frustration='high'))
-    assert 'persona' in continuation_tone(_state(human='requested'))
-    assert 'without rushing' in continuation_tone(_state(frustration='low'))
-    assert 'remains unresolved' in continuation_tone(_state(satisfaction='low'))
+    assert 'persona' not in continuation_tone(_state(human='requested'))
+    assert 'concrete alternative' in continuation_tone(_state(satisfaction='low'))
+    assert continuation_tone(_state(satisfaction='very_high')) == ''
     assert continuation_tone(None) == ''
 
 
@@ -114,7 +114,8 @@ async def test_continuation_uses_llm_recap_with_tone(whatsapp_env):
     text = await continuation_message('c', 'o', 'call-1', db=db, llm=llm, chain=[CONFIG])
     assert text == 'Lamento el corte. Hablamos de tu reserva; ¿retomamos?'
     prompt = llm.prompts[0]
-    assert 'quiero reservar para Juan' in prompt and 'solution-focused' in prompt and 'persona' in prompt
+    assert 'quiero reservar para Juan' in prompt and 'acknowledge the specific mistake' in prompt
+    assert 'persona' not in prompt
     assert 'El cliente se mostró frustrado' not in prompt
 
 

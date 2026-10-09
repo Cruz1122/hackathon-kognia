@@ -138,14 +138,8 @@ def continuation_tone(state) -> str:
     """Reuse current adaptive service behavior without exposing sentiment labels."""
     if state is None:
         return ''
-    hints: list[str] = []
-    human = state.signals.get('human')
     behavior = state.behavior_guidance()
-    if behavior:
-        hints.append(behavior)
-    if human and human.value == 'requested':
-        hints.append('El cliente pidió hablar con una persona: reconócelo y menciona que un asesor le dará seguimiento.')
-    return (' '.join(hints) + ' ') if hints else ''
+    return (behavior + ' ') if behavior else ''
 
 
 def render_transcript(rows) -> str:
