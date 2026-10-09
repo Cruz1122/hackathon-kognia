@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
-from ..features.transcription.service import SpeechSanitizer, recent_speech_tail, recover_short_transcript, speech_activity
+from ..features.transcription.service import SpeechSanitizer, recent_speech_tail, recover_short_transcript
 from .audio import mixed_call_wav, pcm16le_rms, resolve_byte_order, timeline_ms, wire_to_pcm16le
 from .bridge import _speak, run_agent_turn
 from .frames import CHANNEL_CUSTOMER, encode_audio_frame
@@ -48,7 +48,7 @@ def _duration_setting(name: str, default: float, minimum: float) -> float:
 
 # Endpoint detection from the recognizer is useful, but it can fire on a short
 # pause or a competing voice. A real silence gap is the authoritative boundary.
-SILENCE_SECONDS = _duration_setting("VOICE_SILENCE_SECONDS", 0.65, 0.35)
+SILENCE_SECONDS = _duration_setting("VOICE_SILENCE_SECONDS", 1.15, 0.5)
 MAX_UTTERANCE_SECONDS = _duration_setting("VOICE_MAX_UTTERANCE_SECONDS", 12.0, 4.0)
 
 
@@ -547,25 +547,24 @@ class TelephonyRuntime:
                 ),
             )
         rms = pcm16le_rms(pcm)
-        _level, speaking, rms = speech_activity(pcm, 16000, speech_rms=SPEECH_RMS)
-        if speaking:
+        if rms >= SPEECH_RMS:
             session.idle_since = time.monotonic()
         busy = session.turn_task is not None and not session.turn_task.done()
         initial_greeting = busy and session.turn_task is session.greet_task
         kept_preroll = False
         if busy and not initial_greeting and not session.barge_pending:
             now = time.monotonic()
-            if speaking:
+            if rms >= SPEECH_RMS:
                 session.overlap_voice_at = now
             if rms >= SPEECH_RMS or session.barge_pcm:
                 session.barge_pcm.extend(pcm)
                 del session.barge_pcm[:-64000]  # Bounded two-second pre-roll at 16 kHz.
             armed = now >= session.turn_started_at + BARGE_ARM_SECONDS
-            if armed and (speaking or rms >= BARGE_RMS):
+            if armed and rms >= BARGE_RMS:
                 session.barge_hits += 1
             else:
                 session.barge_hits = 0
-            if armed and ((speaking and rms >= BARGE_STRONG_RMS) or session.barge_hits >= BARGE_HITS):
+            if armed and (rms >= BARGE_STRONG_RMS or session.barge_hits >= BARGE_HITS):
                 session.barge_hits = 0
                 session.overlap_voice_at = 0.0
                 kept_preroll = True
@@ -603,7 +602,7 @@ class TelephonyRuntime:
             session.speech_sanitizer = SpeechSanitizer(SPEECH_RMS)
         clean = session.speech_sanitizer.sanitize(pcm, 16000)
         now = time.monotonic()
-        if speaking:
+        if rms >= SPEECH_RMS:
             session.last_voice_at = now
             if session.first_voice_at <= 0:
                 session.first_voice_at = now

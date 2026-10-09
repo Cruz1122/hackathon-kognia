@@ -460,46 +460,6 @@ def pcm_speech_features(pcm: bytes, sample_rate: int = 16000) -> tuple[float, bo
     return level, voiced, rms
 
 
-def _spectral_voice_features(pcm: bytes, sample_rate: int) -> tuple[float, float, float]:
-    """Return (spectral flatness, centroid Hz, peak-to-mean ratio)."""
-    samples = _pcm_to_float(pcm)
-    if samples.size < 32 or sample_rate <= 0:
-        return 1.0, 0.0, 0.0
-    centered = samples - float(np.mean(samples))
-    spectrum = np.abs(np.fft.rfft(centered * np.hanning(samples.size))) ** 2 + 1e-12
-    frequencies = np.fft.rfftfreq(samples.size, 1.0 / sample_rate)
-    mask = (frequencies >= 100.0) & (frequencies <= min(4000.0, sample_rate / 2.0))
-    band = spectrum[mask]
-    if band.size == 0:
-        return 1.0, 0.0, 0.0
-    flatness = float(np.exp(np.mean(np.log(band))) / max(float(np.mean(band)), 1e-12))
-    centroid = float(np.sum(frequencies[mask] * band) / max(float(np.sum(band)), 1e-12))
-    peak_ratio = float(np.max(band) / max(float(np.mean(band)), 1e-12))
-    return flatness, centroid, peak_ratio
-
-
-def speech_activity(
-    pcm: bytes,
-    sample_rate: int = 16000,
-    *,
-    speech_rms: float = 0.01,
-) -> tuple[float, bool, float]:
-    """Return the visual level, a noise-resistant speech decision, and RMS.
-
-    RMS alone is not a voice detector: loud fans, traffic, and white noise can
-    cross the old threshold. Speech has a less-flat spectrum and normally has
-    energy above the low-frequency rumble band. A short hangover in
-    ``SpeechSanitizer`` preserves unvoiced consonants after a voiced frame.
-    """
-    level, voiced, rms = pcm_speech_features(pcm, sample_rate)
-    if rms < max(0.003, speech_rms * 0.35):
-        return level, False, rms
-    flatness, centroid, peak_ratio = _spectral_voice_features(pcm, sample_rate)
-    spectral_voice = flatness <= 0.35 and centroid >= 300.0
-    clean_tone = voiced and centroid >= 180.0 and peak_ratio >= 100.0
-    return level, spectral_voice or clean_tone, rms
-
-
 _HIGHPASS_HZ = 100.0
 _GATE_HANGOVER_SECONDS = 0.16
 _GATE_PREROLL_SECONDS = 0.12
@@ -519,7 +479,8 @@ class SpeechSanitizer:
         usable = pcm[: len(pcm) - len(pcm) % 2]
         if len(usable) < 2 or sample_rate <= 0:
             return b""
-        _level, speech, rms = speech_activity(usable, sample_rate, speech_rms=self.speech_rms)
+        _level, voiced, rms = pcm_speech_features(usable, sample_rate)
+        speech = voiced or rms >= self.speech_rms
         # A non-speech frame must not inherit a DC step from the previous sample.
         filtered = self._highpass(usable, sample_rate, match_start=not speech)
         count = len(filtered) // 2

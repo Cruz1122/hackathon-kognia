@@ -1,5 +1,4 @@
 import math
-import random
 import struct
 
 from app.features.transcription.service import pcm_wave_level, polish_spanish_punctuation
@@ -72,18 +71,6 @@ def test_speech_sanitizer_zeroes_quiet_noise() -> None:
     noise = _quiet_noise()
     cleaned = SpeechSanitizer(0.01).sanitize(noise, 16000)
     assert cleaned == b"\x00\x00" * (len(noise) // 2)
-
-
-def test_speech_sanitizer_rejects_loud_broadband_noise() -> None:
-    from app.features.transcription.service import SpeechSanitizer, speech_activity
-
-    rng = random.Random(42)
-    values = [rng.randint(-10000, 10000) for _ in range(1600)]
-    noise = struct.pack(f"<{len(values)}h", *values)
-    _level, speaking, rms = speech_activity(noise, 16000, speech_rms=0.01)
-    assert rms > 0.01
-    assert speaking is False
-    assert SpeechSanitizer(0.01).sanitize(noise, 16000) == b"\x00\x00" * 1600
 
 
 def test_speech_sanitizer_holds_a_frame_after_speech() -> None:

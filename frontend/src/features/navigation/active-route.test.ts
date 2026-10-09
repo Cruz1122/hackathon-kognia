@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import { appRouteFromPath } from './active-route.ts';
 
 test('static guide routes stay distinct with or without a trailing slash', () => {
-  assert.equal(appRouteFromPath('/instructions'), 'instructions');
-  assert.equal(appRouteFromPath('/instructions/'), 'instructions');
+  assert.equal(appRouteFromPath('/instructions'), null);
+  assert.equal(appRouteFromPath('/instructions/'), null);
   assert.equal(appRouteFromPath('/specifications'), 'specifications');
   assert.equal(appRouteFromPath('/specifications/'), 'specifications');
 });

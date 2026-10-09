@@ -36,7 +36,6 @@ const dashboardSteps: DriveStep[] = [
   pointed('dashboard-filters', 'Periodo', 'Desde y Hasta acotan la consulta. Actualizar vuelve a pedir las métricas. El recorrido no pulsa ese botón.', 'bottom'),
   pointed('dashboard-kpis', 'Indicadores', 'Revenue generado, ventas ganadas, tasa de conversión y revenue recuperado, con la variación frente al periodo anterior.', 'bottom'),
   pointed('dashboard-secondary', 'Volumen y recuperación', 'Conversaciones, ventas recuperadas y la tasa de recuperación del mismo periodo.', 'bottom'),
-  pointed('dashboard-costs', 'Costo estimado', 'Gasto del periodo calculado con telemetría real: tokens del modelo (OpenAI/Gemini), tokens de entrada de Jev (US$0,042 por millón; la salida es gratis) y caracteres hablados con ElevenLabs (US$22 por 121k). La transcripción corre en local y no cuesta.', 'bottom'),
   pointed('dashboard-signals', 'Señales de las llamadas', 'Cómo se sienten, avanzan y confían las conversaciones. Solo aparece cuando hay llamadas con señales.', 'top'),
   pointed('dashboard-charts', 'Gráficos', 'Conversión, recuperación, ruta comercial, pérdidas, objeciones y productos, con lo que devolvió el servidor.', 'top'),
   pointed('app-header', 'Menú', 'Demo identifica la sesión. Desde aquí se abre Dashboard, Llamadas, Modo dev y Especificaciones. Entrar a Llamadas no inicia una llamada.', 'bottom'),
