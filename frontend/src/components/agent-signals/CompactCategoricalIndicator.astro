@@ -16,10 +16,20 @@ const { snapshot } = Astro.props;
   data-value={snapshot.value}
 >
   <dt>{snapshot.title}</dt>
-  <dd data-category-label>{snapshot.label}</dd>
+  <dd>
+    <span data-category-label>{snapshot.label}</span>
+    <span class="compact-category__detail" data-category-detail hidden={!snapshot.detail}>{snapshot.detail}</span>
+  </dd>
 </div>
 
 <style>
+  .compact-category__detail {
+    display: block;
+    margin-top: 2px;
+    font: 600 .72rem/1.3 "Urbanist", sans-serif;
+    color: color-mix(in srgb, var(--ui-graphite, #414141) 68%, transparent);
+  }
+
   .compact-category dd {
     opacity: 1;
     translate: 0 0;

@@ -1,4 +1,4 @@
-.PHONY: help setup smoke \
+.PHONY: help setup smoke ingest-ips \
 	dev-api dev-web \
 	build build-api build-web \
 	check-venv check-image-size docker-cache-prune
@@ -16,6 +16,7 @@ help:
 	@echo "make build-api  compileall de Python"
 	@echo "make build-web  build de Astro"
 	@echo "make smoke      health check de la API"
+	@echo "make ingest-ips descarga e indexa el snapshot oficial IPS"
 	@echo "make check-image-size  mide las imágenes únicas de Compose"
 	@echo "make docker-cache-prune  limita la caché de BuildKit a 5 GB"
 
@@ -44,6 +45,9 @@ build-web:
 
 smoke:
 	./scripts/smoke.sh
+
+ingest-ips: check-venv
+	cd backend && .venv/bin/python -m app.domains.ips.bootstrap
 
 check-image-size:
 	./scripts/check-compose-image-size.sh

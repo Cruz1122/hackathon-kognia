@@ -74,10 +74,9 @@ async def test_fresh_call_onboarding_introduces_role_and_asks_one_question(monke
     monkeypatch.setattr(runtime_module, '_speak', speak)
     await runtime._greet(call)
     text = speak.call_args.args[2]
-    assert 'Soy Wane' in text
-    assert 'asistente del restaurante' in text
-    assert text.count('¿') == 1
-    assert '¿cómo te llamas?' in text.lower()
+    assert 'asistente de información de IPS' in text
+    assert 'capacidades registradas' in text
+    assert '¿' not in text
     assert 'continuar' not in text
     assert call.history == [{'role': 'assistant', 'content': text}]
 
@@ -93,7 +92,7 @@ async def test_connect_greets_even_when_caller_has_already_started_speaking(monk
     await runtime._on_media_event(call, {'event': 'start', 'start': {}})
     await asyncio.wait_for(call.greet_task, timeout=1)
     assert call.greeted
-    assert call.history[0]['content'].startswith(('Buenos', 'Buenas'))
+    assert call.history[0]['content'].startswith('Hola, soy un asistente de información de IPS')
     call.silence_task.cancel()
     await asyncio.gather(call.silence_task, return_exceptions=True)
 

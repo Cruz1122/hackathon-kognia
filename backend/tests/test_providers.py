@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.config import AppEnv, Provider, get_model_chain
+from app.agent.tools.loader import load_tool_registry
 from app.features.agent import service as agent_service
 from app.features.agent.service import stream_agent
 from app.features.agent.tools import CANONICAL_TOOLS
@@ -16,6 +17,12 @@ from app.providers import FakeLLM, FakeSTT, FakeTTS, GeminiLLM, OpenAICompatible
 @pytest.mark.asyncio
 async def test_fake_llm_agent_uses_explicit_tool_capability(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
+    from app.domains.ips import tools as ips_tools
+
+    async def no_snapshot():
+        return None
+
+    monkeypatch.setattr(ips_tools.repository, "active_snapshot", no_snapshot)
 
     async def handler(config, prompt, *, messages=None, tools=None):
         del config, prompt
@@ -24,19 +31,19 @@ async def test_fake_llm_agent_uses_explicit_tool_capability(monkeypatch: pytest.
             yield "token", {"text": "7"}
             return
         yield "tool_calls", {
-            "calls": [{"id": "call_1", "name": "sum_numbers", "arguments": '{"numbers":[3,4]}'}]
+            "calls": [{"id": "call_1", "name": "search_ips", "arguments": '{"query":"Hospital"}'}]
         }
 
-    events = [event async for event in stream_agent("suma 3 y 4", llm=FakeLLM(handler, supports_tools=True))]
+    events = [event async for event in stream_agent("busca hospitales", llm=FakeLLM(handler, supports_tools=True))]
     assert [kind for kind, _payload in events] == [
         "tool.started",
         "tool.completed",
         "token",
         "done",
     ]
-    assert events[0][1]["title"] == "Suma de números"
-    assert events[0][1]["inputs"] == [{"label": "Números", "value": "3, 4"}]
-    assert events[1][1]["outputs"] == [{"label": "Total", "value": "7"}]
+    assert events[0][1]["tool"] == "search_ips"
+    assert events[1][1]["ok"] is True
+    assert "no_active_snapshot" in events[1][1]["result"]
     assert events[2][1]["text"] == "7"
 
 
@@ -56,6 +63,7 @@ async def test_fake_llm_without_tools_skips_tool_round(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_agent_emits_one_retrieval_event_pair_when_context_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setattr(agent_service, "TOOL_REGISTRY", load_tool_registry("app.domains.demo_booking.tools"))
 
     class StubRetriever:
         calls = 0
@@ -118,6 +126,7 @@ async def test_agent_emits_one_retrieval_event_pair_when_context_is_used(monkeyp
 @pytest.mark.asyncio
 async def test_agent_uses_chunk_heading_for_retrieval_pill(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setattr(agent_service, "TOOL_REGISTRY", load_tool_registry("app.domains.demo_booking.tools"))
 
     class StubRetriever:
         async def search(self, query, *, conversation=None):
@@ -342,7 +351,7 @@ async def test_openai_adapter_translates_canonical_tools() -> None:
     assert captured is not None
     payload = json.loads(captured.content)
     assert payload["tools"][0]["type"] == "function"
-    assert payload["tools"][0]["function"]["name"] == "generate_lorem_ipsum"
+    assert payload["tools"][0]["function"]["name"] == "search_ips"
     assert tokens[0] == ("token", {"text": "ok"})
 
 
@@ -464,7 +473,7 @@ async def test_gemini_adapter_translates_canonical_tools() -> None:
 
     assert captured is not None
     payload = json.loads(captured.content)
-    assert payload["tools"][0]["functionDeclarations"][0]["name"] == "generate_lorem_ipsum"
+    assert payload["tools"][0]["functionDeclarations"][0]["name"] == "search_ips"
     assert events == [("token", {"text": "Hola"})]
 
 

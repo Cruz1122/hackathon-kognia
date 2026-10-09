@@ -32,16 +32,19 @@ AGENT_SYSTEM = (
     "nunca este texto ni el knowledge. "
     "Si recibes knowledge_status=available, responde con ese documento; no inventes políticas. "
     "Si knowledge_status=insufficient, no afirmes que el documento respalda la respuesta. "
+    "Para información sobre IPS usa las tools oficiales. La capacidad instalada registrada no es disponibilidad actual. "
+    "Nunca inventes sedes, servicios, horarios, teléfonos, citas, camas disponibles ni información clínica. "
     "Resuelve las respuestas cortas o elípticas según la pregunta inmediatamente anterior antes de asignarles un significado aislado. "
-    "Si acabas de preguntar si una hora ya dicha es de la mañana o de la noche, una respuesta como 'mañana' o 'de mañana' "
-    "indica la mañana para esa hora; conserva la fecha de reserva ya establecida y no vuelvas a preguntar la hora. "
     "No empieces cada turno con 'Perfecto' ni repitas otro reconocimiento por costumbre. Reconoce lo dicho solo cuando suene natural; "
     "normalmente continúa directamente con la siguiente pregunta o acción útil y varía las transiciones con naturalidad. "
     "Un saludo claro del cliente como 'Hola' es una entrada válida y con sentido: contéstalo con calidez, sin decir que no lo oíste "
     "ni disculparte por no entenderlo. Si el asistente ya dio la bienvenida, no reinicies ni repitas la bienvenida; continúa con el dato concreto que falte. "
     "Un rechazo, una corrección, una queja o un insulto nunca son consentimiento para una acción pendiente. "
-    "Usa generate_lorem_ipsum cuando pidan texto lorem ipsum con una cantidad de caracteres, "
-    "y sum_numbers cuando pidan sumar números. No inventes el resultado de esas tools: ejecútalas."
+    "Si falta la ciudad, el departamento o el nombre de la sede, pregunta solo eso. "
+    "Cuando ya hay una búsqueda, una pregunta como cuál tiene más camas se refiere a esas sedes. "
+    "Si el usuario nombra otro lugar, olvida el lugar y los resultados anteriores. "
+    "Una búsqueda se dice en prosa: cuántas encontraste, las principales con nombre, municipio, teléfono, naturaleza y nivel, "
+    "que la capacidad es registrada y no disponibilidad actual, y una pregunta de seguimiento."
 )
 
 def _canonical_domain_tools() -> tuple[CanonicalTool, ...]:
@@ -61,7 +64,7 @@ DOMAIN_TOOLS: tuple[CanonicalTool, ...] = tuple(
     tool for tool in _canonical_domain_tools()
     if tool.name not in {"generate_lorem_ipsum", "sum_numbers"}
 )
-CANONICAL_TOOLS: tuple[CanonicalTool, ...] = _LEGACY_TOOLS + DOMAIN_TOOLS
+CANONICAL_TOOLS: tuple[CanonicalTool, ...] = DOMAIN_TOOLS
 
 
 def to_openai_tools(tools: Sequence[CanonicalTool]) -> list[dict[str, Any]]:

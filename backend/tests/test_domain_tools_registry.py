@@ -20,9 +20,21 @@ def test_registry_normalizes_unknown_and_invalid_arguments() -> None:
     registry = load_tool_registry()
     context = ToolContext("req-1", organization_id="server-org")
     unknown = asyncio.run(registry.execute("refund_booking", {}, context))
-    invalid = asyncio.run(registry.execute("create_booking", {"party_size": -4}, context))
+    invalid = asyncio.run(registry.execute("search_ips", {}, context))
     assert unknown.error_code == "TOOL_NOT_FOUND"
     assert invalid.error_code == "TOOL_ARGUMENT_VALIDATION_ERROR"
+
+
+def test_default_runtime_loads_ips_tools_without_restaurant_tools() -> None:
+    registry = load_tool_registry()
+    names = {item.name for item in registry.list_definitions()}
+    assert {
+        "search_ips", "get_ips_details", "get_ips_capacity", "semantic_search_ips", "compare_ips_capacity",
+    } <= names
+    assert "check_availability" not in names
+    assert "create_booking" not in names
+    assert "generate_lorem_ipsum" not in names
+    assert "get_business_analytics" not in names
 
 
 def test_duplicate_names_are_rejected() -> None:

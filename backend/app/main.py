@@ -46,7 +46,6 @@ from .db.session import check_database, dispose_engine, get_db
 from .platform.redis import close_redis
 from .platform.tracing import TraceRecorder, save_trace
 from .features.agent.service import context_window, stream_agent
-from .agent.state import ASSISTANT_NAME, greeting
 from .agent.tools.contracts import ToolContext
 from .features.transcription.service import (
     SpeechSanitizer,
@@ -75,15 +74,23 @@ from .providers import (
 from .providers.contracts import LLMProvider, SpeechToTextProvider, TextToSpeechProvider
 from .realtime.events import RealtimeEvent
 from .realtime.hub import RealtimeHub
-from .platform.rag.runtime import store as rag_store, embeddings as rag_embeddings, retriever as rag_retriever
-from .platform.rag.ingestion import RagIngestionService
-from .platform.rag.retrieval import ProgressiveRetriever
-from .platform.rag.extraction import RagExtractionError
+from .platform.rag.runtime import embeddings as rag_embeddings
 from .analytics.router import router as analytics_router
 from .platform.queue import enqueue_enrichment
 from .commercial.router import router as commercial_router
 from .features.dev.router import router as dev_router
+from .telephony.audio import CANONICAL_RATE, resample_pcm16le, timeline_ms
+from .telephony.bridge import (
+    agent_heard_ms,
+    catch_up_customer_clock,
+    mute_agent_from,
+    place_customer_pcm,
+    remember_agent_pcm,
+)
 from .telephony.router import router as telnyx_router
+from .telephony.runtime import runtime as telephony_runtime
+from .telephony.sessions import CallSession
+from .telephony.timeline import timeline
 from .whatsapp.router import router as whatsapp_router
 from .agent.router import router as agent_state_router
 from .logging_config import install_access_log_filter
@@ -114,7 +121,6 @@ stt_provider: SpeechToTextProvider = default_stt_provider
 tts_provider: TextToSpeechProvider = default_tts_provider
 transcription_lock = asyncio.Semaphore(1)
 realtime_hub = RealtimeHub()
-rag_ingestion = RagIngestionService(rag_store, rag_embeddings, rag_retriever)
 sherpa_status = "starting"
 tts_status = "starting"
 db_status = "starting"
@@ -128,39 +134,7 @@ CALL_BARGE_GRACE_SECONDS = 3.0
 CALL_SILENCE_SECONDS = 0.8
 CALL_MAX_UTTERANCE_SECONDS = 8.0
 CALL_TURN_GUARD_SECONDS = 2.5
-DEMO_KNOWLEDGE_CANDIDATES = (
-    Path(__file__).resolve().parent / "platform" / "rag" / "demo_corpus.md",
-    REPOSITORY_ROOT / "tests" / "fixtures" / "rag" / "corpus_v1.md",
-)
-
-
-def demo_knowledge_path() -> Path | None:
-    for path in DEMO_KNOWLEDGE_CANDIDATES:
-        if path.is_file():
-            return path
-    return None
-
-
-async def seed_demo_knowledge() -> None:
-    path = demo_knowledge_path()
-    if path is None:
-        return
-    try:
-        active = await rag_store.get_active_document()
-        if active:
-            hits = await rag_retriever.ensure_document_chunks(active)
-            if hits:
-                return
-        result = await rag_ingestion.replace(path.read_bytes(), path.name)
-        logger.info(
-            "Seeded demo knowledge %s (%s chunks)",
-            result.get("filename"),
-            result.get("chunks"),
-        )
-    except Exception:
-        logger.exception("Demo knowledge could not be seeded")
-
-
+_recording_origin_tasks: set[asyncio.Task[None]] = set()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Warm Sherpa-ONNX before serving requests without blocking the event loop."""
@@ -206,7 +180,6 @@ async def lifespan(_app: FastAPI):
         logger.info("E5 embeddings are ready")
     except Exception:
         logger.exception("E5 embeddings failed to load during backend startup")
-    await seed_demo_knowledge()
     from .telephony.runtime import start_telephony, stop_telephony
 
     await start_telephony()
@@ -299,61 +272,6 @@ def health() -> dict[str, str]:
 @app.get("/api/hello")
 def hello() -> dict[str, str]:
     return {"message": "FastAPI + Astro funcionando"}
-
-
-@app.put("/api/rag/document")
-async def replace_rag_document(request: Request) -> dict:
-    filename = request.headers.get("x-filename", "knowledge.txt")
-    if request.headers.get("content-type", "").startswith("multipart/form-data"):
-        form = await request.form()
-        upload = next((value for value in form.values() if hasattr(value, "read")), None)
-        if upload is None:
-            data = b""
-        else:
-            filename = getattr(upload, "filename", None) or filename
-            data = await upload.read()
-    else:
-        data = await request.body()
-    max_mb = int(os.getenv("RAG_MAX_UPLOAD_MB", "10"))
-    if not data:
-        raise HTTPException(status_code=422, detail="RAG_EMPTY_UPLOAD")
-    if len(data) > max_mb * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="RAG_UPLOAD_TOO_LARGE")
-    try:
-        return await rag_ingestion.replace(data, filename)
-    except RagExtractionError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("RAG ingestion failed")
-        raise HTTPException(status_code=503, detail="RAG_UNAVAILABLE") from exc
-
-
-@app.get("/api/rag/status")
-async def rag_status() -> dict:
-    try:
-        active = await rag_store.get_active_document()
-    except Exception:
-        return {"available": False, "document": None, "embedding_model": rag_embeddings.model_name, "dimensions": rag_embeddings.dimensions}
-    if active:
-        await rag_retriever.ensure_document_chunks(active)
-    hits = rag_retriever._hits.get(active or "", [])
-    return {"available": True, "document": ({"document_id": active, "filename": hits[0].metadata.get("source_filename"), "chunks": len(hits)} if active and hits else None), "embedding_model": rag_embeddings.model_name, "dimensions": rag_embeddings.dimensions}
-
-
-class RagSearchRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=4000)
-    debug: bool = False
-
-
-@app.post("/internal/rag/search")
-async def internal_rag_search(payload: RagSearchRequest) -> dict:
-    try:
-        result = await rag_retriever.search(payload.query, debug=payload.debug)
-    except Exception:
-        logger.exception("RAG search failed")
-        return {"evidence_state": "INSUFFICIENT", "level_reached": 0, "rewrite_used": False, "hits": [], "knowledge_status": "unavailable"}
-    hits = [{"chunk_id": h.chunk_id, "content": h.content, "metadata": h.metadata, "score": h.score} for h in result.hits]
-    return {"evidence_state": result.evidence_state, "level_reached": result.level_reached, "rewrite_used": result.rewrite_used, "hits": hits, "source_map": result.source_map, "debug": result.debug if payload.debug else {}}
 
 
 def _issue_session(user: User) -> LoginResponse:
@@ -886,7 +804,10 @@ async def _speak_chunk(
     *,
     organization_id: uuid.UUID,
     conversation_id: uuid.UUID,
+    heard: CallSession | None = None,
 ) -> None:
+    if heard is not None and text.strip() and not heard.closed:
+        _announce_agent_phrase(heard, text)
     if tts_status != "ready" or not text.strip():
         return
     await _send_call_event(
@@ -927,7 +848,8 @@ async def _speak_chunk(
 
 
 def _call_demo_greeting() -> str:
-    return f"{greeting()}. Soy {ASSISTANT_NAME}, tu asistente del restaurante. Para empezar, ¿cómo te llamas?"
+    from .agent.phrases import IPS_GREETING
+    return IPS_GREETING
 
 
 async def _run_call_turn(
@@ -940,6 +862,8 @@ async def _run_call_turn(
     conversation_id: uuid.UUID,
     user_id: uuid.UUID | None = None,
     call_id: uuid.UUID | None = None,
+    heard: CallSession | None = None,
+    customer_offset_ms: int | None = None,
 ) -> bool:
     try:
         await _persist_message(
@@ -1050,6 +974,8 @@ async def _run_call_turn(
         ):
             if name == "error":
                 failed = True
+                if heard is not None:
+                    timeline.record(heard, "agent.error", {"message": payload.get("message") or "error"})
                 await _send_call_event(
                     websocket,
                     "error",
@@ -1065,6 +991,11 @@ async def _run_call_turn(
                 if (name == "tool.completed" and payload.get("tool") == "create_booking"
                         and payload.get("ok") is True):
                     reservation_confirmed = True
+                if heard is not None:
+                    if name == "agent.signals":
+                        timeline.record(heard, name, payload, at_offset_ms=customer_offset_ms)
+                    else:
+                        timeline.record(heard, name, payload)
                 await _send_call_event(
                     websocket,
                     name,
@@ -1262,6 +1193,8 @@ async def call_socket(
     """Live PCM: authenticate and attach a tenant conversation before media."""
     await websocket.accept()
     call_record: Call | None = None
+    heard: CallSession | None = None
+    mute_from: list[int | None] = [None]
     call_completion_status = CallStatus.ENDED
     try:
         auth_payload = await _receive_json_message(websocket)
@@ -1317,9 +1250,23 @@ async def call_socket(
                 organization_id=organization_id,
                 conversation_id=conversation_id,
                 status=CallStatus.ACTIVE,
+                recording_offset_ms=0,
             )
             session.add(call_record)
             await session.commit()
+            heard = CallSession(
+                call_id=call_record.id,
+                token="",
+                telnyx_call_control_id="",
+                organization_id=organization_id,
+                system_user_id=user.id,
+                conversation_id=conversation_id,
+            )
+            heard.recording_offset_ms = 0
+            timeline.record(heard, "lifecycle", {"state": "ACTIVE"})
+            origin = asyncio.create_task(_persist_recording_origin(call_record.id))
+            _recording_origin_tasks.add(origin)
+            origin.add_done_callback(_recording_origin_tasks.discard)
         except Exception:
             logger.exception("Call conversation lookup failed")
             await websocket.close(code=1011)
@@ -1373,14 +1320,16 @@ async def call_socket(
                 content=text, channel='voice'))
             await session.commit()
             await _speak_chunk(websocket, text, organization_id=organization_id,
-                conversation_id=conversation_id)
+                conversation_id=conversation_id, heard=heard)
+            _mark_listening(heard)
             await _send_call_event(websocket, 'turn.completed', {},
                 organization_id=organization_id, conversation_id=conversation_id)
             return False
 
         async def _speak_greeting(text: str) -> bool:
             await _speak_chunk(websocket, text, organization_id=organization_id,
-                conversation_id=conversation_id)
+                conversation_id=conversation_id, heard=heard)
+            _mark_listening(heard)
             await _send_call_event(websocket, 'turn.completed', {},
                 organization_id=organization_id, conversation_id=conversation_id)
             return False
@@ -1435,6 +1384,8 @@ async def call_socket(
             last_partial = ""
             barge_pending = True
             barge_last_voice_at = time.monotonic()
+            if heard is not None:
+                mute_from[0] = len(heard.agent_pcm)
             if stream is not None:
                 await asyncio.to_thread(stt_provider.reset_stream, stream)
                 if buffered:
@@ -1472,6 +1423,9 @@ async def call_socket(
                     pass
                 except Exception:
                     logger.exception("Call turn cancel failed")
+            if heard is not None and mute_from[0] is not None:
+                mute_agent_from(heard, mute_from[0])
+                mute_from[0] = None
             last_partial = ""
             last_voice_at = time.monotonic()
             first_voice_at = last_voice_at
@@ -1555,6 +1509,10 @@ async def call_socket(
             ignore_until = now + CALL_TURN_GUARD_SECONDS
             barge_armed_at = now + CALL_BARGE_ARM_SECONDS
             barge_hits = 0
+            started_at = heard.utterance_offset_ms if heard is not None else None
+            if heard is not None:
+                heard.utterance_offset_ms = None
+            _record_customer_transcript(heard, final, started_at)
             await _send_call_event(
                 websocket,
                 "customer.transcript",
@@ -1572,6 +1530,8 @@ async def call_socket(
                     conversation_id=conversation_id,
                     user_id=user.id,
                     call_id=call_record.id if call_record else None,
+                    heard=heard,
+                    customer_offset_ms=started_at,
                 )
             )
 
@@ -1600,6 +1560,12 @@ async def call_socket(
                     now = time.monotonic()
                     busy = turn_task is not None and not turn_task.done()
                     speaking = voiced or rms >= CALL_SPEECH_RMS
+                    if heard is not None:
+                        if speaking and heard.utterance_offset_ms is None:
+                            heard.utterance_offset_ms = timeline_ms(
+                                heard.recording_offset_ms, len(heard.customer_pcm) // 2
+                            )
+                        place_customer_pcm(heard, raw, sample_rate)
                     if busy or speaking:
                         idle_since = now
                     elif first_voice_at <= 0 and now - idle_since > 10:
@@ -1690,6 +1656,8 @@ async def call_socket(
                 if not prompt.strip():
                     await websocket.send_json({"type": "transcript.empty"})
                     continue
+                spoken_at = _customer_mark(heard)
+                _record_customer_transcript(heard, prompt, spoken_at)
                 await _send_call_event(
                     websocket,
                     "customer.transcript",
@@ -1705,6 +1673,8 @@ async def call_socket(
                     organization_id=organization_id,
                     conversation_id=conversation_id,
                     user_id=user.id,
+                    heard=heard,
+                    customer_offset_ms=spoken_at,
                 )
                 continue
             if ending_call:
@@ -1818,6 +1788,8 @@ async def call_socket(
                     conversation_id=conversation_id,
                 )
                 continue
+            typed_at = _customer_mark(heard)
+            _record_customer_transcript(heard, prompt, typed_at)
             ending_call = await _run_call_turn(
                 websocket,
                 prompt,
@@ -1826,6 +1798,9 @@ async def call_socket(
                 organization_id=organization_id,
                 conversation_id=conversation_id,
                 user_id=user.id,
+                call_id=call_record.id if call_record else None,
+                heard=heard,
+                customer_offset_ms=typed_at,
             )
     except WebSocketDisconnect:
         logger.info("Call WebSocket disconnected")
@@ -1833,6 +1808,13 @@ async def call_socket(
         call_completion_status = CallStatus.FAILED
         logger.exception("Call WebSocket failed")
     finally:
+        if heard is not None:
+            heard.closed = True
+            try:
+                await telephony_runtime._store_heard_recording(heard)
+                timeline.record(heard, "lifecycle", {"state": "ENDED"})
+            except Exception:
+                logger.exception("Demo recording persistence failed")
         if call_record is not None:
             await _finish_call(
                 session,

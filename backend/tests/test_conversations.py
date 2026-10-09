@@ -304,8 +304,8 @@ def test_ws_fresh_demo_greets_and_answers_hola_without_false_apology(
             assert websocket.receive_json()["type"] == "turn.started"
             welcome = websocket.receive_json()
             assert welcome == {"type": "agent.token", "text": main._call_demo_greeting()}
-            assert "Soy Wane" in welcome["text"]
-            assert "¿cómo te llamas?" in welcome["text"].lower()
+            assert "asistente de información de IPS" in welcome["text"]
+            assert "capacidades registradas" in welcome["text"]
             assert websocket.receive_json()["type"] == "turn.completed"
 
             websocket.send_json(

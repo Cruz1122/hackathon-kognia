@@ -1,10 +1,10 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 import { AgentSignalsProjector, EMPTY_AGENT_SIGNALS, snapScale } from './model.ts';
-import type { AgentSignalsEnvelope, ConfirmationValue, IntegrityValue, OrdinalValue } from './types.ts';
+import type { AgentSignalsEnvelope, IntegrityValue, OrdinalValue } from './types.ts';
 
-function frame(overrides: Partial<AgentSignalsEnvelope['signals']> = {}): AgentSignalsEnvelope {
-  return { signals: { ...EMPTY_AGENT_SIGNALS.signals, ...overrides } };
+function frame(overrides: Partial<AgentSignalsEnvelope['signals']> = {}, behavior?: AgentSignalsEnvelope['behavior']): AgentSignalsEnvelope {
+  return { signals: { ...EMPTY_AGENT_SIGNALS.signals, ...overrides }, behavior };
 }
 
 function ordinal(value: OrdinalValue) {
@@ -23,6 +23,22 @@ test('snaps the continuous score to the five Fleybo anchors', () => {
   assert.equal(snapScale(3.2).score, 3.75);
 });
 
+test('places unknown in the middle with the gray face', () => {
+  const snapped = snapScale(0, true);
+  assert.equal(snapped.position, .5);
+  assert.equal(snapped.emotion, 'unknown');
+  const snapshot = new AgentSignalsProjector().project(frame({
+    satisfaction: ordinal('unknown'),
+    frustration: ordinal('unknown'),
+    fluency: ordinal('unknown'),
+  }));
+  assert.equal(snapshot.scales.satisfaction.unknown, true);
+  assert.equal(snapshot.scales.satisfaction.score, 2.5);
+  assert.equal(snapshot.scales.tension.unknown, true);
+  assert.equal(snapshot.scales.fluency.unknown, true);
+  assert.equal(snapshot.scales.hallucination.unknown, true);
+});
+
 test('projects satisfaction and inverted tension with continuous percentages', () => {
   const snapshot = new AgentSignalsProjector().project(frame({
     satisfaction: { value: 'high', probabilities: { neutral: .4, high: .6 } },
@@ -35,51 +51,29 @@ test('projects satisfaction and inverted tension with continuous percentages', (
   assert.equal(snapScale(snapshot.scales.tension.score).emotion, 'angry');
 });
 
-test('uses the dedicated conversation fluency signal when available', () => {
+test('uses only the fluency signal', () => {
   const snapshot = new AgentSignalsProjector().project(frame({
     fluency: { value: 'high', probabilities: { high: 1 } },
-    confirmation: { value: 'rejected', probabilities: { rejected: 1 } },
   }));
   assert.equal(snapshot.scales.fluency.percentage, 75);
-  assert.equal(snapshot.scales.fluency.stale, false);
+  assert.equal(snapshot.scales.fluency.unknown, false);
+  assert.equal(new AgentSignalsProjector().project(frame()).scales.fluency.unknown, true);
 });
 
-test('keeps confirmation history unchanged when a cycle omits the signal', () => {
-  const projector = new AgentSignalsProjector();
-  const confirmation = (value: ConfirmationValue) => ({ value, probabilities: { [value]: 1 } });
-  projector.project(frame({ confirmation: confirmation('explicit') }));
-  const stale = projector.project(frame());
-  assert.equal(stale.scales.fluency.score, 5);
-  assert.equal(stale.scales.fluency.percentage, 100);
-  assert.equal(stale.scales.fluency.stale, true);
-});
-
-test('uses only the last ten confirmation samples', () => {
-  const projector = new AgentSignalsProjector();
-  const signal = (value: ConfirmationValue) => ({ value, probabilities: { [value]: 1 } });
-  projector.project(frame({ confirmation: signal('rejected') }));
-  for (let index = 0; index < 10; index += 1) projector.project(frame({ confirmation: signal('explicit') }));
-  const snapshot = projector.project(frame());
-  assert.equal(snapshot.scales.fluency.score, 5);
-});
-
-test('projects dashboard aggregates from averaged probabilities without mutating call history', () => {
-  const projector = new AgentSignalsProjector();
-  projector.project(frame({ confirmation: { value: 'explicit', probabilities: { explicit: 1 } } }));
-  const aggregate = projector.project({
+test('projects dashboard aggregates from averaged probabilities', () => {
+  const aggregate = new AgentSignalsProjector().project({
     ...frame({
-      confirmation: { value: 'uncertain', probabilities: { rejected: .25, uncertain: .5, explicit: .25 } },
+      fluency: { value: 'neutral', probabilities: { very_low: .25, neutral: .5, very_high: .25 } },
       integrity: { value: 'supported', probabilities: { unsupported: .2, uncertain: .2, supported: .6 } },
     }),
     aggregated: true,
   });
   assert.equal(aggregate.scales.fluency.score, 2.5);
   assert.equal(aggregate.scales.hallucination.percentage, 54);
-  const live = projector.project(frame());
-  assert.equal(live.scales.fluency.score, 5);
+  assert.equal(aggregate.scales.hallucination.unknown, false);
 });
 
-test('shows a lower hallucination percentage when Fleybo is at the top', () => {
+test('shows a lower hallucination percentage when the risk is low', () => {
   const integrity = (value: IntegrityValue) => ({ value, probabilities: { [value]: 1 } });
   const supported = new AgentSignalsProjector().project(frame({ integrity: integrity('supported') }));
   const unsupported = new AgentSignalsProjector().project(frame({ integrity: integrity('unsupported') }));
@@ -89,23 +83,27 @@ test('shows a lower hallucination percentage when Fleybo is at the top', () => {
   assert.equal(unsupported.scales.hallucination.percentage, 100);
 });
 
-test('starts hallucination risk at zero and penalizes unsupported claims immediately', () => {
+test('keeps hallucination unknown until the first integrity verdict', () => {
   const projector = new AgentSignalsProjector();
-  assert.equal(projector.project(frame()).scales.hallucination.percentage, 0);
+  assert.equal(projector.project(frame()).scales.hallucination.unknown, true);
   assert.equal(projector.project(frame({ integrity: { value: 'unsupported', probabilities: { unsupported: 1 } } })).scales.hallucination.percentage, 100);
   assert.equal(projector.project(frame({ integrity: { value: 'supported', probabilities: { supported: 1 } } })).scales.hallucination.percentage, 82);
 });
 
-test('normalizes categorical labels and Lucide icon names', () => {
+test('labels emotion, intent and behavior', () => {
   const snapshot = new AgentSignalsProjector().project(frame({
-    intent: { value: 'human', probabilities: { human: 1 } },
-    human: { value: 'requested', probabilities: { requested: 1 } },
-    schedule_flexibility: { value: 'fixed', probabilities: { fixed: 1 } },
-  }));
-  assert.deepEqual(
-    [snapshot.categories.intent.label, snapshot.categories.intent.icon],
-    ['Transferir a humano', 'user-round'],
-  );
-  assert.equal(snapshot.categories.human.label, 'Solicitado');
-  assert.equal(snapshot.categories.schedule.label, 'Fijo');
+    emotion: { value: 'frustrated', probabilities: { frustrated: 1 } },
+    intent: { value: 'buscar_ips', probabilities: { buscar_ips: 1 } },
+  }, { tone: 'calm', response_length: 'short', next_step: 'correct_search' }));
+  assert.equal(snapshot.categories.emotion.label, 'Frustración');
+  assert.equal(snapshot.categories.emotion.face, 'angry');
+  assert.equal(snapshot.categories.intent.label, 'Buscar IPS');
+  assert.equal(snapshot.categories.intent.icon, 'search');
+  assert.equal(snapshot.categories.behavior.label, 'Corregir y simplificar');
+  assert.equal(snapshot.categories.behavior.icon, 'rotate-ccw');
+  assert.equal(snapshot.categories.behavior.detail, 'Tono calmado · Respuesta corta');
+  const unknown = new AgentSignalsProjector().project(frame());
+  assert.equal(unknown.categories.emotion.label, 'Sin identificar');
+  assert.equal(unknown.categories.emotion.face, 'unknown');
+  assert.equal(unknown.categories.intent.gradient[0], '#ebebeb');
 });

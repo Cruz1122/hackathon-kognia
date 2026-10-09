@@ -78,7 +78,9 @@ services:
       CHROMA_PORT: 8000
       CHROMA_SSL: "false"
       CHROMA_RAG_COLLECTION: rag_documents
-      AGENT_TOOL_MODULES: app.domains.demo_booking.tools,app.domains.business_analytics.tools
+      AGENT_TOOL_MODULES: app.domains.ips.tools,app.domains.business_analytics.tools
+      IPS_CHROMA_COLLECTION: ${IPS_CHROMA_COLLECTION:-ips_facilities}
+      IPS_EMBEDDING_BATCH_SIZE: ${IPS_EMBEDDING_BATCH_SIZE:-128}
       REDIS_URL: redis://redis:6379/0
       API_KEY_SODA3: ${API_KEY_SODA3:-}
       SECRET_SODA3: ${SECRET_SODA3:-}
@@ -126,7 +128,12 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kognia}:${POSTGRES_PASSWORD:-kognia}@postgres:5432/${POSTGRES_DB:-kognia}
       REDIS_URL: redis://redis:6379/0
       ANALYTICS_CACHE_TTL_SECONDS: ${ANALYTICS_CACHE_TTL_SECONDS:-60}
-      AGENT_TOOL_MODULES: app.domains.demo_booking.tools,app.domains.business_analytics.tools
+      AGENT_TOOL_MODULES: app.domains.ips.tools,app.domains.business_analytics.tools
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_SSL: "false"
+      IPS_CHROMA_COLLECTION: ${IPS_CHROMA_COLLECTION:-ips_facilities}
+      IPS_EMBEDDING_BATCH_SIZE: ${IPS_EMBEDDING_BATCH_SIZE:-128}
       # WhatsApp agent turns run in the worker; call_customer requires Telnyx here too.
       TELNYX_ENABLED: ${TELNYX_ENABLED:-true}
       TELNYX_WEBHOOK_HOST: ${TELNYX_WEBHOOK_HOST:-corner-gorged-calamari.ngrok-free.dev}
@@ -148,6 +155,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      chroma:
+        condition: service_started
 
   frontend:
     build:

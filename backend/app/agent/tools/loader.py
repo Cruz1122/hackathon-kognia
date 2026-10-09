@@ -7,7 +7,7 @@ from .registry import ToolRegistry
 
 
 def load_tool_registry(value: str | None = None) -> ToolRegistry:
-    modules = [item.strip() for item in (value or os.getenv("AGENT_TOOL_MODULES", "app.domains.demo_booking.tools,app.domains.business_analytics.tools")).split(",") if item.strip()]
+    modules = [item.strip() for item in (value or os.getenv("AGENT_TOOL_MODULES", "app.domains.ips.tools")).split(",") if item.strip()]
     registry = ToolRegistry()
     for path in modules:
         module = importlib.import_module(path)
@@ -19,10 +19,5 @@ def load_tool_registry(value: str | None = None) -> ToolRegistry:
         instructions = getattr(module, 'CONTEXT_INSTRUCTIONS', '')
         if instructions:
             registry.context_instructions.append(instructions)
-    if value is None:
-        from ...whatsapp.tools import register_tools as register_channels
-        register_channels(registry)
-        from .legacy import register_tools
-        register_tools(registry)
     registry.freeze()
     return registry

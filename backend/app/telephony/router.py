@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import get_current_user
 from ..auth.tokens import InvalidTokenError, authenticate_token
-from ..db.models import Call, CallEvent, Conversation, Customer, Recording, User
+from ..db.models import Call, CallEvent, CallStatus, Conversation, Customer, Recording, User
 from ..db.session import get_db, get_session_factory
 from .live_audio import live_audio_hub, monitor_hub
 from .recording import public_recording, recording_store
@@ -66,12 +66,23 @@ def _stored_call(row: Call) -> dict[str, Any]:
         "caller": customer.phone if customer is not None and customer.phone else "",
         "customer_name": customer.name if customer is not None and customer.name else "",
         "recording_offset_ms": row.recording_offset_ms,
-        "replayable": bool(row.telnyx_call_control_id),
+        "replayable": _replayable(row),
     }
+
+
+def _demo_finished(row: Call) -> bool:
+    channel = row.conversation.channel if row.conversation is not None else ""
+    return channel == "voice-demo" and row.status in {CallStatus.ENDED, CallStatus.FAILED}
+
+
+def _replayable(row: Call) -> bool:
+    return bool(row.telnyx_call_control_id) or _demo_finished(row)
 
 
 def _listed(row: Call) -> bool:
     if row.telnyx_call_control_id:
+        return True
+    if _demo_finished(row):
         return True
     customer = row.conversation.customer if row.conversation is not None else None
     if customer is None:

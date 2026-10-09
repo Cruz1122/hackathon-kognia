@@ -329,6 +329,62 @@ def _agent_heard_ms(session: CallSession) -> int:
     return timeline_ms(session.recording_offset_ms, start)
 
 
+def agent_heard_ms(session: CallSession) -> int:
+    return _agent_heard_ms(session)
+
+
+def catch_up_customer_clock(session: CallSession) -> None:
+    """Fill caller silence up to the session clock so a late mic does not overlap the greeting."""
+    elapsed_ms = max(0, session.offset_ms() - session.recording_offset_ms)
+    target = int(elapsed_ms * CANONICAL_RATE / 1000)
+    current = len(session.customer_pcm) // 2
+    if target > current:
+        session.customer_pcm.extend(b"\x00\x00" * (target - current))
+
+
+def place_customer_pcm(session: CallSession, pcm: bytes, sample_rate: int) -> None:
+    """Append caller audio on the recording clock, padding any gap since the previous frame."""
+    if not pcm:
+        return
+    canonical = pcm if sample_rate == CANONICAL_RATE else resample_pcm16le(pcm, sample_rate, CANONICAL_RATE)
+    incoming = len(canonical) // 2
+    if incoming <= 0:
+        return
+    elapsed_ms = max(0, session.offset_ms() - session.recording_offset_ms)
+    elapsed = int(elapsed_ms * CANONICAL_RATE / 1000)
+    current = len(session.customer_pcm) // 2
+    end = max(elapsed, current + incoming)
+    start = max(current, end - incoming)
+    if start > current:
+        session.customer_pcm.extend(b"\x00\x00" * (start - current))
+    session.customer_pcm.extend(canonical)
+
+
+def remember_agent_pcm(session: CallSession, pcm: bytes) -> tuple[int, int]:
+    """Keep assistant audio on the caller clock. Returns the byte span just written."""
+    if not pcm:
+        end = len(session.agent_pcm)
+        return end, end
+    customer_samples = len(session.customer_pcm) // 2
+    agent_samples = len(session.agent_pcm) // 2
+    if not session.agent_segment_open and customer_samples > agent_samples:
+        session.agent_pcm.extend(b"\x00\x00" * (customer_samples - agent_samples))
+    session.agent_segment_open = True
+    start = len(session.agent_pcm)
+    session.agent_pcm.extend(pcm)
+    return start, len(session.agent_pcm)
+
+
+def mute_agent_from(session: CallSession, start: int) -> None:
+    """Silence assistant audio that was queued but not played after a confirmed barge."""
+    start = max(0, start)
+    if start < len(session.agent_pcm):
+        muted = bytearray(session.agent_pcm)
+        muted[start:] = b"\x00" * (len(muted) - start)
+        session.agent_pcm = muted
+    session.agent_segment_open = False
+
+
 async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:
     if not pcm:
         return
@@ -339,13 +395,7 @@ async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:
         await pause.wait()
         if session.closed:
             return
-    customer_samples = len(session.customer_pcm) // 2
-    agent_samples = len(session.agent_pcm) // 2
-    if not session.agent_segment_open and customer_samples > agent_samples:
-        session.agent_pcm.extend(b"\x00\x00" * (customer_samples - agent_samples))
-    session.agent_segment_open = True
-    start = len(session.agent_pcm)
-    session.agent_pcm.extend(pcm)
+    start, end = remember_agent_pcm(session, pcm)
     media_format = session.media_format or {
         "encoding": "L16",
         "sample_rate": 16000,
@@ -372,7 +422,7 @@ async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:
     if session.marks is None:
         return
     name = session.marks.generated()
-    session.playback_spans.append((start, len(session.agent_pcm), name))
+    session.playback_spans.append((start, end, name))
     timeline.record(session, "audio.generated", {"name": name})
     await websocket.send_json({"event": "mark", "mark": {"name": name}})
     session.marks.sent(name)

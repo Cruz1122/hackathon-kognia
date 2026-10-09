@@ -59,9 +59,9 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
         </div>
       </section>
       <dl class="agent-signals__categories detail-fields" data-agent-signal-categories hidden>
+          <CompactCategoricalIndicator snapshot={initial.categories.emotion} />
           <CompactCategoricalIndicator snapshot={initial.categories.intent} />
-          <CompactCategoricalIndicator snapshot={initial.categories.human} />
-          <CompactCategoricalIndicator snapshot={initial.categories.schedule} />
+          <CompactCategoricalIndicator snapshot={initial.categories.behavior} />
       </dl>
     </>
   ) : (
@@ -75,9 +75,9 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
 
       {categories && (
         <div class="agent-signals__categories" data-agent-signal-categories hidden>
+          <CategoricalIndicator snapshot={initial.categories.emotion} />
           <CategoricalIndicator snapshot={initial.categories.intent} />
-          <CategoricalIndicator snapshot={initial.categories.human} />
-          <CategoricalIndicator snapshot={initial.categories.schedule} />
+          <CategoricalIndicator snapshot={initial.categories.behavior} />
         </div>
       )}
     </>
@@ -86,16 +86,21 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
 
 <script>
   import {
-    ArrowRight,
-    CircleHelp,
-    ClockArrowUp,
-    LockKeyhole,
-    Pencil,
-    Phone,
-    UserRound,
-    UserRoundCheck,
-    UserRoundX,
-    X,
+    BedDouble,
+    ChartColumn,
+    CheckCheck,
+    CircleQuestionMark,
+    CircleSlash,
+    Compass,
+    Hospital,
+    Lightbulb,
+    MessageCircle,
+    MessageCircleQuestionMark,
+    RotateCcw,
+    Search,
+    ShieldCheck,
+    Siren,
+    Split,
     createIcons,
   } from 'lucide';
   import { AgentSignalsProjector, snapScale } from '../../lib/agent-signals/model';
@@ -117,16 +122,21 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
   }
 
   const LUCIDE_ICONS = {
-    ArrowRight,
-    CircleHelp,
-    ClockArrowUp,
-    LockKeyhole,
-    Pencil,
-    Phone,
-    UserRound,
-    UserRoundCheck,
-    UserRoundX,
-    X,
+    BedDouble,
+    ChartColumn,
+    CheckCheck,
+    CircleQuestionMark,
+    CircleSlash,
+    Compass,
+    Hospital,
+    Lightbulb,
+    MessageCircle,
+    MessageCircleQuestionMark,
+    RotateCcw,
+    Search,
+    ShieldCheck,
+    Siren,
+    Split,
   };
 
   const DEV_GRADIENTS: Record<string, string> = {
@@ -292,23 +302,32 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
         const meter = card.querySelector<HTMLElement>('[data-scale-meter]');
         const mascotWrap = card.querySelector<HTMLElement>('[data-scale-mascot]');
         const mascot = card.querySelector<MascotElement>('[data-mascot-face]');
-        const snapped = snapScale(snapshot.score);
+        const snapped = snapScale(snapshot.score, snapshot.unknown);
+        const valueText = snapshot.unknown ? 'sin datos' : `${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`;
 
-        if (percentage) percentage.textContent = `${snapshot.percentage}%`;
+        if (percentage) percentage.textContent = snapshot.unknown ? '—' : `${snapshot.percentage}%`;
         if (meter) {
           meter.setAttribute('aria-valuenow', snapshot.score.toFixed(2));
-          meter.setAttribute('aria-valuetext', `${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`);
-          meter.setAttribute('aria-label', `${snapshot.title}: ${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`);
+          meter.setAttribute('aria-valuetext', valueText);
+          meter.setAttribute('aria-label', `${snapshot.title}: ${valueText}`);
         }
         mascotWrap?.style.setProperty('--position', String(snapped.position));
         mascot?.setEmotion?.(snapped.emotion);
-        mascot?.querySelector('svg')?.setAttribute('aria-label', `${snapshot.title}: ${snapshot.percentage}%`);
+        mascot?.querySelector('svg')?.setAttribute('aria-label', `${snapshot.title}: ${valueText}`);
       };
 
       const updateCategory = (key: CategoryKey, snapshot: AgentSignalsSnapshot['categories'][CategoryKey]): void => {
         categorySnapshots.set(key, snapshot);
         const card = categoryScope.querySelector<HTMLElement>(`[data-category="${key}"]`);
-        if (!card || card.dataset.value === snapshot.value) return;
+        if (!card) return;
+        const detail = card.querySelector<HTMLElement>('[data-category-detail]');
+        if (detail) {
+          detail.textContent = snapshot.detail ?? '';
+          detail.hidden = !snapshot.detail;
+        }
+        const emotionFace = card.querySelector<MascotElement>('[data-mascot-face]');
+        if (snapshot.face) emotionFace?.setEmotion?.(snapshot.face);
+        if (card.dataset.value === snapshot.value) return;
         card.dataset.value = snapshot.value;
         const label = card.querySelector<HTMLElement>('[data-category-label]');
         const icon = card.querySelector<HTMLElement>('[data-category-icon]');
@@ -362,11 +381,9 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
       const setSignals = (data: AgentSignalsEnvelope): void => {
         root.dataset.hasObservedData = 'true';
         const snapshot = projector.project(data);
-        const categoriesReady = [
-          data.signals.intent?.value,
-          data.signals.human?.value,
-          data.signals.schedule_flexibility?.value,
-        ].some((value) => typeof value === 'string' && value !== 'unknown');
+        const categoriesReady = Boolean(data.behavior)
+          || [data.signals.emotion?.value, data.signals.intent?.value]
+            .some((value) => typeof value === 'string' && value !== 'unknown');
         if (categoryBlock) categoryBlock.hidden = !categoriesReady;
         (Object.keys(snapshot.scales) as ScaleKey[]).forEach((key) => updateScale(key, snapshot.scales[key]));
         (Object.keys(snapshot.categories) as CategoryKey[]).forEach((key) => updateCategory(key, snapshot.categories[key]));

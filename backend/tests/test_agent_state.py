@@ -136,32 +136,55 @@ def signal(value, confidence=.99):
 def test_sentiment_guides_professional_tone_without_exposing_emotion_labels():
     memory = state()
     memory.signals = {'frustration': signal('very_high'), 'satisfaction': signal('low'),
-                      'intent': signal('continue')}
+                      'fluency': signal('low'), 'intent': signal('buscar_ips')}
     instructions = memory.context()
     assert 'courteous, professional' in instructions
     assert 'Never label or diagnose their emotions' in instructions
-    assert 'solution-focused' in instructions
+    assert 'acknowledge the specific mistake' in instructions
+    assert 'You cannot place phone calls' in instructions
     assert '"frustration"' not in instructions
     assert '"satisfaction"' not in instructions
-    assert '"intent": "continue"' in instructions
+    assert '"intent"' not in instructions
+
+
+def test_agent_behavior_follows_the_priority_table():
+    memory = state()
+    memory.signals = {
+        'frustration': signal('very_high'), 'fluency': signal('low'),
+        'satisfaction': signal('low'), 'intent': signal('buscar_ips'),
+    }
+    assert memory.agent_behavior() == {'tone': 'calm', 'response_length': 'short', 'next_step': 'correct_search'}
+    memory.signals['intent'] = signal('emergencia')
+    assert memory.agent_behavior() == {'tone': 'calm', 'response_length': 'short', 'next_step': 'emergency_services'}
+    memory.signals = {'frustration': signal('very_high'), 'intent': signal('fuera_alcance')}
+    assert memory.agent_behavior()['next_step'] == 'explain_scope'
+    memory.signals = {'emotion': signal('relieved'), 'intent': signal('unknown')}
+    assert memory.agent_behavior()['next_step'] == 'facilitate_closing'
+    memory.signals = {'emotion': signal('relieved'), 'intent': signal('buscar_ips')}
+    assert memory.agent_behavior()['next_step'] == 'query_data'
+    memory.signals = {'intent': signal('comparar_ips')}
+    assert memory.agent_behavior()['next_step'] == 'compare_data'
+    memory.signals = {'intent': signal('orientacion_salud')}
+    assert memory.agent_behavior()['next_step'] == 'explain_simply'
+    memory.signals = {'emotion': signal('worried')}
+    assert memory.agent_behavior()['tone'] == 'calm'
+    memory.signals = {}
+    assert memory.agent_behavior() == {'tone': 'natural', 'response_length': 'normal', 'next_step': 'continue'}
+    assert memory.behavior_guidance() == ''
 
 
 def test_behavior_adapts_each_turn_without_sticky_sentiment():
     memory = state()
     memory.signals = {'frustration': signal('very_high'), 'satisfaction': signal('very_low')}
     strained = memory.behavior_guidance()
-    assert 'at most one essential question' in strained
-    assert 'avoid small talk' in strained
-    assert 'remains unresolved' in strained
-    assert 'concrete alternative' in strained
+    assert 'at most two short sentences' in strained
+    assert 'acknowledge the specific mistake' in strained
     assert 'never bypass tool authorization' in strained
 
-    memory.signals = {'frustration': signal('very_low'), 'satisfaction': signal('very_high')}
+    memory.signals = {'emotion': signal('relieved'), 'intent': signal('unknown')}
     recovered = memory.behavior_guidance()
-    assert 'without rushing' in recovered
-    assert 'unnecessary reconfirmations' in recovered
-    assert 'avoid small talk' not in recovered
-    assert 'concrete alternative' not in recovered
+    assert 'need seems resolved' in recovered
+    assert 'acknowledge the specific mistake' not in recovered
 
     memory.signals = {}
     assert memory.behavior_guidance() == ''
@@ -170,8 +193,8 @@ def test_behavior_adapts_each_turn_without_sticky_sentiment():
 def test_high_friction_overrides_positive_tone_without_authorizing_actions():
     memory = state()
     memory.signals = {'frustration': signal('high'), 'satisfaction': signal('high')}
-    assert 'solution-focused' in memory.behavior_guidance()
-    assert 'positive tone' not in memory.behavior_guidance()
+    assert memory.agent_behavior()['tone'] == 'calm'
+    assert memory.agent_behavior()['next_step'] == 'correct_search'
     assert memory.authorized is None
 
 
@@ -252,19 +275,6 @@ def test_rejected_jev_blocks_exact_affirmative():
     assert memory.authorized is None
 
 
-def test_cancellation_or_correction_vetoes_conflicting_explicit_confirmation():
-    memory = state()
-    authorize(memory, 'create_booking', {'party_size': 7})
-    memory.pending.presented = True
-    memory.signals = {
-        'confirmation': signal('explicit'),
-        'intent': signal('cancel'),
-    }
-    apply_observations(memory, 'No, es que me dio demasiada rabia, te odio')
-    assert memory.pending is None
-    assert memory.authorized is None
-
-
 def test_noisy_correct_intent_does_not_veto_explicit_confirmation():
     """Regression: JEV labels "que sí" as intent=correct at low confidence.
 
@@ -282,19 +292,6 @@ def test_noisy_correct_intent_does_not_veto_explicit_confirmation():
     apply_observations(memory, 'Que sí')
     assert memory.pending is not None
     assert memory.authorized == memory.pending.fingerprint
-
-
-def test_correction_without_explicit_confirmation_still_withdraws():
-    memory = state()
-    authorize(memory, 'create_booking', {'party_size': 7})
-    memory.pending.presented = True
-    memory.signals = {
-        'confirmation': signal('uncertain'),
-        'intent': signal('correct'),
-    }
-    apply_observations(memory, 'No, mejor cambia la fecha')
-    assert memory.pending is None
-    assert memory.authorized is None
 
 
 def test_high_frustration_does_not_invalidate_explicit_confirmation():
@@ -320,44 +317,7 @@ def test_missing_semantic_verdict_never_authorizes():
     assert memory.authorized is None
 
 
-def test_jev_explicit_authorizes_without_a_known_phrase():
-    memory = state()
-    authorize(memory, 'call_customer', {})
-    memory.pending.presented = True
-    memory.signals = {'confirmation': signal('explicit', confidence=.5)}
-    apply_observations(memory, 'bueno, procede tú')
-    assert memory.authorized == memory.pending.fingerprint
-
-
-def test_callback_intent_is_not_itself_confirmation():
-    memory = state()
-    authorize(memory, 'call_customer', {})
-    memory.pending.presented = True
-    memory.signals = {'confirmation': signal('uncertain', confidence=.3), 'intent': signal('callback')}
-    apply_observations(memory, 'bueno llámame')
-    assert memory.authorized is None
-
-
-def test_rejected_never_authorizes_even_with_callback_intent():
-    memory = state()
-    authorize(memory, 'call_customer', {})
-    memory.pending.presented = True
-    memory.signals = {'confirmation': signal('rejected'), 'intent': signal('callback')}
-    apply_observations(memory, 'no')
-    assert memory.authorized is None
-
-
-def test_callback_intent_does_not_authorize_a_booking():
-    memory = state()
-    authorize(memory, 'create_booking', {'party_size': 4})
-    memory.pending.presented = True
-    memory.signals = {'confirmation': signal('uncertain'), 'intent': signal('callback')}
-    apply_observations(memory, 'mejor llámame')
-    assert memory.authorized is None
-
-
-@pytest.mark.parametrize('signals', [{'intent': signal('cancel', confidence=.3)},
-                                  {'confirmation': signal('rejected', confidence=.3)}])
+@pytest.mark.parametrize('signals', [{'confirmation': signal('rejected', confidence=.3)}])
 def test_refused_proposal_cannot_be_revived_by_later_yes(signals):
     memory = state()
     authorize(memory, 'create_booking', {'party_size': 4})
@@ -388,20 +348,17 @@ async def test_jev_observes_conversation_and_cross_channel_evidence(monkeypatch)
     evaluate = AsyncMock(return_value={})
     monkeypatch.setattr(jev, 'evaluate', evaluate)
     await jev.observe(memory, 'cuatro', 'turn')
-    contextual_call = next(call for call in evaluate.await_args_list if 'recent' in call.args[0])
-    callback_call = next(call for call in evaluate.await_args_list if 'current_message' in call.args[0])
-    payload = contextual_call.args[0]
-    assert payload['conversation_id'] == memory.conversation_id
-    assert payload['recent'] == memory.recent
-    assert payload['message'] == 'cuatro'
-    assert payload['tool_results'] == memory.tool_history
-    questions = contextual_call.args[1]
-    assert 'ordinary cooperative exchange' in questions['satisfaction'][0]
-    assert 'must repeat information' in questions['frustration'][0]
-    assert 'repetition' in questions['fluency'][0]
-    assert 'callback_request' not in questions
-    assert callback_call.args[0] == {'current_message': 'cuatro'}
-    assert list(callback_call.args[1]) == ['callback_request']
+    assert evaluate.await_count == 1
+    payload = evaluate.await_args.args[0]
+    assert payload == {'message': 'cuatro', 'recent': memory.recent, 'tool_results': memory.tool_history}
+    assert 'facts' not in payload and 'pending' not in payload
+    questions = evaluate.await_args.args[1]
+    assert 'not politeness' in questions['satisfaction'][0]
+    assert 'aimed at the assistant' in questions['frustration'][0]
+    assert 'Speech-recognition errors' in questions['fluency'][0]
+    assert set(questions['emotion'][1]) == {'frustrated', 'sad', 'surprised', 'worried', 'relieved', 'unknown'}
+    assert 'emergencia' in questions['intent'][1]
+    assert 'callback_request' not in questions and 'confirmation' not in questions and 'human' not in questions
 
 
 @pytest.mark.asyncio
@@ -412,7 +369,8 @@ async def test_integrity_marks_fabricated_commercial_outcomes_as_severe(monkeypa
     await jev.integrity(memory, 'Tu reserva está confirmada.', 'turn')
     questions = evaluate.call_args.args[1]
     instructions = questions['integrity'][0]
-    assert 'fabricated commercial outcomes as severe unsupported failures' in instructions
+    assert 'one unbacked item is enough to fail' in instructions
+    assert 'registered capacity presented as real-time availability' in jev.INTEGRITY[1]['unsupported']
 
 
 @pytest.mark.asyncio
@@ -422,8 +380,8 @@ async def test_integrity_rejects_offers_of_unverified_services(monkeypatch):
     monkeypatch.setattr(jev, 'evaluate', evaluate)
     await jev.integrity(memory, '¿Quieres información sobre nuestro menú?', 'turn')
     instructions = evaluate.call_args.args[1]['integrity'][0]
-    assert 'any single named service' in instructions
-    assert 'offering information about something the evidence does not mention is an invented fact' in instructions
+    assert 'even inside a greeting, question' in jev.INTEGRITY[1]['unsupported']
+    assert 'referrals to 123' in jev.INTEGRITY[1]['supported']
 
 
 @pytest.mark.asyncio
@@ -487,9 +445,9 @@ async def test_llm_confirmation_fallback_uses_pending_context_without_tools(monk
     assert answer.model == 'test-model'
 
 
-def test_unpresented_unknown_and_human_are_safe():
+def test_unpresented_confirmation_is_safe():
     memory = state()
-    authorize(memory, 'call_customer', {'phone': '+15551234567'})
+    authorize(memory, 'create_booking', {'party_size': 4})
     memory.signals = {'confirmation': signal('explicit')}
     apply_observations(memory, 'confirmo')
     assert not memory.authorized
@@ -497,25 +455,13 @@ def test_unpresented_unknown_and_human_are_safe():
     memory.signals = {}
     apply_observations(memory, 'confirmo')
     assert not memory.authorized
-    memory.signals = {'human': signal('requested'), 'confirmation': signal('explicit')}
-    apply_observations(memory, 'confirmo')
-    assert memory.handoff_requested
-    assert not memory.authorized
 
 
 @pytest.mark.asyncio
 async def test_legacy_cannot_bypass_write_policy():
-    result = await load_tool_registry().execute('create_booking', {
+    result = await load_tool_registry('app.domains.demo_booking.tools').execute('create_booking', {
         'date': '2027-10-05', 'time': '19:00', 'party_size': 4, 'customer_name': 'Juan'}, ToolContext('legacy'))
     assert not result.ok and result.error_code == 'CONFIRMATION_REQUIRED'
-
-
-def test_callback_takes_no_phone_argument():
-    definition = load_tool_registry().resolve('call_customer')
-    assert definition is not None and definition.side_effects == 'write'
-    # No user input is accepted: the destination comes from the verified binding.
-    assert definition.args_model.model_validate({}).model_dump() == {}
-    assert definition.args_model.model_validate({'phone': '+15551234567'}).model_dump() == {}
 
 
 def test_signature_uses_original_bytes():
@@ -612,11 +558,32 @@ async def test_jev_missing_credentials_is_unknown(monkeypatch):
     assert await jev.observe(state(), 'sí', 'turn') == {}
 
 
-def test_callback_question_treats_refusals_as_not_requested():
-    instruction, labels = jev.QUESTIONS['callback_request']
-    assert labels == ['explicit', 'not_requested', 'unknown']
-    assert 'Using only current_message' in instruction
-    assert 'refuses/negates a call' in instruction
-    assert 'already in a call' in instruction
-    assert 'Profanity, anger' in instruction
-    assert 'not_requested' in instruction
+@pytest.mark.asyncio
+async def test_evaluate_sends_label_descriptions(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def system_one(self, state, questions):
+            captured['questions'] = questions
+
+            class Response:
+                model = 'jev-test'
+                choices = {}
+
+            return Response()
+
+    monkeypatch.setenv('TYPESAFE_API_KEY', 'test-key')
+    monkeypatch.setattr(jev, 'AsyncTypeSafeClient', FakeClient)
+    await jev.evaluate({'message': 'hola'}, {'intent': jev.QUESTIONS['intent']}, 'turn')
+    criteria = captured['questions']['intent'].criteria
+    assert 'Medellín' in criteria['buscar_ips']
+    assert 'not an emergency' in criteria['emergencia']

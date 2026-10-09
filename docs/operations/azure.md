@@ -202,13 +202,12 @@ Callback URL a registrar en Meta: `https://<FQDN backend>/webhooks/whatsapp`.
 
 | Secret | Tipo | Lo usa | Para qué |
 | --- | --- | --- | --- |
-| `TYPESAFE_API_KEY` | secret | backend + worker | Señales de Jev: sentimiento, handoff, confirmación y detección de callback |
+| `TYPESAFE_API_KEY` | secret | backend + worker | Señales de Jev: satisfacción, frustración, fluidez, emoción, intención e integridad |
 
 El workflow lo inyecta en el **backend** y en el **worker**. Sin él Jev queda no
-disponible (degradación segura) y, como la autorización de `call_customer` no
-tiene fallback, un pedido de "vuelve a llamar" deja al cliente atrapado en la
-propuesta de reserva pendiente. Los turnos de WhatsApp corren en el worker, por
-eso también lo necesita.
+disponible (degradación segura): el turno sigue, sin señales nuevas, y la
+confirmación de una reserva pendiente la interpreta el modelo de respuesta.
+Los turnos de WhatsApp corren en el worker, por eso también lo necesita.
 
 ## Primer despliegue
 
