@@ -25,11 +25,16 @@ type DashboardPayload = {
   funnel: Array<{ stage: string; value: number; percentage: number }>;
   objection_product_heatmap: Array<{ category: string; product_name: string; count: number; resolved: number; resolution_rate: number }>;
   agent_signals?: { sample_count: number; signals: Record<string, unknown> };
+  costs?: {
+    total_usd: number; llm_usd: number; llm_calls: number; prompt_tokens: number; completion_tokens: number;
+    jev_usd: number; jev_requests: number; jev_input_tokens: number; tts_usd: number; tts_characters: number;
+  };
 };
 
 const C = { graphite: '#414141', amber: '#f7c974', cream: '#faeccf', paper: '#f8f8f8', white: '#f8f8f8', graphite42: 'rgba(65,65,65,.42)', graphite10: 'rgba(65,65,65,.10)' };
 const money = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
 const integer = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
+const usd = (value: number): string => `US$ ${numberValue(value) >= 1 ? numberValue(value).toFixed(2) : numberValue(value).toFixed(4)}`;
 const percent = (value: number): string => `${Number(value || 0).toFixed(1).replace('.', ',')}%`;
 const numberValue = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
 const formatDate = (value: string): string => new Date(value).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
@@ -63,6 +68,9 @@ function parsePayload(value: unknown): DashboardPayload {
     metric_trend: records('metric_trend') as DashboardPayload['metric_trend'],
     funnel: records('funnel') as DashboardPayload['funnel'],
     objection_product_heatmap: records('objection_product_heatmap') as DashboardPayload['objection_product_heatmap'],
+    costs: root.costs && typeof root.costs === 'object' && !Array.isArray(root.costs)
+      ? root.costs as DashboardPayload['costs']
+      : undefined,
     agent_signals: root.agent_signals && typeof root.agent_signals === 'object' && !Array.isArray(root.agent_signals)
       ? root.agent_signals as DashboardPayload['agent_signals']
       : undefined,
@@ -278,6 +286,17 @@ function renderDashboard(payload: DashboardPayload): { hasData: boolean; ready: 
       'dashboardAgentSignalsSample',
       `${integer.format(agentSignals.sampleCount ?? 0)} ${(agentSignals.sampleCount ?? 0) === 1 ? 'llamada' : 'llamadas'}`,
     );
+  }
+  const costs = payload.costs;
+  show('dashboardCosts', Boolean(costs));
+  if (costs) {
+    setText('dashboardCostTotal', usd(costs.total_usd));
+    setText('dashboardCostLlm', usd(costs.llm_usd));
+    setText('dashboardCostLlmDetail', `modelo · ${integer.format(numberValue(costs.prompt_tokens) + numberValue(costs.completion_tokens))} tokens`);
+    setText('dashboardCostJev', usd(costs.jev_usd));
+    setText('dashboardCostJevDetail', `Jev · ${integer.format(numberValue(costs.jev_input_tokens))} tokens de entrada`);
+    setText('dashboardCostTts', usd(costs.tts_usd));
+    setText('dashboardCostTtsDetail', `voz · ${integer.format(numberValue(costs.tts_characters))} caracteres`);
   }
   buildInsights(payload);
   const hasData = Boolean(agentSignals) || summary.conversations > 0 || summary.opportunities > 0 || payload.lost_reasons.length > 0 || payload.products.length > 0 || payload.objections.total > 0;

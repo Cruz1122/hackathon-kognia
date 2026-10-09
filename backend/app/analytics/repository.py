@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import (
     AgentSnapshot,
+    AgentTrace,
     Call,
     CallStatus,
     Conversation,
@@ -29,7 +30,7 @@ class AnalyticsRepository:
     async def get_conversation_count(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> int:
         value = await session.scalar(
             select(func.count(Conversation.id)).where(
-                Conversation.organization_id == organization_id,
+                Conversation.organization_id == organization_id, _real(Conversation.id),
                 Conversation.created_at >= date_from,
                 Conversation.created_at < date_to,
             )
@@ -47,6 +48,7 @@ class AnalyticsRepository:
             select(Call.conversation_id)
             .where(
                 Call.organization_id == organization_id,
+                _real(Call.conversation_id),
                 Call.status == CallStatus.ENDED,
                 Call.ended_at.is_not(None),
                 Call.ended_at >= date_from,
@@ -65,6 +67,32 @@ class AnalyticsRepository:
         return [row for row in rows if isinstance(row, dict)]
 
     @staticmethod
+    async def get_usage_telemetry(
+        session: AsyncSession,
+        organization_id: uuid.UUID,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> list[dict[str, Any]]:
+        """Per-turn usage recorded by the tracer. Only the small JSON keys are read, not the spans."""
+        rows = await session.execute(
+            select(
+                AgentTrace.model,
+                AgentTrace.call_id,
+                AgentTrace.data["usage"],
+                AgentTrace.data["jev_usage"],
+                AgentTrace.data["answer"],
+            ).where(
+                AgentTrace.organization_id == organization_id,
+                AgentTrace.started_at >= date_from,
+                AgentTrace.started_at < date_to,
+            )
+        )
+        return [
+            {"model": model, "call_id": call_id, "usage": usage, "jev_usage": jev_usage, "answer": answer}
+            for model, call_id, usage, jev_usage, answer in rows.all()
+        ]
+
+    @staticmethod
     async def get_opportunity_summary(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> dict[str, int]:
         row = (
             await session.execute(
@@ -76,7 +104,7 @@ class AnalyticsRepository:
                     func.count(case((_recovery_started_condition(), Opportunity.id))).label("recovery_opportunities"),
                     func.coalesce(func.sum(case((_recovered_condition(), Opportunity.amount_minor), else_=0)), 0).label("recovered_revenue"),
                 ).where(
-                    Opportunity.organization_id == organization_id,
+                    Opportunity.organization_id == organization_id, _real(Opportunity.conversation_id),
                     Opportunity.created_at >= date_from,
                     Opportunity.created_at < date_to,
                 )
@@ -121,7 +149,7 @@ class AnalyticsRepository:
             await session.execute(
                 select(Opportunity.lost_reason, func.count(Opportunity.id).label("count"))
                 .where(
-                    Opportunity.organization_id == organization_id,
+                    Opportunity.organization_id == organization_id, _real(Opportunity.conversation_id),
                     Opportunity.status == OpportunityStatus.LOST,
                     Opportunity.lost_reason.is_not(None),
                     Opportunity.created_at >= date_from,
@@ -149,7 +177,7 @@ class AnalyticsRepository:
                     func.count(Objection.id).label("total"),
                     func.count(case((Objection.resolved.is_(True), Objection.id))).label("resolved"),
                 ).where(
-                    Objection.organization_id == organization_id,
+                    Objection.organization_id == organization_id, _real(Objection.conversation_id),
                     Objection.created_at >= date_from,
                     Objection.created_at < date_to,
                 )
@@ -174,7 +202,7 @@ class AnalyticsRepository:
                 .outerjoin(
                     Opportunity,
                     and_(
-                        Opportunity.organization_id == organization_id,
+                        Opportunity.organization_id == organization_id, _real(Opportunity.conversation_id),
                         Opportunity.conversation_id == ProductInterest.conversation_id,
                         Opportunity.product_id == ProductInterest.product_id,
                         Opportunity.created_at >= date_from,
@@ -183,7 +211,7 @@ class AnalyticsRepository:
                 )
                 .where(
                     Product.organization_id == organization_id,
-                    ProductInterest.organization_id == organization_id,
+                    ProductInterest.organization_id == organization_id, _real(ProductInterest.conversation_id),
                     ProductInterest.created_at >= date_from,
                     ProductInterest.created_at < date_to,
                 )
@@ -213,7 +241,7 @@ class AnalyticsRepository:
                     func.count(case((Opportunity.status == OpportunityStatus.WON, Opportunity.id))).label("won"),
                 )
                 .where(
-                    Opportunity.organization_id == organization_id,
+                    Opportunity.organization_id == organization_id, _real(Opportunity.conversation_id),
                     Opportunity.created_at >= date_from,
                     Opportunity.created_at < date_to,
                 )
@@ -229,15 +257,15 @@ class AnalyticsRepository:
     @staticmethod
     async def get_recovery_trend(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
         day = func.date_trunc("day", Opportunity.recovery_started_at).label("date")
-        rows = (await session.execute(select(day, func.count(Opportunity.id).label("started"), func.count(case((_recovered_condition(), Opportunity.id))).label("recovered")).where(Opportunity.organization_id == organization_id, _recovery_started_condition(), Opportunity.recovery_started_at >= date_from, Opportunity.recovery_started_at < date_to).group_by(day).order_by(day))).all()
+        rows = (await session.execute(select(day, func.count(Opportunity.id).label("started"), func.count(case((_recovered_condition(), Opportunity.id))).label("recovered")).where(Opportunity.organization_id == organization_id, _real(Opportunity.conversation_id), _recovery_started_condition(), Opportunity.recovery_started_at >= date_from, Opportunity.recovery_started_at < date_to).group_by(day).order_by(day))).all()
         return [{"date": row.date, "recovery_rate": _rate(row.recovered, row.started)} for row in rows]
 
     @staticmethod
     async def get_metric_trend(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
         conversation_day = func.date_trunc("day", Conversation.created_at).label("date")
-        conversation_rows = (await session.execute(select(conversation_day, func.count(Conversation.id).label("conversations")).where(Conversation.organization_id == organization_id, Conversation.created_at >= date_from, Conversation.created_at < date_to).group_by(conversation_day))).all()
+        conversation_rows = (await session.execute(select(conversation_day, func.count(Conversation.id).label("conversations")).where(Conversation.organization_id == organization_id, _real(Conversation.id), Conversation.created_at >= date_from, Conversation.created_at < date_to).group_by(conversation_day))).all()
         opportunity_day = func.date_trunc("day", Opportunity.created_at).label("date")
-        opportunity_rows = (await session.execute(select(opportunity_day, func.count(Opportunity.id).label("opportunities"), func.count(case((Opportunity.status == OpportunityStatus.WON, Opportunity.id))).label("won"), func.coalesce(func.sum(case((Opportunity.status == OpportunityStatus.WON, Opportunity.amount_minor), else_=0)), 0).label("revenue"), func.count(case((_recovered_condition(), Opportunity.id))).label("recovered"), func.coalesce(func.sum(case((_recovered_condition(), Opportunity.amount_minor), else_=0)), 0).label("recovered_revenue")).where(Opportunity.organization_id == organization_id, Opportunity.created_at >= date_from, Opportunity.created_at < date_to).group_by(opportunity_day))).all()
+        opportunity_rows = (await session.execute(select(opportunity_day, func.count(Opportunity.id).label("opportunities"), func.count(case((Opportunity.status == OpportunityStatus.WON, Opportunity.id))).label("won"), func.coalesce(func.sum(case((Opportunity.status == OpportunityStatus.WON, Opportunity.amount_minor), else_=0)), 0).label("revenue"), func.count(case((_recovered_condition(), Opportunity.id))).label("recovered"), func.coalesce(func.sum(case((_recovered_condition(), Opportunity.amount_minor), else_=0)), 0).label("recovered_revenue")).where(Opportunity.organization_id == organization_id, _real(Opportunity.conversation_id), Opportunity.created_at >= date_from, Opportunity.created_at < date_to).group_by(opportunity_day))).all()
         buckets: dict[datetime, dict[str, int]] = defaultdict(lambda: {"conversations": 0, "opportunities": 0, "won": 0, "revenue_minor": 0, "recovered_sales": 0, "recovered_revenue_minor": 0})
         for row in conversation_rows:
             buckets[row.date]["conversations"] = int(row.conversations or 0)
@@ -248,7 +276,7 @@ class AnalyticsRepository:
 
     @staticmethod
     async def get_objection_categories(session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
-        rows = (await session.execute(select(Objection.category, func.count(case((Objection.resolved.is_(True), Objection.id))).label("resolved"), func.count(case((Objection.resolved.is_(False), Objection.id))).label("unresolved")).where(Objection.organization_id == organization_id, Objection.created_at >= date_from, Objection.created_at < date_to).group_by(Objection.category).order_by(func.count(Objection.id).desc()))).all()
+        rows = (await session.execute(select(Objection.category, func.count(case((Objection.resolved.is_(True), Objection.id))).label("resolved"), func.count(case((Objection.resolved.is_(False), Objection.id))).label("unresolved")).where(Objection.organization_id == organization_id, _real(Objection.conversation_id), Objection.created_at >= date_from, Objection.created_at < date_to).group_by(Objection.category).order_by(func.count(Objection.id).desc()))).all()
         return [{"category": row.category, "resolved": int(row.resolved or 0), "unresolved": int(row.unresolved or 0), "resolution_rate": _rate(row.resolved, (row.resolved or 0) + (row.unresolved or 0))} for row in rows]
 
     @staticmethod
@@ -256,15 +284,21 @@ class AnalyticsRepository:
         interest_pairs = (
             select(ProductInterest.conversation_id, ProductInterest.product_id)
             .where(
-                ProductInterest.organization_id == organization_id,
+                ProductInterest.organization_id == organization_id, _real(ProductInterest.conversation_id),
                 ProductInterest.created_at >= date_from,
                 ProductInterest.created_at < date_to,
             )
             .distinct()
             .subquery()
         )
-        rows = (await session.execute(select(Objection.category, Product.name.label("product_name"), func.count(distinct(Objection.id)).label("count"), func.count(distinct(case((Objection.resolved.is_(True), Objection.id)))).label("resolved")).join(interest_pairs, interest_pairs.c.conversation_id == Objection.conversation_id).join(Product, and_(Product.id == interest_pairs.c.product_id, Product.organization_id == organization_id)).where(Objection.organization_id == organization_id, Objection.created_at >= date_from, Objection.created_at < date_to).group_by(Objection.category, Product.name).order_by(Objection.category, Product.name))).all()
+        rows = (await session.execute(select(Objection.category, Product.name.label("product_name"), func.count(distinct(Objection.id)).label("count"), func.count(distinct(case((Objection.resolved.is_(True), Objection.id)))).label("resolved")).join(interest_pairs, interest_pairs.c.conversation_id == Objection.conversation_id).join(Product, and_(Product.id == interest_pairs.c.product_id, Product.organization_id == organization_id)).where(Objection.organization_id == organization_id, _real(Objection.conversation_id), Objection.created_at >= date_from, Objection.created_at < date_to).group_by(Objection.category, Product.name).order_by(Objection.category, Product.name))).all()
         return [{"category": row.category, "product_name": row.product_name, "count": int(row._mapping["count"] or 0), "resolved": int(row.resolved or 0), "resolution_rate": _rate(row.resolved, row._mapping["count"])} for row in rows]
+
+
+def _real(conversation_column):
+    """Exclude conversations loaded by scripts/seed_dashboard_demo.py; the dashboard shows real activity only."""
+    synthetic = select(Call.conversation_id).where(Call.external_id.like("synthetic-dashboard-%"))
+    return conversation_column.not_in(synthetic)
 
 
 def _rate(numerator: int | None, denominator: int | None) -> float:

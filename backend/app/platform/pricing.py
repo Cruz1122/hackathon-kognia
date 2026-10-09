@@ -41,12 +41,43 @@ class ModelPrice:
 
 # USD per million tokens. Fallback when OpenRouter is unreachable.
 FALLBACK_PRICES: dict[str, ModelPrice] = {
+    # OpenAI list prices (developers.openai.com/api/docs/pricing).
+    "gpt-6-astra": ModelPrice(10.0, 50.0, 1.0),
+    "gpt-6.1-sol": ModelPrice(2.0, 10.0, 0.2),
+    "gpt-6-luna": ModelPrice(0.1, 0.5, 0.01),
+    "gpt-5.6-sol": ModelPrice(4.0, 20.0, 0.4),
+    "gpt-5.6-terra": ModelPrice(2.0, 12.0, 0.2),
+    "gpt-5.6-luna": ModelPrice(0.2, 1.2, 0.02),
+    "gpt-5.5": ModelPrice(5.0, 30.0, 0.5),
+    "gpt-5.5-pro": ModelPrice(30.0, 180.0, 3.0),
+    "gpt-5.4": ModelPrice(2.5, 15.0, 0.25),
+    "gpt-5.4-mini": ModelPrice(0.75, 3.75, 0.075),
+    "gpt-5.4-nano": ModelPrice(0.2, 1.25, 0.02),
+    "gpt-4.1": ModelPrice(2.0, 8.0, 0.5),
+    "gpt-4.1-mini": ModelPrice(0.4, 1.6, 0.1),
+    "gpt-4.1-nano": ModelPrice(0.1, 0.4, 0.025),
     "gpt-4o-mini": ModelPrice(0.15, 0.60, 0.075),
-    "gpt-5.6-luna": ModelPrice(0.20, 1.20, 0.02),
-    "gemini-3.5-flash-lite": ModelPrice(0.30, 2.50, 0.03),
+    # Google Gemini (standard tier; the 3.6+ intro discount is not modelled).
+    "gemini-3.8-flash": ModelPrice(1.5, 7.5),
+    "gemini-3.7-flash": ModelPrice(1.5, 7.5),
+    "gemini-3.6-flash": ModelPrice(1.5, 7.5),
+    "gemini-3.5-flash": ModelPrice(0.54, 4.5),
+    "gemini-3.5-flash-lite": ModelPrice(0.15, 0.60),
+    "gemini-3.1-pro-preview": ModelPrice(2.0, 12.0),
+    "gemini-3.1-flash-lite": ModelPrice(0.30, 2.50),
+    "gemini-2.5-pro": ModelPrice(1.25, 10.0),
+    "gemini-2.5-flash": ModelPrice(0.30, 2.50),
+    "gemini-2.5-flash-lite": ModelPrice(0.10, 0.40),
+    # TypeSafe Jev: input tokens only, output is free.
+    "jev-1.13.0": ModelPrice(0.042, 0.0),
+    "jev-latest": ModelPrice(0.042, 0.0),
+    "jev-preview": ModelPrice(0.042, 0.0),
     "minimax/minimax-m2.7": ModelPrice(0.30, 1.20, 0.06),
     "llama-3.3-70b-versatile": ModelPrice(0.59, 0.79),
 }
+
+# ElevenLabs plan: USD 22 per month for 121k credits (1 credit = 1 character).
+ELEVENLABS_USD_PER_CHARACTER = 22 / 121_000
 
 # Aliases for IDs that differ between our config and OpenRouter.
 MODEL_ALIASES: dict[str, str] = {
@@ -251,6 +282,7 @@ def reset_remote_cache() -> None:
 
 __all__ = [
     "CACHE_KEY",
+    "ELEVENLABS_USD_PER_CHARACTER",
     "FALLBACK_PRICES",
     "ModelPrice",
     "estimate_cost_usd",

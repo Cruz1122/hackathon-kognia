@@ -113,6 +113,29 @@ class AgentSignalsAggregate(BaseModel):
     signals: dict[str, AgentSignalAggregate] = Field(default_factory=dict)
 
 
+class ModelCostPoint(BaseModel):
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float | None = None
+
+
+class UsageCosts(BaseModel):
+    """Estimated spend from recorded telemetry (tokens, characters) and list prices."""
+
+    total_usd: float = 0.0
+    llm_usd: float = 0.0
+    llm_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    llm_models: list[ModelCostPoint] = Field(default_factory=list)
+    jev_usd: float = 0.0
+    jev_requests: int = 0
+    jev_input_tokens: int = 0
+    tts_usd: float = 0.0
+    tts_characters: int = 0
+
+
 class DashboardResponse(BaseModel):
     period: AnalyticsPeriod
     summary: AnalyticsSummary
@@ -127,3 +150,4 @@ class DashboardResponse(BaseModel):
     funnel: list[FunnelPoint] = Field(default_factory=list)
     objection_product_heatmap: list[ObjectionProductPoint] = Field(default_factory=list)
     agent_signals: AgentSignalsAggregate | None = None
+    costs: UsageCosts | None = None

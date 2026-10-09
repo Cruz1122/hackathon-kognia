@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..db.session import get_session_factory
+from ..platform.pricing import ELEVENLABS_USD_PER_CHARACTER, estimate_cost_usd, refresh_prices
 from .cache import AnalyticsCache, dashboard_key
 from .repository import AnalyticsRepository, _rate
 from .schemas import (
@@ -24,6 +25,8 @@ from .schemas import (
     ObjectionMetrics,
     ProductConversionPoint,
     RecoveryTrendPoint,
+    ModelCostPoint,
+    UsageCosts,
 )
 
 
@@ -86,6 +89,57 @@ def _aggregate_agent_signals(snapshots: list[dict]) -> AgentSignalsAggregate | N
     return AgentSignalsAggregate.model_validate({"sample_count": sample_count, "signals": aggregated})
 
 
+def _aggregate_costs(turns: list[dict]) -> UsageCosts:
+    """Price the recorded telemetry: LLM tokens by model, Jev input tokens, TTS characters."""
+    models: dict[str, dict[str, int]] = {}
+    jev = {"requests": 0, "input_tokens": 0, "cost": 0.0}
+    characters = 0
+    llm_calls = 0
+    for turn in turns:
+        usage = turn.get("usage") if isinstance(turn.get("usage"), dict) else {}
+        prompt, completion = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+        if turn.get("model") and (prompt or completion):
+            bucket = models.setdefault(str(turn["model"]), {"prompt": 0, "completion": 0})
+            bucket["prompt"] += prompt
+            bucket["completion"] += completion
+            llm_calls += int(usage.get("llm_calls") or 0)
+        for item in turn.get("jev_usage") if isinstance(turn.get("jev_usage"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            tokens = int(item.get("input_tokens") or 0)
+            jev["requests"] += 1
+            jev["input_tokens"] += tokens
+            jev["cost"] += estimate_cost_usd(item.get("model"), tokens, int(item.get("output_tokens") or 0)) or 0.0
+        # Spoken replies (calls only) are what ElevenLabs bills per character.
+        if turn.get("call_id") is not None and isinstance(turn.get("answer"), str):
+            characters += len(turn["answer"])
+
+    points = [
+        ModelCostPoint(
+            model=model,
+            prompt_tokens=tokens["prompt"],
+            completion_tokens=tokens["completion"],
+            cost_usd=estimate_cost_usd(model, tokens["prompt"], tokens["completion"]),
+        )
+        for model, tokens in sorted(models.items())
+    ]
+    llm_usd = sum(point.cost_usd or 0.0 for point in points)
+    tts_usd = characters * ELEVENLABS_USD_PER_CHARACTER
+    return UsageCosts(
+        total_usd=round(llm_usd + jev["cost"] + tts_usd, 6),
+        llm_usd=round(llm_usd, 6),
+        llm_calls=llm_calls,
+        prompt_tokens=sum(point.prompt_tokens for point in points),
+        completion_tokens=sum(point.completion_tokens for point in points),
+        llm_models=points,
+        jev_usd=round(jev["cost"], 6),
+        jev_requests=jev["requests"],
+        jev_input_tokens=jev["input_tokens"],
+        tts_usd=round(tts_usd, 6),
+        tts_characters=characters,
+    )
+
+
 class AnalyticsService:
     def __init__(self, cache: AnalyticsCache | None = None, repository: AnalyticsRepository | None = None) -> None:
         self.cache = cache or AnalyticsCache()
@@ -105,6 +159,19 @@ class AnalyticsService:
         )
         return _aggregate_agent_signals(snapshots)
 
+    async def _costs(
+        self, session: AsyncSession, organization_id: uuid.UUID, date_from: datetime, date_to: datetime
+    ) -> UsageCosts | None:
+        # Traces are written without bumping the analytics cache version, so costs are never cached.
+        if getattr(type(self.repository), "get_usage_telemetry", None) is None:
+            return None
+        try:
+            await refresh_prices()
+        except Exception:
+            pass
+        turns = await self.repository.get_usage_telemetry(session, organization_id, date_from, date_to)
+        return _aggregate_costs(turns)
+
     async def dashboard(self, session: AsyncSession, *, organization_id: uuid.UUID, date_from: datetime, date_to: datetime) -> DashboardResponse:
         version = await self.cache.version(session, organization_id)
         key = dashboard_key(organization_id, version, date_from, date_to)
@@ -114,6 +181,7 @@ class AnalyticsService:
             response.agent_signals = await self._agent_signal_aggregate(
                 session, organization_id, date_from, date_to
             )
+            response.costs = await self._costs(session, organization_id, date_from, date_to)
             return response
 
         async def build_summary(period_from: datetime, period_to: datetime) -> AnalyticsSummary:
@@ -183,6 +251,7 @@ class AnalyticsService:
             agent_signals=agent_signals,
         )
         await self.cache.set(key, response.model_dump(mode="json", by_alias=True))
+        response.costs = await self._costs(session, organization_id, date_from, date_to)
         return response
 
     async def get_business_analytics(self, *, organization_id: uuid.UUID, date_from: datetime, date_to: datetime, session: AsyncSession | None = None) -> DashboardResponse:

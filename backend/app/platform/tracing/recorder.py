@@ -71,6 +71,7 @@ class TraceRecorder:
     total_tokens: int = 0
     llm_calls: int = 0
     voice: dict[str, Any] = field(default_factory=dict)
+    jev_usage: list[dict[str, Any]] = field(default_factory=list)
 
     _t0: float = field(default_factory=time.perf_counter)
     _turn: dict[str, Any] | None = None
@@ -275,6 +276,7 @@ class TraceRecorder:
             "tools_available": self.tools_available,
             "answer": self.answer,
             "voice": self.voice,
+            "jev_usage": list(self.jev_usage),
             "spans": self.spans,
             "usage": {
                 "prompt_tokens": self.prompt_tokens,
