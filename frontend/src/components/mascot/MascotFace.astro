@@ -1,0 +1,486 @@
+---
+import {
+  AMBER,
+  DEFAULT_EMOTIONS,
+  GRAPHITE,
+  type EmotionDefinition,
+  crossPath,
+  mouthPath,
+  roundedRectPath,
+  rotationTransform,
+} from './mascot-core';
+
+type GradientStops = readonly [string, string, string, string];
+type GradientEmotion = EmotionDefinition & { gradient?: GradientStops };
+type GradientEmotionMap = Record<string, GradientEmotion>;
+
+interface Props {
+  emotion?: string;
+  emotions?: GradientEmotionMap;
+  mergeDefaultEmotions?: boolean;
+  pointerTracking?: boolean;
+  class?: string;
+  id?: string;
+  ariaLabel?: string;
+}
+
+const {
+  emotion = 'default-happy',
+  emotions,
+  mergeDefaultEmotions = true,
+  pointerTracking = true,
+  class: className,
+  id = `mascot-${crypto.randomUUID()}`,
+  ariaLabel = 'Mascota emocional interactiva',
+} = Astro.props;
+
+const emotionMap: GradientEmotionMap = emotions
+  ? mergeDefaultEmotions
+    ? { ...DEFAULT_EMOTIONS, ...emotions }
+    : emotions
+  : DEFAULT_EMOTIONS;
+const selectedInitialEmotion = emotionMap[emotion] ? emotion : 'default-happy';
+const initialDefinition = emotionMap[selectedInitialEmotion] ?? DEFAULT_EMOTIONS['default-happy'];
+const initialState = initialDefinition.state;
+const initialEyeStyle = initialDefinition.eyeStyle ?? 'rect';
+const initialMouthStyle = initialDefinition.mouthStyle ?? 'line';
+const initialGradient = initialDefinition.gradient ?? [AMBER, AMBER, AMBER, AMBER];
+const DEV_GRADIENTS: Record<string, string> = {
+  '#faeccf': '#dcebff',
+  '#fff0bf': '#eaf3ff',
+  '#fadd8d': '#bed8ff',
+  '#f7c974': '#6ea8fe',
+  '#d8a745': '#3f7ccc',
+  '#ffe1a7': '#e4efff',
+  '#ffc978': '#b8d5ff',
+  '#f0a84c': '#6ea8fe',
+  '#d77735': '#3f7ccc',
+  '#edf5ad': '#e5f0ff',
+  '#d3e982': '#b7d4ff',
+  '#a8d864': '#8fb8f4',
+  '#78b54d': '#6f96cf',
+};
+const isDevMode = Astro.url.pathname === '/dev' || Astro.url.pathname.startsWith('/dev/');
+const renderedGradient = isDevMode
+  ? initialGradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color)
+  : initialGradient;
+const gradientId = `${id.replace(/[^a-zA-Z0-9_-]/g, '-')}-gradient`;
+const gradientCx = initialState.faceX - initialState.faceWidth * 0.25;
+const gradientCy = initialState.faceY - initialState.faceHeight * 0.32;
+const gradientRadius = Math.max(initialState.faceWidth, initialState.faceHeight) * 1.22;
+---
+
+<div
+  id={id}
+  class={className}
+  data-mascot-face
+  data-emotion={selectedInitialEmotion}
+  data-emotions={JSON.stringify(emotionMap)}
+  data-pointer-tracking={String(pointerTracking)}
+  data-eye-style={initialEyeStyle}
+  data-mouth-style={initialMouthStyle}
+>
+  <svg viewBox="-180 -180 360 360" width="100%" height="100%" role="img" aria-label={ariaLabel}>
+    <defs>
+      <radialGradient
+        id={gradientId}
+        data-gradient
+        gradientUnits="userSpaceOnUse"
+        cx={gradientCx}
+        cy={gradientCy}
+        fx={gradientCx}
+        fy={gradientCy}
+        r={gradientRadius}
+        gradientTransform={rotationTransform(initialState.faceRotation, initialState.faceX, initialState.faceY)}
+      >
+        <stop data-stop="0" offset="0%" stop-color={renderedGradient[0]} />
+        <stop data-stop="1" offset="32%" stop-color={renderedGradient[1]} />
+        <stop data-stop="2" offset="72%" stop-color={renderedGradient[2]} />
+        <stop data-stop="3" offset="100%" stop-color={renderedGradient[3]} />
+      </radialGradient>
+    </defs>
+    <path
+      data-face
+      d={roundedRectPath(initialState.faceX, initialState.faceY, initialState.faceWidth, initialState.faceHeight, initialState.faceRadius)}
+      transform={rotationTransform(initialState.faceRotation, initialState.faceX, initialState.faceY)}
+      fill={`url(#${gradientId})`}
+    />
+    <g data-features>
+      <g data-eyes>
+        <path data-left-eye d={roundedRectPath(initialState.leftEyeX, initialState.leftEyeY, initialState.leftEyeWidth, initialState.leftEyeHeight, initialState.leftEyeRadius)} transform={rotationTransform(initialState.leftEyeRotation, initialState.leftEyeX, initialState.leftEyeY)} fill={GRAPHITE} />
+        <path data-right-eye d={roundedRectPath(initialState.rightEyeX, initialState.rightEyeY, initialState.rightEyeWidth, initialState.rightEyeHeight, initialState.rightEyeRadius)} transform={rotationTransform(initialState.rightEyeRotation, initialState.rightEyeX, initialState.rightEyeY)} fill={GRAPHITE} />
+      </g>
+      <g data-cross-eyes>
+        <path data-left-eye-cross d={crossPath(initialState.leftEyeX, initialState.leftEyeY, initialState.leftEyeWidth, initialState.leftEyeHeight)} transform={rotationTransform(initialState.leftEyeRotation, initialState.leftEyeX, initialState.leftEyeY)} fill="none" stroke={GRAPHITE} stroke-width={8} stroke-linecap="round" />
+        <path data-right-eye-cross d={crossPath(initialState.rightEyeX, initialState.rightEyeY, initialState.rightEyeWidth, initialState.rightEyeHeight)} transform={rotationTransform(initialState.rightEyeRotation, initialState.rightEyeX, initialState.rightEyeY)} fill="none" stroke={GRAPHITE} stroke-width={8} stroke-linecap="round" />
+      </g>
+      <path data-mouth d={mouthPath(initialState)} transform={rotationTransform(initialState.mouthRotation, initialState.mouthX, initialState.mouthY)} fill="none" stroke={GRAPHITE} stroke-width={initialState.mouthStroke} stroke-linecap="round" />
+      <ellipse data-mouth-open cx={initialState.mouthX} cy={initialState.mouthY} rx={Math.max(2, initialState.mouthWidth / 2)} ry={Math.max(6, initialState.mouthWidth * 0.56)} transform={rotationTransform(initialState.mouthRotation, initialState.mouthX, initialState.mouthY)} fill="none" stroke={GRAPHITE} stroke-width={initialState.mouthStroke} />
+    </g>
+  </svg>
+</div>
+
+<script>
+  import {
+    clamp,
+    easeInOutCubic,
+    interpolateFaceState,
+    lerp,
+    crossPath,
+    mouthPath,
+    roundedRectPath,
+    rotationTransform,
+    type EmotionMap,
+    type FaceState,
+  } from './mascot-core';
+
+  interface MascotElement extends HTMLElement {
+    setEmotion?: (emotion: string) => void;
+    getEmotion?: () => string;
+    blink?: () => void;
+    lookAt?: (clientX: number, clientY: number) => void;
+    lookCenter?: () => void;
+  }
+
+  type GradientStops = readonly [string, string, string, string];
+  type RuntimeEmotionMap = EmotionMap & Record<string, EmotionMap[string] & { gradient?: GradientStops }>;
+
+  interface EyePose {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    radius: number;
+    rotation: number;
+  }
+
+  const FLAT_AMBER: GradientStops = ['#f7c974', '#f7c974', '#f7c974', '#f7c974'];
+  const DEV_GRADIENTS: Record<string, string> = {
+    '#faeccf': '#dcebff',
+    '#fff0bf': '#eaf3ff',
+    '#fadd8d': '#bed8ff',
+    '#f7c974': '#6ea8fe',
+    '#d8a745': '#3f7ccc',
+    '#ffe1a7': '#e4efff',
+    '#ffc978': '#b8d5ff',
+    '#f0a84c': '#6ea8fe',
+    '#d77735': '#3f7ccc',
+    '#edf5ad': '#e5f0ff',
+    '#d3e982': '#b7d4ff',
+    '#a8d864': '#8fb8f4',
+    '#78b54d': '#6f96cf',
+  };
+  const TRACKING_DEADZONE = 0.07;
+  const MIRROR_ENTER = 0.38;
+  const MIRROR_EXIT = 0.1;
+  const MODE_TRANSITION_MS = 560;
+
+  function applyDeadzone(value: number): number {
+    const absolute = Math.abs(value);
+    if (absolute <= TRACKING_DEADZONE) return 0;
+    return Math.sign(value) * ((absolute - TRACKING_DEADZONE) / (1 - TRACKING_DEADZONE));
+  }
+
+  function parseHex(color: string): [number, number, number] {
+    const value = color.replace('#', '');
+    const full = value.length === 3 ? value.split('').map((part) => part + part).join('') : value;
+    const parsed = Number.parseInt(full, 16);
+    return [(parsed >> 16) & 255, (parsed >> 8) & 255, parsed & 255];
+  }
+
+  function interpolateColor(from: string, to: string, progress: number): string {
+    const start = parseHex(from);
+    const end = parseHex(to);
+    return `#${start.map((channel, index) => Math.round(lerp(channel, end[index], progress)).toString(16).padStart(2, '0')).join('')}`;
+  }
+
+  function paletteGradient(gradient: readonly string[], dev: boolean): string[] {
+    if (!dev) return [...gradient];
+    return gradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color);
+  }
+
+  function initializeMascots(): void {
+    document.querySelectorAll<MascotElement>('[data-mascot-face]:not([data-mascot-ready])').forEach((root) => {
+      root.dataset.mascotReady = 'true';
+      const emotions = JSON.parse(root.dataset.emotions ?? '{}') as RuntimeEmotionMap;
+      const eyeStyleOf = (name: string): string => emotions[name]?.eyeStyle ?? 'rect';
+      const mouthStyleOf = (name: string): string => emotions[name]?.mouthStyle ?? 'line';
+      let selectedEmotion = root.dataset.emotion && emotions[root.dataset.emotion] ? root.dataset.emotion : 'default-happy';
+      root.dataset.eyeStyle = eyeStyleOf(selectedEmotion);
+      root.dataset.mouthStyle = mouthStyleOf(selectedEmotion);
+      let displayState = { ...emotions[selectedEmotion].state };
+      let baseGradient = [...(emotions[selectedEmotion].gradient ?? FLAT_AMBER)];
+      let appliedMode = document.documentElement.dataset.uiMode === 'dev';
+      let displayGradient = paletteGradient(baseGradient, appliedMode);
+      let transitionFrom = { ...displayState };
+      let transitionTo = { ...displayState };
+      let gradientFrom = [...displayGradient];
+      let gradientTo = [...displayGradient];
+      let transitionStartedAt = 0;
+      let transitionActive = false;
+      let targetX = 0;
+      let targetY = 0;
+      let trackingX = 0;
+      let trackingY = 0;
+      let mirrored = false;
+      let mirrorProgress = 0;
+      let mirrorFrom = 0;
+      let mirrorTo = 0;
+      let mirrorStartedAt = 0;
+      let mirrorDuration = 520;
+      let mirrorActive = false;
+      let blinkStartedAt = 0;
+      let blinking = false;
+      let nextBlinkAt = performance.now() + 3000 + Math.random() * 2000;
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      let animationFrame = 0;
+      const face = root.querySelector<SVGPathElement>('[data-face]')!;
+      const leftEye = root.querySelector<SVGPathElement>('[data-left-eye]')!;
+      const rightEye = root.querySelector<SVGPathElement>('[data-right-eye]')!;
+      const crossEyes = root.querySelector<SVGGElement>('[data-cross-eyes]')!;
+      const leftEyeCross = root.querySelector<SVGPathElement>('[data-left-eye-cross]')!;
+      const rightEyeCross = root.querySelector<SVGPathElement>('[data-right-eye-cross]')!;
+      const mouth = root.querySelector<SVGPathElement>('[data-mouth]')!;
+      const mouthOpen = root.querySelector<SVGEllipseElement>('[data-mouth-open]')!;
+      const features = root.querySelector<SVGGElement>('[data-features]')!;
+      const eyes = root.querySelector<SVGGElement>('[data-eyes]')!;
+      const gradient = root.querySelector<SVGRadialGradientElement>('[data-gradient]')!;
+      const gradientStops = [0, 1, 2, 3].map((index) => root.querySelector<SVGStopElement>(`[data-stop="${index}"]`)!);
+
+      function setEmotion(next: string): void {
+        if (!emotions[next] || next === selectedEmotion) return;
+        const previous = selectedEmotion;
+        selectedEmotion = next;
+        root.dataset.emotion = next;
+        root.dataset.eyeStyle = eyeStyleOf(next);
+        root.dataset.mouthStyle = mouthStyleOf(next);
+        transitionFrom = { ...displayState };
+        transitionTo = { ...emotions[next].state };
+        baseGradient = [...(emotions[next].gradient ?? FLAT_AMBER)];
+        gradientFrom = [...displayGradient];
+        gradientTo = paletteGradient(baseGradient, appliedMode);
+        transitionStartedAt = performance.now();
+        transitionActive = !reducedMotion.matches;
+        if (!transitionActive) {
+          displayState = { ...transitionTo };
+          displayGradient = [...gradientTo];
+        }
+        if (next === 'privacy') {
+          targetX = -0.8;
+          targetY = 0;
+          requestMirror(true);
+        } else if (previous === 'privacy') {
+          targetX = 0;
+          targetY = 0;
+          requestMirror(false);
+        }
+        root.dispatchEvent(new CustomEvent('mascot:emotion-change', { detail: { emotion: next, previous } }));
+      }
+
+      function forceBlink(): void {
+        if (reducedMotion.matches || emotions[selectedEmotion].blink === false) return;
+        blinking = true;
+        blinkStartedAt = performance.now();
+      }
+
+      function eyePose(side: 'left' | 'right'): EyePose {
+        const prefix = side === 'left' ? 'leftEye' : 'rightEye';
+        return {
+          x: displayState[`${prefix}X`],
+          y: displayState[`${prefix}Y`],
+          width: displayState[`${prefix}Width`],
+          height: displayState[`${prefix}Height`],
+          radius: displayState[`${prefix}Radius`],
+          rotation: displayState[`${prefix}Rotation`],
+        };
+      }
+
+      function mirroredEyeTarget(counterpart: EyePose): EyePose {
+        return { ...counterpart, x: 2 * displayState.faceX - counterpart.x, rotation: -counterpart.rotation };
+      }
+
+      function interpolateEye(from: EyePose, to: EyePose, progress: number): EyePose {
+        return {
+          x: lerp(from.x, to.x, progress),
+          y: lerp(from.y, to.y, progress),
+          width: lerp(from.width, to.width, progress),
+          height: lerp(from.height, to.height, progress),
+          radius: lerp(from.radius, to.radius, progress),
+          rotation: lerp(from.rotation, to.rotation, progress),
+        };
+      }
+
+      function requestMirror(nextMirrored: boolean): void {
+        const target = nextMirrored ? 1 : 0;
+        if (mirrored === nextMirrored && Math.abs(mirrorTo - target) < 0.0001) return;
+        mirrored = nextMirrored;
+        if (reducedMotion.matches) {
+          mirrorProgress = target;
+          mirrorFrom = target;
+          mirrorTo = target;
+          mirrorActive = false;
+          return;
+        }
+        mirrorFrom = mirrorProgress;
+        mirrorTo = target;
+        mirrorStartedAt = performance.now();
+        mirrorDuration = Math.max(80, 520 * Math.abs(mirrorTo - mirrorFrom));
+        mirrorActive = Math.abs(mirrorTo - mirrorFrom) > 0.0001;
+        if (!mirrorActive) mirrorProgress = target;
+      }
+
+      function lookAt(clientX: number, clientY: number): void {
+        if (reducedMotion.matches) return;
+        if (selectedEmotion === 'privacy') {
+          targetX = -0.8;
+          targetY = 0;
+          requestMirror(true);
+          return;
+        }
+        const rect = root.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const spanX = clientX < centerX ? Math.max(1, centerX) : Math.max(1, innerWidth - centerX);
+        const spanY = clientY < centerY ? Math.max(1, centerY) : Math.max(1, innerHeight - centerY);
+        const normalizedX = clamp((clientX - centerX) / spanX, -1, 1);
+        const normalizedY = clamp((clientY - centerY) / spanY, -1, 1);
+        targetX = applyDeadzone(normalizedX);
+        targetY = applyDeadzone(normalizedY);
+        if (!mirrored && normalizedX <= -MIRROR_ENTER) requestMirror(true);
+        else if (mirrored && normalizedX >= -MIRROR_EXIT) requestMirror(false);
+      }
+
+      function lookCenter(): void {
+        targetX = 0;
+        targetY = 0;
+        requestMirror(false);
+      }
+
+      function render(now: number): void {
+        const nextMode = document.documentElement.dataset.uiMode === 'dev';
+        if (nextMode !== appliedMode) {
+          appliedMode = nextMode;
+          gradientFrom = [...displayGradient];
+          gradientTo = paletteGradient(baseGradient, appliedMode);
+          transitionStartedAt = now;
+          transitionActive = !reducedMotion.matches;
+          if (!transitionActive) displayGradient = [...gradientTo];
+        }
+        if (transitionActive) {
+          const raw = clamp((now - transitionStartedAt) / MODE_TRANSITION_MS, 0, 1);
+          const eased = easeInOutCubic(raw);
+          displayState = interpolateFaceState(transitionFrom, transitionTo, eased);
+          displayGradient = gradientFrom.map((color, index) => interpolateColor(color, gradientTo[index], eased));
+          if (raw === 1) transitionActive = false;
+        }
+        trackingX += (targetX - trackingX) * 0.1;
+        trackingY += (targetY - trackingY) * 0.1;
+        if (mirrorActive) {
+          const raw = clamp((now - mirrorStartedAt) / mirrorDuration, 0, 1);
+          mirrorProgress = lerp(mirrorFrom, mirrorTo, easeInOutCubic(raw));
+          if (raw === 1) {
+            mirrorProgress = mirrorTo;
+            mirrorActive = false;
+          }
+        }
+        let blinkFactor = 1;
+        if (!reducedMotion.matches && !blinking && now >= nextBlinkAt) forceBlink();
+        if (blinking) {
+          const raw = clamp((now - blinkStartedAt) / 150, 0, 1);
+          blinkFactor = Math.abs(raw * 2 - 1);
+          if (raw === 1) {
+            blinking = false;
+            nextBlinkAt = now + 3000 + Math.random() * 2000;
+          }
+        }
+        face.setAttribute('d', roundedRectPath(displayState.faceX, displayState.faceY, displayState.faceWidth, displayState.faceHeight, displayState.faceRadius));
+        face.setAttribute('transform', rotationTransform(displayState.faceRotation, displayState.faceX, displayState.faceY));
+        const gradientCx = displayState.faceX - displayState.faceWidth * 0.25;
+        const gradientCy = displayState.faceY - displayState.faceHeight * 0.32;
+        gradient.setAttribute('cx', String(gradientCx));
+        gradient.setAttribute('cy', String(gradientCy));
+        gradient.setAttribute('fx', String(gradientCx));
+        gradient.setAttribute('fy', String(gradientCy));
+        gradient.setAttribute('r', String(Math.max(displayState.faceWidth, displayState.faceHeight) * 1.22));
+        gradient.setAttribute('gradientTransform', rotationTransform(displayState.faceRotation, displayState.faceX, displayState.faceY));
+        gradientStops.forEach((stop, index) => stop.setAttribute('stop-color', displayGradient[index]));
+        const leftBase = eyePose('left');
+        const rightBase = eyePose('right');
+        const left = interpolateEye(leftBase, mirroredEyeTarget(rightBase), mirrorProgress);
+        const right = interpolateEye(rightBase, mirroredEyeTarget(leftBase), mirrorProgress);
+        leftEye.setAttribute('d', roundedRectPath(left.x, left.y, left.width, Math.max(0.001, left.height * blinkFactor), left.radius));
+        leftEye.setAttribute('transform', rotationTransform(left.rotation, left.x, left.y));
+        rightEye.setAttribute('d', roundedRectPath(right.x, right.y, right.width, Math.max(0.001, right.height * blinkFactor), right.radius));
+        rightEye.setAttribute('transform', rotationTransform(right.rotation, right.x, right.y));
+        const mirroredMouthX = 2 * displayState.faceX - displayState.mouthX;
+        const mouthState: FaceState = {
+          ...displayState,
+          mouthX: lerp(displayState.mouthX, mirroredMouthX, mirrorProgress),
+          mouthLeftOffset: lerp(displayState.mouthLeftOffset, displayState.mouthRightOffset, mirrorProgress),
+          mouthRightOffset: lerp(displayState.mouthRightOffset, displayState.mouthLeftOffset, mirrorProgress),
+          mouthRotation: lerp(displayState.mouthRotation, -displayState.mouthRotation, mirrorProgress),
+        };
+        mouth.setAttribute('d', mouthPath(mouthState));
+        mouth.setAttribute('transform', rotationTransform(mouthState.mouthRotation, mouthState.mouthX, mouthState.mouthY));
+        mouth.setAttribute('stroke-width', String(mouthState.mouthStroke));
+        mouthOpen.setAttribute('cx', String(mouthState.mouthX));
+        mouthOpen.setAttribute('cy', String(mouthState.mouthY));
+        mouthOpen.setAttribute('rx', String(Math.max(2, mouthState.mouthWidth / 2)));
+        mouthOpen.setAttribute('ry', String(Math.max(6, mouthState.mouthWidth * 0.56)));
+        mouthOpen.setAttribute('transform', rotationTransform(mouthState.mouthRotation, mouthState.mouthX, mouthState.mouthY));
+        mouthOpen.setAttribute('stroke-width', String(mouthState.mouthStroke));
+        leftEyeCross.setAttribute('d', crossPath(left.x, left.y, left.width, left.height));
+        leftEyeCross.setAttribute('transform', rotationTransform(left.rotation, left.x, left.y));
+        rightEyeCross.setAttribute('d', crossPath(right.x, right.y, right.width, right.height));
+        rightEyeCross.setAttribute('transform', rotationTransform(right.rotation, right.x, right.y));
+        features.setAttribute('transform', reducedMotion.matches ? '' : `translate(${trackingX * 6} ${trackingY * 4})`);
+        eyes.setAttribute('transform', reducedMotion.matches ? '' : `translate(0 ${trackingY * 8})`);
+        crossEyes.setAttribute('transform', reducedMotion.matches ? '' : `translate(0 ${trackingY * 8})`);
+        animationFrame = requestAnimationFrame(render);
+      }
+
+      const onPointerMove = (event: PointerEvent): void => {
+        if (root.dataset.pointerTracking === 'true') lookAt(event.clientX, event.clientY);
+      };
+      const cleanup = (): void => {
+        cancelAnimationFrame(animationFrame);
+        window.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('astro:before-swap', cleanup);
+        delete root.dataset.mascotReady;
+      };
+      window.addEventListener('pointermove', onPointerMove, { passive: true });
+      document.addEventListener('astro:before-swap', cleanup, { once: true });
+
+      Object.assign(root, {
+        setEmotion,
+        getEmotion: () => selectedEmotion,
+        blink: forceBlink,
+        lookAt,
+        lookCenter,
+      });
+      animationFrame = requestAnimationFrame(render);
+    });
+  }
+
+  initializeMascots();
+  document.addEventListener('astro:page-load', initializeMascots);
+</script>
+
+<style>
+  [data-mascot-face] { display: inline-grid; width: 100%; aspect-ratio: 1; place-items: center; }
+  [data-mascot-face] svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  [data-mascot-face] [data-eyes],
+  [data-mascot-face] [data-mouth],
+  [data-mascot-face] [data-cross-eyes],
+  [data-mascot-face] [data-mouth-open] {
+    transition: opacity .25s ease;
+  }
+  [data-mascot-face] [data-cross-eyes],
+  [data-mascot-face] [data-mouth-open] {
+    opacity: 0;
+  }
+  [data-mascot-face][data-eye-style='cross'] [data-eyes] { opacity: 0; }
+  [data-mascot-face][data-eye-style='cross'] [data-cross-eyes] { opacity: 1; }
+  [data-mascot-face][data-mouth-style='open'] [data-mouth] { opacity: 0; }
+  [data-mascot-face][data-mouth-style='open'] [data-mouth-open] { opacity: 1; }
+</style>

@@ -1,0 +1,22 @@
+@import 'flag-icons/css/flag-icons.min.css';
+
+.phone-display {
+  display: inline-flex;
+  align-items: center;
+  gap: .48rem;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.phone-display__flag {
+  width: 1.3em;
+  height: .92em;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-graphite) 12%, transparent);
+}
+
+.phone-display--plain {
+  display: inline;
+}

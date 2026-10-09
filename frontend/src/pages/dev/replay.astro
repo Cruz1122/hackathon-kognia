@@ -1,0 +1,98 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import CallDemoContent from '../../components/calls/CallDemoContent.astro';
+import '../../styles/call-demo.css';
+import '../../styles/dev-replay.css';
+---
+
+<AppLayout title="Kognia — Replay técnico">
+  <CallDemoContent mode="dev" />
+</AppLayout>
+
+<script>
+  import { bootCallReplay } from '../../features/voice-call/application/call-replay';
+  import { accessTokenKey, checkSession, redirectToLogin } from '../../features/auth/session-guard';
+  import { revealLoadedContent, waitForRouteSettle } from '../../features/ui/loading-reveal';
+  import { showToast } from '../../features/voice-call/infrastructure/toast';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+  let mountedId = '';
+  let pendingId = '';
+
+  function isDevReplayRoute(): boolean {
+    return window.location.pathname === '/dev/replay' || window.location.pathname === '/dev/replay/';
+  }
+
+  async function revealReplay(): Promise<void> {
+    await revealLoadedContent(
+      document.getElementById('callLoading'),
+      document.getElementById('appContent'),
+      () => document.querySelector('.app-shell')?.classList.remove('is-call-loading'),
+    );
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  async function revealError(reason: string): Promise<void> {
+    const status = document.getElementById('callConnectionStatus');
+    const reasonElement = document.getElementById('callErrorReason');
+    if (status) status.hidden = true;
+    if (reasonElement) reasonElement.textContent = reason;
+    showToast(reason, 'error');
+    await revealLoadedContent(document.getElementById('callLoading'), document.getElementById('callError'));
+  }
+
+  async function mountDevReplay(): Promise<void> {
+    if (!isDevReplayRoute()) return;
+    const root = document.querySelector<HTMLElement>('.call-demo-page--dev');
+    const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
+    const callId = new URLSearchParams(window.location.search).get('id') ?? '';
+    if (!root || !callId || mountedId === callId || pendingId === callId) return;
+    pendingId = callId;
+    await waitForRouteSettle();
+    if (!root.isConnected || pendingId !== callId) return;
+    try {
+      if ((await checkSession(apiUrl)) === 'invalid' || !token) {
+        pendingId = '';
+        redirectToLogin();
+        return;
+      }
+      const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+      if (!freshToken) {
+        pendingId = '';
+        redirectToLogin();
+        return;
+      }
+      cleanup?.();
+      cleanup = bootCallReplay(
+        apiUrl,
+        freshToken,
+        callId,
+        () => { void revealReplay(); },
+        (reason) => { void revealError(reason); },
+        { dev: true },
+      );
+      mountedId = callId;
+      pendingId = '';
+    } catch (error) {
+      pendingId = '';
+      const reason = error instanceof TypeError
+        ? 'No se pudo conectar con el servidor para consultar esta repetición.'
+        : error instanceof Error && error.message.trim()
+          ? error.message
+          : 'El servidor no respondió al consultar esta repetición.';
+      await revealError(reason);
+    }
+  }
+
+  function unmountDevReplay(): void {
+    cleanup?.();
+    cleanup = null;
+    mountedId = '';
+    pendingId = '';
+  }
+
+  document.addEventListener('astro:before-swap', unmountDevReplay);
+  document.addEventListener('astro:page-load', () => { void mountDevReplay(); });
+  void mountDevReplay();
+</script>

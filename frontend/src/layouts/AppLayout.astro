@@ -1,0 +1,178 @@
+---
+import { ClientRouter } from 'astro:transitions';
+import AppHeader from '../components/navigation/AppHeader.astro';
+import AgentSignalsPanel from '../components/agent-signals/AgentSignalsPanel.astro';
+import '../styles/app-shell.css';
+import '../styles/dashboard.css';
+import '../styles/detail-panel.css';
+import '../styles/toast.css';
+import '../styles/loading-reveal.css';
+import '../styles/empty-state.css';
+import '../styles/phone.css';
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'Kognia — Analíticas' } = Astro.props;
+const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
+const path = Astro.url.pathname;
+const activeRoute = path === '/dev' || path.startsWith('/dev/')
+  ? 'dev'
+  : path === '/calls' || path.startsWith('/calls/')
+    ? 'calls'
+    : 'analytics';
+const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved') || path.startsWith('/dev/replay');
+---
+
+<!doctype html>
+<html lang="es" data-ui-mode={activeRoute === 'dev' ? 'dev' : 'normal'} transition:animate="none">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <script is:inline>
+      (() => {
+        const path = window.location.pathname;
+        document.documentElement.dataset.uiMode = path === '/dev' || path.startsWith('/dev/') ? 'dev' : 'normal';
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <ClientRouter fallback="swap" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script src="https://unpkg.com/lucide@latest" is:inline></script>
+  </head>
+  <body data-api-url={apiUrl}>
+    <div class:list={['app-shell', showDetailPanel && 'has-detail-panel', showDetailPanel && 'is-call-loading']}>
+      <AppHeader active={activeRoute} />
+      <main class="app-main" id="appMain" transition:name="app-main" transition:animate="none">
+        <slot />
+      </main>
+      {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">
+        <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+        <div class="detail-panel__session" id="sessionPanel">
+          <div id="sessionSummary" hidden></div>
+          <div class="detail-client-signals" id="callSignalCategories" aria-label="Estado global del cliente"></div>
+          <div class="detail-panel__signals">
+            <AgentSignalsPanel id="callAgentSignals" variant="compact" categoriesTarget="callSignalCategories" />
+          </div>
+        </div>
+        <div class="detail-panel__body" hidden></div>
+      </aside>}
+    </div>
+    <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+    <script>
+      import { installAuthFetch, installSessionGuard } from '../features/auth/session-guard';
+      import { fillCallNav, stopCallNav } from '../features/voice-call/application/fill-call-nav';
+
+      const header = document.querySelector<HTMLElement>('.app-header');
+      const mobileNavToggle = document.querySelector<HTMLButtonElement>('.mobile-nav-toggle');
+      const apiUrl = document.body.dataset.apiUrl ?? '';
+
+      installAuthFetch(apiUrl);
+
+      function setMobileNavExpanded(expanded: boolean): void {
+        if (!header || !mobileNavToggle) return;
+        const isMobile = matchMedia('(max-width: 767px)').matches;
+        mobileNavToggle.hidden = !isMobile;
+        header.classList.toggle('is-nav-expanded', expanded);
+        mobileNavToggle.setAttribute('aria-expanded', String(expanded));
+        mobileNavToggle.setAttribute('aria-label', expanded ? 'Contraer navegación' : 'Expandir navegación');
+        const nav = document.getElementById('appNav');
+        if (expanded || !matchMedia('(max-width: 767px)').matches) nav?.removeAttribute('inert');
+        else nav?.setAttribute('inert', '');
+      }
+
+      setMobileNavExpanded(false);
+      mobileNavToggle?.addEventListener('click', () => {
+        setMobileNavExpanded(!header?.classList.contains('is-nav-expanded'));
+      });
+      document.getElementById('appNav')?.addEventListener('click', (event) => {
+        if (!matchMedia('(max-width: 767px)').matches) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest('a[data-route]')) setMobileNavExpanded(false);
+      });
+      matchMedia('(max-width: 767px)').addEventListener('change', (event) => {
+        mobileNavToggle?.toggleAttribute('hidden', !event.matches);
+        setMobileNavExpanded(event.matches ? false : true);
+      });
+
+      installSessionGuard(apiUrl);
+
+      function paintIcons(): void {
+        const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+        lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+      }
+
+      function syncUiMode(path = window.location.pathname): void {
+        document.documentElement.dataset.uiMode = path === '/dev' || path.startsWith('/dev/') ? 'dev' : 'normal';
+      }
+
+      syncUiMode();
+      document.addEventListener('astro:before-swap', (event) => {
+        const transition = event as Event & { newDocument?: Document };
+        const nextPath = transition.newDocument?.location.pathname ?? window.location.pathname;
+        syncUiMode(nextPath);
+        syncNavActive(nextPath);
+        if (nextPath === '/dev' || nextPath.startsWith('/dev/')) stopCallNav();
+      });
+
+      function syncNavActive(path = window.location.pathname): void {
+        const route = path === '/dev' || path.startsWith('/dev/')
+          ? 'dev'
+          : path === '/calls' || path.startsWith('/calls/')
+            ? 'calls'
+            : 'analytics';
+        document.querySelectorAll<HTMLElement>('#appNav [data-route], #appNav [data-view="dashboard"]').forEach((item) => {
+          const itemRoute = item.dataset.route === 'calls' ? 'calls' : item.dataset.route === 'dev' ? 'dev' : 'analytics';
+          const active = itemRoute === route;
+          item.classList.toggle('is-active', active);
+          if (active) item.setAttribute('aria-current', 'page');
+          else item.removeAttribute('aria-current');
+        });
+      }
+
+      function syncCallNav(): void {
+        const path = window.location.pathname;
+        if (path === '/dev' || path.startsWith('/dev/')) {
+          stopCallNav();
+          return;
+        }
+        void fillCallNav(apiUrl);
+      }
+
+      const navWatch = window as Window & { __kogniaNavSync?: boolean };
+      if (!navWatch.__kogniaNavSync) {
+        navWatch.__kogniaNavSync = true;
+        document.getElementById('appNav')?.addEventListener('click', (event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const dashboard = target.closest('[data-view="dashboard"]');
+          const path = window.location.pathname;
+          if (!dashboard || path === '/analytics' || path.startsWith('/analytics/')) return;
+          event.preventDefault();
+          const link = document.createElement('a');
+          link.href = '/analytics';
+          link.dataset.route = 'analytics';
+          document.body.append(link);
+          link.click();
+          link.remove();
+        });
+      }
+
+      syncNavActive();
+      paintIcons();
+      syncCallNav();
+      document.addEventListener('astro:page-load', () => {
+        syncUiMode();
+        syncNavActive();
+        paintIcons();
+        syncCallNav();
+      });
+    </script>
+  </body>
+</html>

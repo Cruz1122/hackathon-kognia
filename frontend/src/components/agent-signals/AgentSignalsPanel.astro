@@ -1,0 +1,521 @@
+---
+import SignalScale from './SignalScale.astro';
+import CategoricalIndicator from './CategoricalIndicator.astro';
+import CompactSignalScale from './CompactSignalScale.astro';
+import CompactCategoricalIndicator from './CompactCategoricalIndicator.astro';
+import { AgentSignalsProjector, EMPTY_AGENT_SIGNALS } from '../../lib/agent-signals/model';
+import { DEMO_FRAMES } from '../../lib/agent-signals/demo';
+import type { AgentSignalsEnvelope } from '../../lib/agent-signals/types';
+
+interface Props {
+  id?: string;
+  initialData?: AgentSignalsEnvelope;
+  autoDemo?: boolean;
+  demoFrames?: readonly AgentSignalsEnvelope[];
+  demoIntervalMs?: number;
+  variant?: 'full' | 'compact';
+  categoriesTarget?: string;
+  categories?: boolean;
+  class?: string;
+}
+
+const {
+  id = `agent-signals-${crypto.randomUUID()}`,
+  autoDemo = false,
+  initialData = autoDemo ? DEMO_FRAMES[0] : EMPTY_AGENT_SIGNALS,
+  demoFrames = autoDemo ? DEMO_FRAMES : [],
+  demoIntervalMs = 1500,
+  variant = 'full',
+  categoriesTarget,
+  categories = true,
+  class: className,
+} = Astro.props;
+
+const projector = new AgentSignalsProjector();
+const initial = projector.project(initialData);
+const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
+---
+
+<section
+  id={id}
+  class:list={['agent-signals', variant === 'compact' && 'agent-signals--compact', !categories && variant !== 'compact' && 'agent-signals--no-categories', className]}
+  data-agent-signals
+  data-initial={JSON.stringify(initialData)}
+  data-demo={JSON.stringify(demoFrames)}
+  data-auto-demo={String(autoDemo)}
+  data-demo-interval={String(demoIntervalMs)}
+  data-has-observed-data={String(hasInitialData)}
+  data-categories-target={categoriesTarget}
+  aria-label="Indicadores del agente"
+>
+  {variant === 'compact' ? (
+    <>
+      <section class="agent-signals__compact-group">
+        <div class="agent-signals__scales">
+          <CompactSignalScale snapshot={initial.scales.satisfaction} />
+          <CompactSignalScale snapshot={initial.scales.tension} />
+          <CompactSignalScale snapshot={initial.scales.fluency} />
+          <CompactSignalScale snapshot={initial.scales.hallucination} />
+        </div>
+      </section>
+      <dl class="agent-signals__categories detail-fields" data-agent-signal-categories hidden>
+          <CompactCategoricalIndicator snapshot={initial.categories.intent} />
+          <CompactCategoricalIndicator snapshot={initial.categories.human} />
+          <CompactCategoricalIndicator snapshot={initial.categories.schedule} />
+      </dl>
+    </>
+  ) : (
+    <>
+      <div class="agent-signals__scales">
+        <SignalScale snapshot={initial.scales.satisfaction} />
+        <SignalScale snapshot={initial.scales.tension} />
+        <SignalScale snapshot={initial.scales.fluency} />
+        <SignalScale snapshot={initial.scales.hallucination} />
+      </div>
+
+      {categories && (
+        <div class="agent-signals__categories" data-agent-signal-categories hidden>
+          <CategoricalIndicator snapshot={initial.categories.intent} />
+          <CategoricalIndicator snapshot={initial.categories.human} />
+          <CategoricalIndicator snapshot={initial.categories.schedule} />
+        </div>
+      )}
+    </>
+  )}
+</section>
+
+<script>
+  import {
+    ArrowRight,
+    CircleHelp,
+    ClockArrowUp,
+    LockKeyhole,
+    Pencil,
+    Phone,
+    UserRound,
+    UserRoundCheck,
+    UserRoundX,
+    X,
+    createIcons,
+  } from 'lucide';
+  import { AgentSignalsProjector, snapScale } from '../../lib/agent-signals/model';
+  import type { AgentSignalsEnvelope, AgentSignalsSnapshot, CategoryKey, CategorySnapshot, ScaleKey } from '../../lib/agent-signals/types';
+
+  interface MascotElement extends HTMLElement {
+    setEmotion?: (emotion: string) => void;
+    lookAt?: (clientX: number, clientY: number) => void;
+  }
+
+  interface PanelElement extends HTMLElement {
+    setSignals?: (data: AgentSignalsEnvelope) => void;
+    resetSignalHistory?: () => void;
+    startDemo?: () => void;
+    stopDemo?: () => void;
+    startGaze?: () => void;
+    stopGaze?: () => void;
+    __agentSignalsCleanup?: () => void;
+  }
+
+  const LUCIDE_ICONS = {
+    ArrowRight,
+    CircleHelp,
+    ClockArrowUp,
+    LockKeyhole,
+    Pencil,
+    Phone,
+    UserRound,
+    UserRoundCheck,
+    UserRoundX,
+    X,
+  };
+
+  const DEV_GRADIENTS: Record<string, string> = {
+    '#faeccf': '#dcebff',
+    '#fff0bf': '#eaf3ff',
+    '#fadd8d': '#bed8ff',
+    '#f7c974': '#6ea8fe',
+    '#d8a745': '#3f7ccc',
+    '#ffe1a7': '#e4efff',
+    '#ffc978': '#b8d5ff',
+    '#f0a84c': '#6ea8fe',
+    '#d77735': '#3f7ccc',
+    '#edf5ad': '#e5f0ff',
+    '#d3e982': '#b7d4ff',
+    '#a8d864': '#8fb8f4',
+    '#78b54d': '#6f96cf',
+  };
+
+  function paletteGradient(gradient: readonly string[]): string[] {
+    if (document.documentElement.dataset.uiMode !== 'dev') return [...gradient];
+    return gradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color);
+  }
+
+  function parse<T>(value: string | undefined, fallback: T): T {
+    if (!value) return fallback;
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function renderLucide(root: Element): void {
+    createIcons({
+      root,
+      icons: LUCIDE_ICONS,
+      attrs: {
+        'stroke-width': 1.7,
+        width: 26,
+        height: 26,
+        'aria-hidden': 'true',
+      },
+    });
+  }
+
+  function randomViewportTarget(root: HTMLElement): { x: number; y: number; sector: string } {
+    const rect = root.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const sectors = ['left', 'right', 'up', 'down', 'up-left', 'up-right', 'down-left', 'down-right'] as const;
+    const sector = sectors[Math.floor(Math.random() * sectors.length)];
+    const horizontal = Math.max(80, innerWidth * (.2 + Math.random() * .26));
+    const vertical = Math.max(80, innerHeight * (.2 + Math.random() * .28));
+    const driftX = innerWidth * (Math.random() * .12 - .06);
+    const driftY = innerHeight * (Math.random() * .12 - .06);
+    let x = centerX;
+    let y = centerY;
+
+    if (sector.includes('left')) x -= horizontal;
+    if (sector.includes('right')) x += horizontal;
+    if (sector === 'up' || sector === 'down') x += driftX;
+    if (sector.includes('up')) y -= vertical;
+    if (sector.includes('down')) y += vertical;
+    if (sector === 'left' || sector === 'right') y += driftY;
+
+    const marginX = Math.max(24, innerWidth * .04);
+    const marginY = Math.max(24, innerHeight * .05);
+    return {
+      x: Math.min(innerWidth - marginX, Math.max(marginX, x)),
+      y: Math.min(innerHeight - marginY, Math.max(marginY, y)),
+      sector,
+    };
+  }
+
+  function initializePanels(): void {
+    document.querySelectorAll<PanelElement>('[data-agent-signals]').forEach((root) => {
+      root.__agentSignalsCleanup?.();
+
+      const projector = new AgentSignalsProjector();
+      const initial = parse<AgentSignalsEnvelope | null>(root.dataset.initial, null);
+      const demo = parse<AgentSignalsEnvelope[]>(root.dataset.demo, []);
+      const demoInterval = Math.max(250, Number(root.dataset.demoInterval) || 1500);
+      const categoriesTarget = root.dataset.categoriesTarget ? document.getElementById(root.dataset.categoriesTarget) : null;
+      const categoryBlock = root.querySelector<HTMLElement>('[data-agent-signal-categories]');
+      if (categoriesTarget && categoryBlock && categoryBlock.parentElement !== categoriesTarget) categoriesTarget.append(categoryBlock);
+      const categoryScope: ParentNode = categoriesTarget ?? root;
+      const timers = new Set<number>();
+      const categoryTimers = new Map<CategoryKey, Set<number>>();
+      const gazeTimers = new Map<MascotElement, Set<number>>();
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      let gazeEnabled = true;
+      let demoTimer: number | undefined;
+      let demoIndex = 0;
+      const categorySnapshots = new Map<CategoryKey, CategorySnapshot>();
+
+      const schedule = (callback: () => void, delay: number, group?: Set<number>): number => {
+        const timer = window.setTimeout(() => {
+          timers.delete(timer);
+          group?.delete(timer);
+          callback();
+        }, delay);
+        timers.add(timer);
+        group?.add(timer);
+        return timer;
+      };
+
+      const startIndependentGaze = (mascot: MascotElement): void => {
+        const mascotTimers = gazeTimers.get(mascot) ?? new Set<number>();
+        gazeTimers.set(mascot, mascotTimers);
+        const sequence = (): void => {
+          if (!gazeEnabled || reducedMotion.matches) return;
+          const count = 1 + Math.floor(Math.random() * 3);
+          let index = 0;
+
+          const glance = (): void => {
+            if (!gazeEnabled || reducedMotion.matches) return;
+            if (!mascot.lookAt) {
+              schedule(glance, 50, mascotTimers);
+              return;
+            }
+            const target = randomViewportTarget(mascot);
+            mascot.dataset.gazeTarget = `${Math.round(target.x)},${Math.round(target.y)}`;
+            mascot.dataset.gazeSector = target.sector;
+            mascot.lookAt(target.x, target.y);
+            index += 1;
+            const hold = 1200 + Math.random() * 1800;
+            schedule(index < count ? glance : sequence, hold, mascotTimers);
+          };
+
+          glance();
+        };
+
+        schedule(sequence, 500 + Math.random() * 1100, mascotTimers);
+      };
+
+      const clearGazeTimers = (): void => {
+        gazeTimers.forEach((mascotTimers) => {
+          mascotTimers.forEach((timer) => {
+            window.clearTimeout(timer);
+            timers.delete(timer);
+          });
+          mascotTimers.clear();
+        });
+      };
+      const stopGaze = (): void => {
+        gazeEnabled = false;
+        clearGazeTimers();
+      };
+      const startGaze = (): void => {
+        clearGazeTimers();
+        gazeEnabled = true;
+        if (!reducedMotion.matches) root.querySelectorAll<MascotElement>('[data-mascot-face]').forEach(startIndependentGaze);
+      };
+      const onMotionChange = (): void => {
+        clearGazeTimers();
+        if (gazeEnabled && !reducedMotion.matches) startGaze();
+      };
+
+      const updateScale = (key: ScaleKey, snapshot: AgentSignalsSnapshot['scales'][ScaleKey]): void => {
+        const card = root.querySelector<HTMLElement>(`[data-signal-scale="${key}"]`);
+        if (!card) return;
+        const percentage = card.querySelector<HTMLElement>('[data-scale-percentage]');
+        const meter = card.querySelector<HTMLElement>('[data-scale-meter]');
+        const mascotWrap = card.querySelector<HTMLElement>('[data-scale-mascot]');
+        const mascot = card.querySelector<MascotElement>('[data-mascot-face]');
+        const snapped = snapScale(snapshot.score);
+
+        if (percentage) percentage.textContent = `${snapshot.percentage}%`;
+        if (meter) {
+          meter.setAttribute('aria-valuenow', snapshot.score.toFixed(2));
+          meter.setAttribute('aria-valuetext', `${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`);
+          meter.setAttribute('aria-label', `${snapshot.title}: ${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`);
+        }
+        mascotWrap?.style.setProperty('--position', String(snapped.position));
+        mascot?.setEmotion?.(snapped.emotion);
+        mascot?.querySelector('svg')?.setAttribute('aria-label', `${snapshot.title}: ${snapshot.percentage}%`);
+      };
+
+      const updateCategory = (key: CategoryKey, snapshot: AgentSignalsSnapshot['categories'][CategoryKey]): void => {
+        categorySnapshots.set(key, snapshot);
+        const card = categoryScope.querySelector<HTMLElement>(`[data-category="${key}"]`);
+        if (!card || card.dataset.value === snapshot.value) return;
+        card.dataset.value = snapshot.value;
+        const label = card.querySelector<HTMLElement>('[data-category-label]');
+        const icon = card.querySelector<HTMLElement>('[data-category-icon]');
+        const stops = [0, 1, 2, 3].map((index) => card.querySelector<SVGStopElement>(`[data-category-stop="${index}"]`));
+        const pending = categoryTimers.get(key) ?? new Set<number>();
+        pending.forEach((timer) => {
+          window.clearTimeout(timer);
+          timers.delete(timer);
+        });
+        pending.clear();
+        categoryTimers.set(key, pending);
+
+        const commit = (): void => {
+          const gradient = paletteGradient(snapshot.gradient);
+          stops.forEach((stop, index) => stop?.setAttribute('stop-color', gradient[index]));
+          if (label) label.textContent = snapshot.label;
+          if (icon) icon.innerHTML = `<i data-lucide="${snapshot.icon}"></i>`;
+          card.setAttribute('aria-label', `${snapshot.title}: ${snapshot.label}`);
+          renderLucide(card);
+        };
+
+        if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          delete card.dataset.changing;
+          commit();
+          return;
+        }
+
+        card.dataset.changing = 'out';
+        schedule(() => {
+          commit();
+          card.dataset.changing = 'in';
+          schedule(() => { delete card.dataset.changing; }, 220, pending);
+        }, 140, pending);
+      };
+
+      const reconcileCategoryPalette = (): void => {
+        categorySnapshots.forEach((snapshot, key) => {
+          const card = categoryScope.querySelector<HTMLElement>(`[data-category="${key}"]`);
+          if (!card) return;
+          const gradient = paletteGradient(snapshot.gradient);
+          [0, 1, 2, 3].forEach((index) => {
+            card.querySelector<SVGStopElement>(`[data-category-stop="${index}"]`)?.setAttribute('stop-color', gradient[index]);
+          });
+        });
+      };
+      const paletteObserver = new MutationObserver((mutations) => {
+        if (mutations.some((mutation) => mutation.attributeName === 'data-ui-mode')) reconcileCategoryPalette();
+      });
+      paletteObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-ui-mode'] });
+
+      const setSignals = (data: AgentSignalsEnvelope): void => {
+        root.dataset.hasObservedData = 'true';
+        const snapshot = projector.project(data);
+        const categoriesReady = [
+          data.signals.intent?.value,
+          data.signals.human?.value,
+          data.signals.schedule_flexibility?.value,
+        ].some((value) => typeof value === 'string' && value !== 'unknown');
+        if (categoryBlock) categoryBlock.hidden = !categoriesReady;
+        (Object.keys(snapshot.scales) as ScaleKey[]).forEach((key) => updateScale(key, snapshot.scales[key]));
+        (Object.keys(snapshot.categories) as CategoryKey[]).forEach((key) => updateCategory(key, snapshot.categories[key]));
+        root.dispatchEvent(new CustomEvent('agent-signals:rendered', { detail: snapshot }));
+      };
+
+      const stopDemo = (): void => {
+        if (demoTimer !== undefined) window.clearInterval(demoTimer);
+        demoTimer = undefined;
+      };
+
+      const startDemo = (): void => {
+        stopDemo();
+        if (!demo.length) return;
+        demoIndex = 0;
+        projector.reset();
+        setSignals(demo[demoIndex]);
+        demoTimer = window.setInterval(() => {
+          demoIndex = (demoIndex + 1) % demo.length;
+          setSignals(demo[demoIndex]);
+        }, demoInterval);
+      };
+
+      const onUpdate = (event: Event): void => {
+        const payload = (event as CustomEvent<AgentSignalsEnvelope>).detail;
+        if (payload?.signals) {
+          stopDemo();
+          setSignals(payload);
+        }
+      };
+
+      const cleanup = (): void => {
+        stopDemo();
+        stopGaze();
+        gazeTimers.clear();
+        timers.forEach((timer) => window.clearTimeout(timer));
+        timers.clear();
+        categoryTimers.clear();
+        paletteObserver.disconnect();
+        root.removeEventListener('agent-signals:update', onUpdate);
+        reducedMotion.removeEventListener('change', onMotionChange);
+        document.removeEventListener('astro:before-swap', cleanup);
+      };
+
+      Object.assign(root, {
+        setSignals: (data: AgentSignalsEnvelope) => { stopDemo(); setSignals(data); },
+        resetSignalHistory: () => projector.reset(),
+        startDemo,
+        stopDemo,
+        startGaze,
+        stopGaze,
+      });
+      root.addEventListener('agent-signals:update', onUpdate);
+      document.addEventListener('astro:before-swap', cleanup, { once: true });
+      root.__agentSignalsCleanup = cleanup;
+
+      renderLucide(root);
+      reducedMotion.addEventListener('change', onMotionChange);
+      startGaze();
+      if (initial && root.dataset.hasObservedData === 'true') setSignals(initial);
+      reconcileCategoryPalette();
+      if (root.dataset.autoDemo === 'true') startDemo();
+    });
+  }
+
+  initializePanels();
+  document.addEventListener('astro:page-load', initializePanels);
+</script>
+
+<style>
+  .agent-signals {
+    --ui-graphite: #414141;
+    --ui-accent: #f7c974;
+    --ui-accent-soft: #faeccf;
+    --ui-paper: #f8f8f8;
+    --radius-max: 32px;
+    --radius-ui: min(var(--radius-max), 50%);
+    width: min(1380px, 100%);
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+    gap: 18px;
+    align-items: start;
+    font-family: "Urbanist", sans-serif;
+  }
+
+  .agent-signals[data-has-observed-data="false"] {
+    display: none;
+  }
+
+  .agent-signals__scales {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    gap: 18px;
+  }
+
+  .agent-signals__categories { display: grid; gap: 14px; }
+
+  .agent-signals--no-categories { grid-template-columns: minmax(0, 1fr); }
+
+  .agent-signals--compact {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .agent-signals--compact .agent-signals__compact-group {
+    min-width: 0;
+  }
+
+  .agent-signals--compact .agent-signals__compact-group > h3 {
+    margin: 0 0 8px;
+    padding: 0;
+    font: 800 11px/1.2 "Urbanist", sans-serif;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    opacity: .46;
+  }
+
+  .agent-signals--compact .agent-signals__scales {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .agent-signals--compact .agent-signals__categories {
+    gap: 6px;
+  }
+
+  @media (max-width: 1180px) {
+    .agent-signals { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 860px) {
+    .agent-signals__scales {
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      overflow-x: auto;
+      padding-bottom: 10px;
+      scroll-snap-type: x proximity;
+    }
+
+    .agent-signals__scales :global(.signal-scale) { scroll-snap-align: start; }
+    .agent-signals__categories { grid-template-columns: 1fr; }
+
+    .agent-signals--compact .agent-signals__scales {
+      grid-template-columns: minmax(0, 1fr);
+      overflow: visible;
+      padding-bottom: 0;
+    }
+  }
+</style>

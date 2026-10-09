@@ -1,0 +1,161 @@
+---
+import { DEFAULT_EMOTIONS, roundedRectPath, rotationTransform } from '../mascot/mascot-core';
+import type { CategorySnapshot } from '../../lib/agent-signals/types';
+
+interface Props {
+  snapshot: CategorySnapshot;
+}
+
+const { snapshot } = Astro.props;
+const DEV_GRADIENTS: Record<string, string> = {
+  '#faeccf': '#dcebff',
+  '#fff0bf': '#eaf3ff',
+  '#fadd8d': '#bed8ff',
+  '#f7c974': '#6ea8fe',
+  '#d8a745': '#3f7ccc',
+  '#ffe1a7': '#e4efff',
+  '#ffc978': '#b8d5ff',
+  '#f0a84c': '#6ea8fe',
+  '#d77735': '#3f7ccc',
+  '#edf5ad': '#e5f0ff',
+  '#d3e982': '#b7d4ff',
+  '#a8d864': '#8fb8f4',
+  '#78b54d': '#6f96cf',
+};
+const isDevMode = Astro.url.pathname === '/dev' || Astro.url.pathname.startsWith('/dev/');
+const renderedGradient = isDevMode
+  ? snapshot.gradient.map((color) => DEV_GRADIENTS[color.toLowerCase()] ?? color)
+  : snapshot.gradient;
+const base = DEFAULT_EMOTIONS['default-happy'].state;
+const gradientId = `status-${snapshot.key}-${crypto.randomUUID()}`;
+const gradientCx = base.faceX - base.faceWidth * .25;
+const gradientCy = base.faceY - base.faceHeight * .32;
+const gradientRadius = Math.max(base.faceWidth, base.faceHeight) * 1.22;
+---
+
+<article class="categorical" role="img" aria-label={`${snapshot.title}: ${snapshot.label}`} data-category={snapshot.key} data-value={snapshot.value}>
+  <div class="categorical__visual" aria-hidden="true">
+    <svg class="categorical__face" viewBox="-180 -180 360 360">
+      <defs>
+        <radialGradient
+          id={gradientId}
+          data-category-gradient
+          gradientUnits="userSpaceOnUse"
+          cx={gradientCx}
+          cy={gradientCy}
+          fx={gradientCx}
+          fy={gradientCy}
+          r={gradientRadius}
+          gradientTransform={rotationTransform(base.faceRotation, base.faceX, base.faceY)}
+        >
+          {renderedGradient.map((color, index) => (
+            <stop data-category-stop={index} offset={['0%', '32%', '72%', '100%'][index]} stop-color={color} />
+          ))}
+        </radialGradient>
+      </defs>
+      <path
+        data-category-face
+        d={roundedRectPath(base.faceX, base.faceY, base.faceWidth, base.faceHeight, base.faceRadius)}
+        transform={rotationTransform(base.faceRotation, base.faceX, base.faceY)}
+        fill={`url(#${gradientId})`}
+      />
+    </svg>
+    <span class="categorical__icon" data-category-icon><i data-lucide={snapshot.icon}></i></span>
+  </div>
+
+  <div class="categorical__copy">
+    <h2 class="categorical__title">{snapshot.title}</h2>
+    <p class="categorical__label" data-category-label>{snapshot.label}</p>
+  </div>
+</article>
+
+<style>
+  .categorical {
+    min-height: 138px;
+    padding: 22px;
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr);
+    gap: 18px;
+    align-items: center;
+    border-radius: var(--radius-ui, min(32px, 50%));
+    background: var(--ui-paper, #f8f8f8);
+    color: var(--ui-graphite, #414141);
+    box-shadow: 0 16px 38px rgb(65 65 65 / 8%);
+  }
+
+  .categorical__visual {
+    position: relative;
+    width: 78px;
+    height: 78px;
+    display: grid;
+    place-items: center;
+    transition: transform 180ms cubic-bezier(.22, 1, .36, 1);
+  }
+
+  .categorical__face {
+    width: 78px;
+    height: 78px;
+    display: block;
+    overflow: visible;
+  }
+
+  .categorical__face stop { transition: stop-color .36s ease; }
+
+  .categorical__icon {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    color: var(--ui-graphite, #414141);
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transition: opacity 140ms ease, transform 190ms cubic-bezier(.22, 1, .36, 1);
+  }
+
+  .categorical__icon :global(svg) { width: 100%; height: 100%; }
+
+  .categorical__title {
+    margin: 0;
+    font: 800 1rem/1.08 "Urbanist", sans-serif;
+  }
+
+  .categorical__label {
+    margin: 5px 0 0;
+    font: 600 .8rem/1.2 "Urbanist", sans-serif;
+    opacity: .8;
+    transform: translateY(0);
+    transition: opacity 140ms ease, transform 190ms cubic-bezier(.22, 1, .36, 1);
+  }
+
+  .categorical[data-changing="out"] .categorical__icon {
+    opacity: 0;
+    transform: translateY(5px) scale(.84);
+  }
+
+  .categorical[data-changing="out"] .categorical__label {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  .categorical[data-changing="out"] .categorical__visual { transform: scale(.98, .95); }
+
+  .categorical[data-changing="in"] .categorical__icon { animation: category-icon-in 210ms cubic-bezier(.22, 1, .36, 1); }
+  .categorical[data-changing="in"] .categorical__label { animation: category-label-in 210ms cubic-bezier(.22, 1, .36, 1); }
+
+  @keyframes category-icon-in {
+    from { opacity: 0; transform: translateY(-5px) scale(.86); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes category-label-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .categorical__visual,
+    .categorical__icon,
+    .categorical__label { transition-duration: .001ms; animation-duration: .001ms !important; }
+  }
+</style>

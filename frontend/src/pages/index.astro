@@ -1,0 +1,2976 @@
+---
+import { ClientRouter } from 'astro:transitions';
+import InteractiveMascotFace from '../components/mascot/InteractiveMascotFace.astro';
+import AppHeader from '../components/navigation/AppHeader.astro';
+import EmptyState from '../components/ui/EmptyState.astro';
+
+const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
+import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
+import '../styles/toast.css';
+import '../styles/detail-panel.css';
+import '../styles/app-shell.css';
+import '../styles/dashboard.css';
+import '../styles/loading-reveal.css';
+import '../styles/empty-state.css';
+import '../styles/phone.css';
+---
+<html lang="es" data-ui-mode="normal" transition:animate="none">
+  <head>
+
+  <meta charset="utf-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+   <title>Monitoreo de llamadas — Demo</title>
+   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+   <ClientRouter fallback="swap" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest" is:inline></script>
+  <style is:inline>
+    :root {
+      --ui-graphite: #414141;
+      --ui-amber: #f7c974;
+      --ui-cream: #faeccf;
+      --ui-paper: #f8f8f8;
+      --ui-brand-face-size: 64px;
+      --ui-control: var(--ui-cream);
+      --rail-share: min(17.5%, 21rem);
+      --rail: var(--rail-share);
+      --font-ui: "Urbanist", sans-serif;
+      --radius-full: 9999px;
+      --radius-min: 14px;
+      --radius-max: 32px;
+      --radius-ui: min(var(--radius-max), 50%);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
+      font-family: var(--font-ui);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    button { font: inherit; color: inherit; }
+
+    .page {
+      width: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    .app-content[hidden], .state-view[hidden], .auth-panel[hidden], .app-header[hidden] { display: none !important; }
+
+    .auth-panel {
+      position: relative;
+      display: grid;
+      --right-rail: 0%;
+      grid-template-columns: minmax(0, 50%) minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr);
+      width: 100%;
+      min-height: 100dvh;
+      margin: 0;
+      padding: 0;
+      background: var(--ui-paper);
+      overflow: hidden;
+    }
+
+    .auth-panel.is-app {
+      --right-rail: var(--rail-share);
+      grid-template-columns: minmax(0, 1fr) minmax(0, var(--right-rail));
+      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-areas:
+        "header header"
+        "main detail";
+      min-height: 100dvh;
+    }
+
+    .auth-panel.is-app.is-empty-view {
+      grid-template-columns: minmax(0, 1fr) 0;
+    }
+
+    .auth-panel > .app-header {
+      grid-area: header;
+      min-width: 0;
+    }
+
+    .auth-panel:not(.is-app) > .app-header { display: none; }
+    .auth-panel.is-app:not(.is-header-ready) > .app-header { visibility: hidden; opacity: 0; pointer-events: none; }
+    .auth-panel.is-app.is-header-ready > .app-header { visibility: visible; opacity: 1; pointer-events: auto; }
+
+    .login-visual {
+      grid-column: 1;
+      grid-row: 1;
+      position: relative;
+      z-index: 1;
+      min-width: 0;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: visible;
+      background: var(--ui-graphite);
+      padding: 48px 28px;
+    }
+
+    .auth-panel.is-app:not(.is-wipe-proxy) > .login-visual { display: none; }
+
+    /* Un solo trazo de dos periodos, con el empalme fuera del viewBox.
+       Al desplazar un periodo el último fotograma coincide con el primero
+       y no aparece la línea del corte. */
+    .login-material {
+      position: absolute;
+      inset: -100% 0 auto auto;
+      right: -6%;
+      width: 24%;
+      height: 200%;
+      transform-origin: 100% 50%;
+      --material-enter-from: scaleX(.16);
+      filter: url(#ui-goo);
+      -webkit-filter: url(#ui-goo);
+      will-change: width, height, opacity, transform;
+      transition:
+        width .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        height .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        right .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        left .85s cubic-bezier(.32, .04, .18, 1) 1.55s,
+        bottom .85s cubic-bezier(.32, .04, .18, 1) 1.55s;
+    }
+
+    .login-material.is-gone {
+      display: none !important;
+    }
+
+    .auth-panel.is-resizing,
+    .auth-panel.is-resizing .login-visual,
+    .auth-panel.is-resizing .login-brand,
+    .auth-panel.is-resizing .login-face-wrap,
+    .auth-panel.is-resizing .login-name,
+    .auth-panel.is-resizing .login-material,
+    .login-material.is-resizing {
+      transition: none !important;
+      animation: none !important;
+    }
+
+    .login-material.is-resizing {
+      opacity: 1;
+      visibility: visible;
+      transform: none;
+    }
+
+    .login-material.is-entering {
+      animation: material-enter .7s cubic-bezier(.32, .04, .18, 1) both;
+    }
+
+    .login-liquid-svg { display: block; width: 100%; height: 100%; }
+    .login-liquid-svg--y { animation: liquid-flow 12s linear infinite; }
+    .login-liquid-svg--x { display: none; animation: liquid-flow-x 12s linear infinite; }
+    .login-wipe-proxy .login-material,
+    .login-wipe-proxy .login-liquid-svg {
+      transition: none !important;
+      animation: none !important;
+    }
+    .amber-shape { fill: var(--ui-amber); }
+    .graphite-shape { fill: var(--ui-graphite); }
+
+    @keyframes liquid-flow {
+      from { transform: translateY(0); }
+      to { transform: translateY(50%); }
+    }
+
+    @keyframes liquid-flow-x {
+      from { transform: translateX(0); }
+      to { transform: translateX(-50%); }
+    }
+
+    @keyframes material-enter {
+      from {
+        opacity: 0;
+        transform: var(--material-enter-from);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    .login-brand {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      width: min(100%, 360px);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      color: var(--ui-amber);
+      text-align: center;
+      gap: 0;
+      transition:
+        gap 1.55s cubic-bezier(.32, .04, .18, 1),
+        color 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .login-face-wrap {
+      position: relative;
+      isolation: isolate;
+      width: min(55%, 280px);
+      aspect-ratio: 1;
+      border-radius: var(--radius-full);
+      cursor: pointer;
+      user-select: none;
+      transform: translateZ(0);
+      transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    /* During the login wipe the real visual stays in the DOM as the source.
+       Its visual copy exits independently through the left edge. */
+    .auth-panel.is-wipe-proxy.is-wipe-source-hidden > .login-visual {
+      visibility: hidden !important;
+      transition: none !important;
+    }
+
+    .login-wipe-proxy {
+      position: fixed !important;
+      z-index: 100 !important;
+      display: block !important;
+      box-sizing: border-box !important;
+      margin: 0 !important;
+      pointer-events: none !important;
+      transform-origin: top left !important;
+      transition: none !important;
+      animation: none !important;
+      visibility: visible !important;
+      will-change: transform;
+    }
+
+    .login-wipe-proxy.login-visual {
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      z-index: 100 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      justify-content: center !important;
+      min-width: 0 !important;
+      overflow: visible !important;
+      pointer-events: none !important;
+    }
+
+    .login-face {
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+      pointer-events: none;
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
+
+    .login-face-wrap:focus-visible { outline: 4px solid var(--ui-paper); outline-offset: 8px; }
+
+    .login-name {
+      width: min(80%, 300px);
+      margin-top: 10px;
+      font-size: clamp(2.2rem, 4vw, 4rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -.04em;
+      transition:
+        font-size 1.55s cubic-bezier(.32, .04, .18, 1),
+        margin-top 1.55s cubic-bezier(.32, .04, .18, 1),
+        width 1.55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .login-right {
+      grid-column: 2;
+      grid-row: 1;
+      position: relative;
+      z-index: 0;
+      min-width: 0;
+      min-height: 100dvh;
+      padding: 0;
+      overflow: hidden;
+      background: var(--ui-paper);
+    }
+
+    .auth-panel.is-app > .login-right {
+      grid-area: main;
+      min-height: 0;
+      height: 100%;
+    }
+
+    .auth-panel.is-app > .detail-panel {
+      grid-area: detail;
+      min-width: 0;
+      height: 100%;
+    }
+
+    .login-form-content {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 1;
+      width: min(calc(100% - 50px), 430px);
+      transform: translate(-50%, -50%);
+      transition: opacity .55s cubic-bezier(.32, .04, .18, 1), transform .55s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .login-form-content {
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -50%) translateX(-12px);
+    }
+
+    .app-content {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      overflow: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+      width: 100%;
+      padding: 0 clamp(16px, 3vw, 40px) clamp(144px, 18vh, 220px);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(22px);
+      transform-origin: 50% 8%;
+      transition:
+        opacity .9s cubic-bezier(.32, .04, .18, 1),
+        transform 1.35s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s 1.4s;
+      scroll-behavior: smooth;
+    }
+
+    .app-content.is-scrolling {
+      scrollbar-color: rgba(65, 65, 65, .28) transparent;
+    }
+
+    .app-content::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .app-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .app-content::-webkit-scrollbar-thumb {
+      background-color: transparent;
+      border-radius: var(--radius-ui);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      transition: background-color .45s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .app-content.is-scrolling::-webkit-scrollbar-thumb {
+      background-color: rgba(65, 65, 65, .28);
+    }
+
+    .auth-panel.is-app .app-content {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+      transition:
+        opacity .95s .18s cubic-bezier(.32, .04, .18, 1),
+        transform 1.4s .12s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s 0s;
+    }
+
+    .auth-panel.is-app:not(.is-nav-ready) .app-header .app-nav {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(-8px);
+    }
+
+    .auth-panel.is-app.is-nav-ready .app-header .app-nav {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+    }
+
+    .auth-panel.is-app.is-nav-ready .app-content {
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .auth-panel.is-app.is-empty-view .app-content {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      overflow: hidden;
+      transform: translateY(18px);
+      transition:
+        opacity .55s cubic-bezier(.32, .04, .18, 1),
+        transform .7s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .6s;
+    }
+
+    .login-right > .section-view {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(18px);
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.1s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s .8s;
+    }
+
+    .login-right > .section-view.is-active {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: none;
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.1s cubic-bezier(.32, .04, .18, 1),
+        visibility 0s;
+    }
+
+    .app-content .player {
+      opacity: 0;
+      transform: translateY(14px) scaleX(.92);
+      transform-origin: 50% 100%;
+      transition:
+        opacity .7s cubic-bezier(.32, .04, .18, 1),
+        transform 1.2s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .app-content .player {
+      opacity: 1;
+      transform: none;
+      transition-delay: .28s, .2s;
+    }
+
+    .app-content .conversation {
+      opacity: 0;
+      transform: translateY(32px);
+      transition:
+        opacity .75s cubic-bezier(.32, .04, .18, 1),
+        transform 1.25s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app .app-content .conversation {
+      opacity: 1;
+      transform: none;
+      transition-delay: .48s, .38s;
+    }
+
+    .login-right > .state-view {
+      position: absolute;
+      inset: 0;
+      min-height: 0;
+    }
+
+    .auth-panel.no-wipe,
+    .auth-panel.no-wipe .login-form-content,
+    .auth-panel.no-wipe .app-content,
+    .auth-panel.no-wipe .app-content .player,
+    .auth-panel.no-wipe .app-content .conversation,
+    .auth-panel.no-wipe .login-visual,
+    .auth-panel.no-wipe .login-brand,
+    .auth-panel.no-wipe .login-face-wrap,
+    .auth-panel.no-wipe .login-name,
+    .auth-panel.no-wipe .login-material,
+    .auth-panel.no-wipe .app-nav,
+    .auth-panel.no-wipe .app-nav__children,
+    .auth-panel.no-wipe .section-view,
+    .auth-panel.no-wipe .detail-panel,
+    .auth-panel.no-wipe .detail-kicker,
+    .auth-panel.no-wipe .detail-title,
+    .auth-panel.no-wipe .detail-field {
+      transition: none !important;
+    }
+
+    .auth-copy { display: grid; gap: 5px; margin-bottom: 42px; }
+    .auth-copy h2 { margin: 0; font-size: clamp(2.5rem, 4vw, 4rem); line-height: .95; letter-spacing: -.04em; font-weight: 800; }
+    .auth-copy p:last-child { margin: 0; color: rgba(65,65,65,.68); font-size: 14px; line-height: 1.35; }
+
+    .login-visual,
+    .login-right { min-width: 0; }
+
+    .auth-form { display: grid; gap: 0; width: min(100%, 430px); }
+    .auth-field { display: grid; gap: 8px; min-width: 0; margin-bottom: 22px; }
+    .auth-field span { padding-inline: 14px; font-size: 14px; font-weight: 700; }
+    .auth-field input {
+      width: 100%;
+      height: 54px;
+      border: 4px solid var(--ui-graphite);
+      border-radius: var(--radius-ui);
+      padding: 0 18px;
+      background: transparent;
+      color: var(--ui-graphite);
+      font: inherit;
+      font-size: 18px;
+      outline: 0;
+    }
+    .auth-field input:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
+    .auth-password-field {
+      min-width: 0;
+    }
+    .auth-password-control {
+      position: relative;
+      min-width: 0;
+    }
+    .auth-password-field input {
+      display: block;
+      min-width: 0;
+      padding-right: 62px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    .auth-password-field input[type="password"] {
+      font-size: 25px;
+      font-weight: 700;
+      letter-spacing: .1em;
+    }
+    .auth-password-toggle {
+      position: absolute;
+      top: 50%;
+      right: 8px;
+      justify-self: end;
+      align-self: center;
+      z-index: 1;
+      transform: translateY(-50%);
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: var(--radius-ui);
+      background: transparent;
+      color: var(--ui-graphite);
+      cursor: pointer;
+    }
+    .auth-password-toggle:hover { background: var(--ui-cream); }
+    .auth-password-toggle:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
+    .auth-password-toggle svg { width: 20px; height: 20px; stroke-width: 2.5; }
+    .auth-submit-wrap { position: relative; height: 58px; margin-top: 3px; overflow: visible; }
+    .auth-submit-wrap::before {
+      content: "";
+      position: absolute;
+      inset: 6px -8px -10px 8px;
+      border-radius: var(--radius-ui);
+      background: var(--ui-amber);
+      filter: url(#ui-goo);
+      -webkit-filter: url(#ui-goo);
+    }
+    .auth-submit {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: 58px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: var(--radius-ui);
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
+      font-size: 20px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .auth-submit:disabled { cursor: wait; }
+    .auth-submit:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 3px; }
+    .auth-submit-label {
+      transition: opacity .28s cubic-bezier(.32, .04, .18, 1);
+    }
+    .auth-submit.is-loading .auth-submit-label {
+      opacity: 0;
+    }
+    .auth-submit-loader {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .28s cubic-bezier(.32, .04, .18, 1);
+    }
+    .auth-submit-wrap.is-loading .auth-submit-loader { opacity: 1; }
+    .auth-submit-loader-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ui-amber);
+      animation: auth-dot 1s ease-in-out infinite;
+    }
+    .auth-submit-loader-dot:nth-child(2) { animation-delay: .15s; }
+    .auth-submit-loader-dot:nth-child(3) { animation-delay: .3s; }
+    @keyframes auth-dot {
+      0%, 80%, 100% { transform: scale(.7); opacity: .4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .topline {
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      gap: 24px;
+      width: 100%;
+      margin-inline: auto;
+      padding: 0 10px 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(26px, 3vw, 38px);
+      line-height: 1.03;
+      letter-spacing: -.035em;
+      font-weight: 800;
+    }
+
+    .call-meta {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      --chip-height: 40px;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: var(--chip-height);
+      min-width: 96px;
+      padding: 0 16px;
+      border-radius: calc(var(--chip-height) / 2);
+      background: rgba(65,65,65,.07);
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .name-chip { min-width: 104px; }
+    .name-value { display: inline-block; transform-origin: 50% 50%; }
+    .name-chip.updating { animation: chip-squish .64s cubic-bezier(.22,.9,.28,1); }
+    .name-chip.updating .name-value { animation: name-swap .64s cubic-bezier(.22,.9,.28,1); }
+
+    @keyframes chip-squish {
+      0% { transform: scaleX(1); }
+      34% { transform: scaleX(.82) scaleY(1.08); }
+      68% { transform: scaleX(1.045) scaleY(.96); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes name-swap {
+      0% { opacity: 1; transform: translateY(0); }
+      35% { opacity: 0; transform: translateY(-8px); }
+      52% { opacity: 0; transform: translateY(8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    .chip.mode-live { background: var(--ui-amber); font-weight: 800; }
+    .chip.mode-recorded { background: var(--ui-cream); font-weight: 800; }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ui-graphite);
+      animation: live-pulse 1.65s ease-in-out infinite;
+    }
+
+    @keyframes live-pulse {
+      0%, 100% { transform: scale(.82); opacity: .48; }
+      50% { transform: scale(1); opacity: 1; }
+    }
+
+    .player-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      margin: 0 calc(-1 * clamp(16px, 3vw, 40px));
+      padding: 18px clamp(16px, 3vw, 40px) 16px;
+      background: var(--ui-paper);
+    }
+
+    .player {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 24px;
+      width: 100%;
+      margin-inline: auto;
+      padding: 6px 10px 2px;
+      color: var(--ui-graphite);
+    }
+
+    .monitor {
+      min-width: 0;
+      height: 72px;
+      position: relative;
+      cursor: pointer;
+      user-select: none;
+      touch-action: none;
+      outline: none;
+      --progress: 100%;
+    }
+
+    .monitor:focus-visible { box-shadow: 0 0 0 3px rgba(247,201,116,.58); border-radius: var(--radius-ui); }
+
+    .wave-window {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .wave-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      max-width: 100%;
+      object-fit: fill;
+    }
+
+    .progress-shell, .progress-fill, .playhead { display: none; }
+
+    .transport {
+      display: grid;
+      justify-items: end;
+      align-content: end;
+      gap: 8px;
+      padding-bottom: 2px;
+    }
+
+    .timecode {
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      line-height: 1;
+      font-weight: 700;
+      white-space: nowrap;
+      opacity: .72;
+    }
+
+    .controls { display: flex; align-items: flex-start; gap: 8px; }
+    .control-stack { display: grid; justify-items: center; gap: 3px; }
+
+    .control-caption {
+      font-size: 9px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: .02em;
+      opacity: .48;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .control {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      background: rgba(65,65,65,.09);
+      color: var(--ui-graphite);
+      transition: transform .2s cubic-bezier(.2,.8,.2,1), background .2s ease;
+    }
+
+    .control.primary {
+      width: 48px;
+      height: 48px;
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
+    }
+
+    .control:hover:not(:disabled) { transform: translateY(-1px) scale(1.025); }
+    .control:active:not(:disabled) { transform: translateY(1px) scale(.94,.97); }
+    .control:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 3px; }
+    .control:disabled { opacity: .28; cursor: default; }
+    .control.live-jump:not(:disabled) { background: var(--ui-amber); }
+    .control i, .control svg { width: 19px; height: 19px; stroke-width: 2.5; }
+    .control.primary i, .control.primary svg { width: 22px; height: 22px; }
+
+    .call-scroll-jump {
+      position: absolute;
+      right: clamp(22px, 3vw, 48px);
+      bottom: 26px;
+      z-index: 24;
+      display: grid;
+      width: 46px;
+      height: 46px;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: var(--ui-accent);
+      color: var(--ui-graphite);
+      cursor: pointer;
+      box-shadow: 0 8px 22px rgba(65, 65, 65, .16);
+      transition: opacity .28s cubic-bezier(.22, .8, .24, 1), transform .28s cubic-bezier(.22, .8, .24, 1), background-color .36s cubic-bezier(.22, .8, .24, 1), color .36s cubic-bezier(.22, .8, .24, 1);
+    }
+    .call-scroll-jump[hidden] { display: none !important; }
+    .call-scroll-jump:hover { transform: translateY(-2px) scale(1.04); }
+    .call-scroll-jump:active { transform: translateY(1px) scale(.95); }
+    .call-scroll-jump:focus-visible { outline: 3px solid var(--ui-accent); outline-offset: 3px; }
+    .call-scroll-jump svg { width: 20px; height: 20px; stroke-width: 2.6; }
+
+    .conversation {
+      position: relative;
+      width: 100%;
+      margin: 26px auto 0;
+      padding: 8px 10px clamp(144px, 18vh, 220px);
+      min-height: 620px;
+    }
+
+    .conversation-empty {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: min(56vh, 520px);
+      z-index: 5;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+    }
+
+    .conversation-empty[hidden] { display: none !important; }
+
+    .timeline-item {
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(10px);
+      pointer-events: none;
+    }
+
+    .timeline-item.visible { visibility: visible; pointer-events: auto; }
+    .timeline-item.enter { animation: item-in .52s cubic-bezier(.2,.82,.2,1) both; }
+    .timeline-item.visible:not(.enter) { opacity: 1; transform: none; }
+
+    @keyframes item-in {
+      0% { opacity: 0; transform: translateY(13px) scale(.985); }
+      72% { opacity: 1; transform: translateY(-1px) scale(1.004); }
+      100% { opacity: 1; transform: none; }
+    }
+
+    .message-row { display: flex; margin: 20px 0; }
+    .message-row.agent { justify-content: flex-start; }
+    .message-row.customer { justify-content: flex-end; }
+
+    .message-wrap { max-width: min(66ch, 76%); display: grid; gap: 7px; }
+
+    .message-meta {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 12px;
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 700;
+      opacity: .55;
+    }
+
+    .customer .message-meta { justify-content: flex-end; }
+    .message-meta i, .message-meta svg { width: 14px; height: 14px; stroke-width: 2.5; }
+
+    .message {
+      width: fit-content;
+      max-width: 100%;
+      border-radius: var(--radius-ui);
+      padding: 15px 21px;
+      font-size: 15.5px;
+      line-height: 1.44;
+      letter-spacing: -.005em;
+    }
+
+    .agent .message { background: var(--ui-graphite); color: var(--ui-paper); }
+    .customer .message { margin-left: auto; background: var(--ui-cream); color: var(--ui-graphite); }
+
+    .token {
+      display: inline;
+      opacity: 0;
+      filter: blur(3px);
+      transform: translateY(4px);
+      animation: token-in .34s cubic-bezier(.2,.76,.24,1) forwards;
+    }
+
+    @keyframes token-in { to { opacity: 1; filter: blur(0); transform: translateY(0); } }
+
+    .message-time {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0;
+      font-variant-numeric: tabular-nums;
+      transform: translateY(3px);
+    }
+
+    .message.complete .message-time { animation: timestamp-in .35s ease forwards; }
+    @keyframes timestamp-in { to { opacity: .48; transform: translateY(0); } }
+
+    .system-event {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 14px;
+      margin: 31px 0;
+      color: rgba(65,65,65,.52);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+
+    .system-event::before, .system-event::after {
+      content: "";
+      height: 1px;
+      background: rgba(65,65,65,.16);
+      transform-origin: center;
+    }
+
+    .system-event.enter::before, .system-event.enter::after { animation: line-open .72s cubic-bezier(.2,.8,.2,1) both; }
+    @keyframes line-open { from { transform: scaleX(0); opacity: 0; } to { transform: scaleX(1); opacity: 1; } }
+
+    .reconnect-label {
+      display: inline-flex;
+      align-items: center;
+      padding: 0;
+      background: transparent;
+      border-radius: 0;
+      overflow: visible;
+    }
+
+    /* El evento sigue animado, pero sin superficie tipo badge. */
+    .reconnect-mass,
+    .reconnect-shine { display: none; }
+
+    #reconnectText {
+      display: inline-block;
+      transform-origin: 50% 50%;
+      animation: reconnect-text-pulse 1.22s cubic-bezier(.45,.04,.3,1) infinite;
+    }
+
+    @keyframes reconnect-text-pulse {
+      0%,100% { opacity: .46; transform: scaleX(.97); }
+      48% { opacity: .92; transform: scaleX(1.035); }
+      72% { opacity: .64; transform: scaleX(.992); }
+    }
+
+    .system-event.reconnected #reconnectText { animation: none; opacity: 1; transform: none; }
+
+    .tool-row { display: flex; justify-content: flex-start; margin: 21px 0; }
+
+    .tool-call {
+      appearance: none;
+      border: 0;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      position: relative;
+      width: min(520px, 84%);
+      min-height: 82px;
+      border-radius: var(--radius-ui);
+      background: var(--ui-graphite);
+      color: var(--ui-paper);
+      padding: 15px 68px 15px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      overflow: visible;
+      transform-origin: 0 50%;
+    }
+
+    .tool-call:focus-visible {
+      outline: 3px solid var(--ui-amber);
+      outline-offset: 3px;
+    }
+
+    .tool-row.enter .tool-call { animation: tool-arrive .72s cubic-bezier(.16,.9,.28,1) both; }
+
+    @keyframes tool-arrive {
+      0% { opacity: 0; transform: translateX(-18px) scaleX(.78) scaleY(.94); }
+      58% { opacity: 1; transform: translateX(2px) scaleX(1.035) scaleY(.985); }
+      78% { transform: translateX(0) scaleX(.988) scaleY(1.025); }
+      100% { opacity: 1; transform: none; }
+    }
+
+    .tool-icon {
+      flex: 0 0 auto;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
+      position: relative;
+      z-index: 2;
+    }
+
+    .tool-row.enter .tool-icon { animation: tool-icon-pop .82s .08s cubic-bezier(.18,.9,.25,1) both; }
+
+    @keyframes tool-icon-pop {
+      0% { transform: scale(.25) rotate(-18deg); opacity: 0; }
+      68% { transform: scale(1.09) rotate(2deg); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .tool-icon i, .tool-icon svg { width: 20px; height: 20px; stroke-width: 2.5; }
+    .tool-copy, .done-mark { position: relative; z-index: 2; }
+    .tool-copy { min-width: 0; flex: 1; }
+
+    .tool-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 3px;
+      font-size: 12px;
+      font-weight: 700;
+      opacity: .54;
+    }
+
+    .tool-label i, .tool-label svg { width: 13px; height: 13px; stroke-width: 2.5; }
+    .tool-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
+    .tool-status { margin-top: 4px; font-size: 12px; font-weight: 600; opacity: .58; }
+
+    .tool-status.loading {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 7px;
+      padding: 5px 12px;
+      min-height: 26px;
+      border-radius: var(--radius-full);
+      background: var(--ui-amber);
+      color: var(--ui-graphite);
+      opacity: 1;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+
+    .tool-call:not(.done) .tool-icon {
+      box-shadow: 0 0 0 4px rgba(247, 201, 116, .22);
+    }
+
+    .done-mark {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      margin-top: -19px;
+      display: grid;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--ui-paper);
+      color: var(--ui-graphite);
+      place-items: center;
+      opacity: 0;
+      transform: scale(.3);
+      pointer-events: none;
+    }
+
+    .done-mark i, .done-mark svg { width: 19px; height: 19px; stroke-width: 2.5; }
+    .tool-call.done .done-mark { animation: done-pop .54s .18s cubic-bezier(.16,.9,.25,1) forwards; }
+
+    @keyframes done-pop {
+      66% { opacity: 1; transform: scale(1.12); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    .system-event.call-ended {
+      color: var(--ui-graphite);
+      font-weight: 800;
+    }
+
+    .call-ended-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .call-ended-label svg {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.5;
+    }
+
+    .mode-end-icon {
+      display: inline-grid;
+      place-items: center;
+    }
+
+    .mode-end-icon svg {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.5;
+    }
+
+    .state-view {
+      min-height: calc(100vh - 116px);
+      display: grid;
+      place-items: center;
+    }
+
+    .demo-switcher {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 60;
+      display: flex;
+      gap: 5px;
+      padding: 5px;
+      border-radius: var(--radius-ui);
+      background: var(--ui-control);
+      box-shadow: 0 6px 24px rgba(65,65,65,.10);
+    }
+
+    .demo-switcher button {
+      border: 0;
+      border-radius: var(--radius-ui);
+      background: transparent;
+      padding: 8px 11px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .demo-switcher button.active { background: var(--ui-graphite); color: var(--ui-control); }
+    .demo-switcher button:focus-visible { outline: 3px solid var(--ui-amber); outline-offset: 2px; }
+
+    @media (max-width: 1100px) {
+      .auth-panel:not(.is-app) .login-face-wrap {
+        --interactive-mascot-width: clamp(72px, 22vw, 112px);
+        width: var(--interactive-mascot-width);
+      }
+      .auth-panel:not(.is-app) .login-name { font-size: clamp(1.7rem, 3.2vw, 2.8rem); }
+      .page { width: 100%; padding: 0; }
+      .topline { justify-content: flex-start; }
+      .call-meta { justify-content: flex-start; }
+      .player { grid-template-columns: 1fr; gap: 9px; }
+      .monitor { height: 65px; }
+      .transport { width: 100%; display: flex; justify-content: space-between; align-items: flex-start; }
+      .message-wrap { max-width: 88%; }
+      .message { font-size: 15px; }
+      .tool-call { width: 92%; }
+      .conversation { margin-top: 18px; padding-inline: 2px; }
+      .demo-switcher { right: 10px; bottom: 10px; }
+      .auth-panel.is-app {
+        grid-template-columns: minmax(0, 1fr) minmax(0, var(--right-rail));
+        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-areas: "header header" "main detail";
+        min-height: 100dvh;
+      }
+      .auth-panel:not(.is-app) {
+        --mobile-login-top-height: clamp(211px, 34svh, 292px);
+        display: block;
+        width: 100%;
+        height: auto;
+        min-height: 100svh;
+        overflow: clip;
+        transition: none;
+      }
+      .login-visual {
+        min-height: 38dvh;
+        overflow: visible;
+        transition: min-height 1.55s cubic-bezier(.32, .04, .18, 1), padding 1.55s cubic-bezier(.32, .04, .18, 1);
+      }
+      .login-liquid-svg--y { display: none; }
+      .login-liquid-svg--x { display: block; }
+      .login-material {
+        inset: auto auto -16% 0;
+        right: auto;
+        width: 200%;
+        height: 38%;
+        transform-origin: 50% 100%;
+        --material-enter-from: scaleY(.16);
+      }
+      .auth-panel:not(.is-app) .login-material { transition: none; }
+      .login-brand { width: min(100%, 360px); }
+      .auth-panel:not(.is-app) .login-brand { flex-direction: row; justify-content: center; text-align: left; gap: 14px; }
+      .login-wipe-proxy.login-visual .login-brand { flex-direction: row; justify-content: center; text-align: left; gap: 14px; }
+      .auth-panel:not(.is-app) .login-visual {
+        width: 100%;
+        height: var(--mobile-login-top-height);
+        min-height: var(--mobile-login-top-height);
+        justify-content: center;
+        padding: 16px 24px;
+        overflow: hidden;
+        transition:
+          height 1.05s cubic-bezier(.32, .04, .18, 1),
+          min-height 1.05s cubic-bezier(.32, .04, .18, 1),
+          padding 1.05s cubic-bezier(.32, .04, .18, 1),
+          opacity .7s cubic-bezier(.32, .04, .18, 1),
+          transform 1.05s cubic-bezier(.32, .04, .18, 1);
+      }
+      .auth-panel:not(.is-app) .login-face-wrap {
+        --interactive-mascot-width: clamp(72px, 22vw, 112px);
+        width: var(--interactive-mascot-width);
+        flex: 0 0 auto;
+      }
+      .login-wipe-proxy.login-visual .login-face-wrap {
+        --interactive-mascot-width: clamp(72px, 22vw, 112px);
+        width: var(--interactive-mascot-width);
+        flex: 0 0 auto;
+      }
+      .auth-panel:not(.is-app) .login-name { width: auto; margin-top: 0; font-size: clamp(2rem, 9vw, 2.5rem); }
+      .login-wipe-proxy.login-visual .login-name { width: auto; margin-top: 0; font-size: clamp(2rem, 9vw, 2.5rem); }
+      .auth-panel:not(.is-app) .login-right { display: flex; width: 100%; height: auto; min-height: calc(100svh - var(--mobile-login-top-height)); align-items: center; justify-content: center; padding: 64px 20px; overflow: visible; transition: min-height 1.05s cubic-bezier(.32, .04, .18, 1); }
+      .auth-panel:not(.is-app) .login-form-content { position: relative; inset: auto; width: min(100%, 430px); transform: none; }
+      .auth-panel:not(.is-app) .detail-panel { display: none; }
+      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-visual {
+        height: 0;
+        min-height: 0;
+        padding-block: 0;
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      .auth-panel:not(.is-app):has(.auth-field input:focus) .login-right { min-height: 100svh; }
+      .auth-copy { margin-bottom: 34px; }
+      .auth-panel.is-app {
+        grid-template-columns: minmax(0, 1fr) minmax(0, var(--right-rail));
+        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-areas: "header header" "main detail";
+      }
+      .auth-panel.is-app.is-empty-view { grid-template-columns: minmax(0, 1fr) 0; }
+      .auth-panel.is-app > .login-right { min-height: 0; height: 100%; }
+      .auth-panel.is-app .app-content { padding: 0 16px max(150px, 20vh); }
+      .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
+      .call-scroll-jump { position: fixed; right: 18px; bottom: max(18px, env(safe-area-inset-bottom)); }
+    }
+
+    @media (min-width: 768px) and (max-width: 1100px) {
+      .auth-panel.is-app {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, var(--right-rail));
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .auth-panel.is-app > .login-right { min-height: 0; }
+      .auth-panel.is-app .app-content { padding: 0 clamp(16px, 3vw, 40px) clamp(144px, 18vh, 220px); }
+      .auth-panel.is-app .player-wrap { margin: 0 calc(-1 * clamp(16px, 3vw, 40px)); padding: 18px clamp(16px, 3vw, 40px) 16px; }
+    }
+
+    @media (max-width: 767px) {
+      .auth-panel.is-app {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        grid-template-areas: "header" "main" "detail";
+      }
+      .auth-panel.is-app.is-empty-view { grid-template-rows: auto minmax(0, 1fr); }
+      .auth-panel.is-app > .login-right { min-height: 0; height: auto; }
+      .auth-panel.is-app > .detail-panel { min-height: 36dvh; height: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .app-content { scroll-behavior: auto; }
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
+    }
+  </style>
+
+    <style>
+      .demo-switcher { display: none !important; }
+    </style>
+  </head>
+  <body data-api-url={apiUrl}>
+    <script is:inline>window.__liveDebugControls = true;</script>
+
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <defs>
+      <filter id="ui-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+        <feColorMatrix in="blur" type="matrix" values="
+          1 0 0 0 0
+          0 1 0 0 0
+          0 0 1 0 0
+          0 0 0 22 -8" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+      </filter>
+    </defs>
+  </svg>
+
+  <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+  <main class="page">
+    <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
+      <section class="login-visual" aria-label="Demo">
+        <div class="login-material" aria-hidden="true">
+          <svg class="login-liquid-svg login-liquid-svg--y" viewBox="0 0 600 2400" preserveAspectRatio="none">
+            <path class="amber-shape" d="M0 -40 H600 V0 C600 60 520 140 500 260 C480 380 570 500 510 620 C450 740 570 860 500 980 C480 1080 600 1160 600 1200 C600 1260 520 1340 500 1460 C480 1580 570 1700 510 1820 C450 1940 570 2060 500 2180 C480 2280 600 2360 600 2400 V2440 H0 Z" />
+            <path class="graphite-shape" d="M0 -40 H540 V0 C540 60 468 140 450 260 C432 380 513 500 459 620 C405 740 513 860 450 980 C432 1080 540 1160 540 1200 C540 1260 468 1340 450 1460 C432 1580 513 1700 459 1820 C405 1940 513 2060 450 2180 C432 2280 540 2360 540 2400 V2440 H0 Z" />
+          </svg>
+          <svg class="login-liquid-svg login-liquid-svg--x" viewBox="0 0 2400 600" preserveAspectRatio="none">
+            <path class="amber-shape" d="M-40 0 H2440 V600 H2400 C2340 600 2260 520 2140 500 C2020 480 1900 570 1780 510 C1660 450 1540 570 1420 500 C1340 480 1240 600 1200 600 C1140 600 1060 520 940 500 C820 480 700 570 580 510 C460 450 340 570 220 500 C140 480 40 600 0 600 H-40 Z" />
+            <path class="graphite-shape" d="M-40 0 H2440 V540 H2400 C2340 540 2260 468 2140 450 C2020 432 1900 513 1780 459 C1660 405 1540 513 1420 450 C1340 432 1240 540 1200 540 C1140 540 1060 468 940 450 C820 432 700 513 580 459 C460 405 340 513 220 450 C140 432 40 540 0 540 H-40 Z" />
+          </svg>
+        </div>
+        <div class="login-brand">
+          <InteractiveMascotFace class="login-face-wrap" mascotClass="login-face" label="Cambiar expresión de Demo" passwordInputId="authPassword" />
+          <span class="login-name">Demo</span>
+        </div>
+      </section>
+
+      <AppHeader active="analytics" initiallyHidden mascotPasswordInputId="authPassword" />
+
+      <section class="login-right">
+        <div class="login-form-content">
+          <div class="auth-copy">
+            <h2 id="authTitle">Iniciar sesión</h2>
+          </div>
+          <form class="auth-form" id="authForm">
+            <label class="auth-field">
+              <span>Usuario</span>
+              <input id="authEmail" name="email" type="email" autocomplete="username" required maxlength="320" />
+            </label>
+            <label class="auth-field auth-password-field">
+              <span>Contraseña</span>
+              <div class="auth-password-control">
+                <input id="authPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" />
+                <button class="auth-password-toggle" type="button" id="authPasswordToggle" aria-label="Mostrar contraseña" aria-pressed="false">
+                  <i data-lucide="eye" aria-hidden="true"></i>
+                </button>
+              </div>
+            </label>
+            <div class="auth-submit-wrap">
+              <span class="auth-submit-loader" aria-hidden="true">
+                <span class="auth-submit-loader-dot"></span>
+                <span class="auth-submit-loader-dot"></span>
+                <span class="auth-submit-loader-dot"></span>
+              </span>
+              <button class="auth-submit" type="submit" id="authSubmit">
+                <span class="auth-submit-label">Acceder</span>
+              </button>
+            </div>
+          </form>
+        </div>
+
+    <div class="app-content" id="appContent" aria-hidden="true">
+      <h1 id="screenTitle" class="sr-only">Llamada en tiempo real</h1>
+      <div class="player-wrap">
+        <section class="player" aria-label="Reproductor de llamada">
+          <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+            <div class="wave-window" aria-hidden="true">
+              <canvas class="wave-canvas" id="waveCanvas"></canvas>
+            </div>
+          </div>
+
+          <div class="transport">
+            <div class="timecode"><span id="currentTime">00:00</span> <span style="opacity:.34">/</span> <span id="duration">00:00</span></div>
+                        <div class="controls" aria-label="Controles de llamada">
+              <div class="control-stack">
+                <button class="control" type="button" id="rewindBtn" aria-label="Reiniciar llamada" title="Reiniciar llamada"><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>
+                <span class="control-caption">Reiniciar</span>
+              </div>
+              <div class="control-stack">
+                <button class="control primary" type="button" id="startBtn" aria-label="Empezar llamada" title="Empezar llamada"><i data-lucide="phone" aria-hidden="true"></i></button>
+                <span class="control-caption">Llamar</span>
+              </div>
+              <div class="control-stack">
+                <button class="control" type="button" id="playBtn" aria-label="Pausar llamada" title="Pausar llamada"><i data-lucide="pause" aria-hidden="true"></i></button>
+                <span class="control-caption">Pausa</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="conversation" id="conversation" aria-label="Transcripción de la llamada">
+        <div class="conversation-empty" id="conversationEmpty" role="status">
+          <EmptyState icon="message-circle" title="Aún no hay mensajes." />
+        </div>
+      </section>
+    </div>
+
+    <section class="state-view" id="emptyState" hidden aria-label="Sin llamadas">
+      <EmptyState icon="phone-off" title="No hay llamadas para monitorear." />
+    </section>
+
+    <section class="state-view" id="errorState" hidden aria-label="Error de monitoreo">
+      <EmptyState tone="error" icon="triangle-alert" title="No pudimos cargar el monitoreo de la llamada." />
+    </section>
+
+    <AnalyticsContent />
+    <section class="section-view" data-section="call-1" aria-label="Llamada 1" aria-hidden="true">
+      <EmptyState icon="phone" title="Esta llamada aún no está disponible." />
+    </section>
+    <section class="section-view" data-section="call-2" aria-label="Llamada 2" aria-hidden="true">
+      <EmptyState icon="phone" title="Esta llamada aún no está disponible." />
+    </section>
+    <section class="section-view" data-section="sales" aria-label="Ventas" aria-hidden="true">
+      <EmptyState icon="shopping-bag" title="Aún no hay ventas para mostrar." />
+    </section>
+    <section class="section-view" data-section="settings" aria-label="Ajustes" aria-hidden="true">
+      <EmptyState icon="settings" title="Los ajustes estarán disponibles pronto." />
+    </section>
+      </section>
+    <aside class="detail-panel" id="detailPanel" aria-label="Cliente">
+      <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+      <div class="detail-panel__session" id="sessionPanel" hidden></div>
+      <div class="detail-panel__body" hidden></div>
+    </aside>
+    </section>
+    <script is:inline>
+      (() => {
+        const panel = document.getElementById('authPanel');
+        const form = document.querySelector('.login-form-content');
+        const token = sessionStorage.getItem('kognia.auth.access-token')?.trim();
+        const conversation = sessionStorage.getItem('kognia.auth.conversation-id')?.trim();
+        if (!panel || !token || !conversation) return;
+        panel.classList.add('is-app', 'no-wipe', 'is-nav-ready', 'is-header-ready');
+        panel.dataset.view = 'dashboard';
+        panel.setAttribute('aria-labelledby', 'screenTitle');
+        form?.setAttribute('inert', '');
+        form?.setAttribute('aria-hidden', 'true');
+        document.getElementById('appHeader')?.removeAttribute('hidden');
+        document.getElementById('appNav')?.removeAttribute('aria-hidden');
+        document.getElementById('appNav')?.removeAttribute('inert');
+        document.querySelector('.login-material')?.classList.add('is-gone');
+      })();
+    </script>
+  </main>
+
+  
+
+  <script is:inline>
+    const DEMO_DURATION = 3600;
+    const SAMPLE_INTERVAL = 1 / 30;
+    const VISUAL_SAMPLES = 128;
+
+     window.__kogniaPageLeaving = false;
+     let mode = 'live';
+    let current = 0;
+    let liveEdge = 0;
+    let playing = true;
+    let last = performance.now();
+    let previousTimelineTime = 0;
+    let seeking = false;
+    let sampleAccumulator = 0;
+    let externalAnalyser = null;
+    let externalSampleRate = 16000;
+    let analyserBins = null;
+    let playbackAnalyser = null;
+    let playbackSampleRate = 16000;
+    let playbackBins = null;
+    let callEnded = false;
+    let waveDpr = 1;
+    let waveWidth = 1;
+    let waveHeight = 1;
+
+    const liveSamples = [];
+    const recordedSamples = [];
+
+    const authPanel = document.getElementById('authPanel');
+    const appContent = document.getElementById('appContent');
+    const emptyState = document.getElementById('emptyState');
+    const errorState = document.getElementById('errorState');
+    const screenTitle = document.getElementById('screenTitle');
+    const waveShell = document.getElementById('waveShell');
+    const currentTimeEl = document.getElementById('currentTime');
+    const durationEl = document.getElementById('duration');
+    const playBtn = document.getElementById('playBtn');
+    const startBtn = document.getElementById('startBtn');
+    const liveBtn = document.getElementById('liveBtn');
+    const conversationEmpty = document.getElementById('conversationEmpty');
+    const waveCanvas = document.getElementById('waveCanvas');
+    const waveCtx = waveCanvas.getContext('2d', { alpha: true });
+    const reconnect = document.getElementById('reconnect');
+    const reconnectText = document.getElementById('reconnectText');
+    const isAppShellReady = () => authPanel?.classList.contains('is-nav-ready') ?? true;
+    const callScroll = (() => {
+      if (!(appContent instanceof HTMLElement)) {
+        return { follow() {}, scrollToLatest() {}, dispose() {} };
+      }
+      const anchor = appContent.parentElement;
+      let jump = anchor?.querySelector('[data-conversation-scroll-jump]');
+      if (!(jump instanceof HTMLButtonElement) && anchor) {
+        jump = document.createElement('button');
+        jump.type = 'button';
+        jump.className = 'call-scroll-jump';
+        jump.dataset.conversationScrollJump = 'true';
+        jump.setAttribute('aria-label', 'Ir a los mensajes recientes');
+        jump.setAttribute('title', 'Ir a los mensajes recientes');
+        jump.hidden = true;
+        jump.innerHTML = '<i data-lucide="arrow-down" aria-hidden="true"></i>';
+        anchor.append(jump);
+        const lucide = window.lucide;
+        lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+      }
+      const threshold = 112;
+      let pausedByUser = false;
+      let userGesturePending = false;
+      let programmaticUntil = 0;
+      let scrollRestTimer = 0;
+      let followFrame = 0;
+      let disposed = false;
+      const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const atBottom = () => appContent.scrollHeight - appContent.scrollTop - appContent.clientHeight <= threshold;
+      const sync = () => {
+        if (!(jump instanceof HTMLButtonElement)) return;
+        const away = !atBottom();
+        jump.hidden = !away;
+        jump.setAttribute('aria-hidden', String(!away));
+      };
+      const onScroll = () => {
+        if (disposed) return;
+        appContent.classList.add('is-scrolling');
+        window.clearTimeout(scrollRestTimer);
+        scrollRestTimer = window.setTimeout(() => appContent.classList.remove('is-scrolling'), 780);
+        if (userGesturePending) {
+          pausedByUser = !atBottom();
+          userGesturePending = false;
+        } else if (performance.now() >= programmaticUntil) {
+          if (atBottom()) pausedByUser = false;
+          else if (appContent.scrollHeight > appContent.clientHeight) pausedByUser = true;
+        }
+        sync();
+      };
+      const cancelProgrammatic = () => { programmaticUntil = 0; userGesturePending = true; };
+      const scrollToLatest = () => {
+        if (disposed) return;
+        pausedByUser = false;
+        userGesturePending = false;
+        const reduced = reducedMotion();
+        programmaticUntil = performance.now() + (reduced ? 80 : 1100);
+        appContent.scrollTo({ top: appContent.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
+        window.setTimeout(() => { if (!disposed) sync(); }, reduced ? 90 : 1120);
+      };
+      const onJump = () => scrollToLatest();
+      const onKeyGesture = (event) => {
+        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelProgrammatic();
+      };
+      appContent.addEventListener('scroll', onScroll, { passive: true });
+      appContent.addEventListener('wheel', cancelProgrammatic, { passive: true });
+      appContent.addEventListener('touchstart', cancelProgrammatic, { passive: true });
+      appContent.addEventListener('pointerdown', cancelProgrammatic, { passive: true });
+      appContent.addEventListener('keydown', onKeyGesture);
+      jump?.addEventListener('click', onJump);
+      sync();
+      return {
+        follow() {
+          if (pausedByUser) { sync(); return; }
+          if (followFrame) return;
+          followFrame = requestAnimationFrame(() => {
+            followFrame = 0;
+            if (!pausedByUser) scrollToLatest();
+          });
+        },
+        scrollToLatest,
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          appContent.removeEventListener('scroll', onScroll);
+          appContent.removeEventListener('wheel', cancelProgrammatic);
+          appContent.removeEventListener('touchstart', cancelProgrammatic);
+          appContent.removeEventListener('pointerdown', cancelProgrammatic);
+          appContent.removeEventListener('keydown', onKeyGesture);
+          jump?.removeEventListener('click', onJump);
+          window.clearTimeout(scrollRestTimer);
+          if (followFrame) cancelAnimationFrame(followFrame);
+          jump?.remove();
+        },
+      };
+    })();
+    const timelineItems = [...document.querySelectorAll('.timeline-item')];
+    const messages = [...document.querySelectorAll('.message[data-text]')];
+    const tokenTimers = new Map();
+
+    function formatTime(total) {
+      const m = Math.floor(Math.max(0, total) / 60);
+      const s = Math.floor(Math.max(0, total) % 60);
+      return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+
+    function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+    function resample(values, count) {
+      if (!values.length) return Array(count).fill(.04);
+      if (values.length === 1) return Array(count).fill(values[0]);
+      return Array.from({ length: count }, (_, i) => {
+        const pos = i * (values.length - 1) / Math.max(1, count - 1);
+        const lo = Math.floor(pos);
+        const hi = Math.min(values.length - 1, lo + 1);
+        const f = pos - lo;
+        return values[lo] * (1 - f) + values[hi] * f;
+      });
+    }
+
+    function resizeWaveCanvas() {
+      const host = waveCanvas.parentElement || waveCanvas;
+      const w = host.clientWidth;
+      const h = host.clientHeight;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (w < 2 || h < 2) return false;
+      const bitmapW = Math.max(1, Math.round(w * dpr));
+      const bitmapH = Math.max(1, Math.round(h * dpr));
+      const sizeChanged = w !== waveWidth || h !== waveHeight || dpr !== waveDpr;
+      const bitmapChanged = waveCanvas.width !== bitmapW || waveCanvas.height !== bitmapH;
+      if (!sizeChanged && !bitmapChanged) return false;
+      waveWidth = w;
+      waveHeight = h;
+      waveDpr = dpr;
+      if (bitmapChanged) {
+        waveCanvas.width = bitmapW;
+        waveCanvas.height = bitmapH;
+      }
+      waveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return true;
+    }
+
+    function drawWaveShape(samples, from, to, fillStyle) {
+      if (!samples.length || to <= from) return;
+      const baseline = waveHeight - 1;
+      const minHeight = Math.max(6, Math.round(waveHeight * 0.12));
+      const travel = Math.max(8, Math.round(waveHeight * 0.48));
+      const last = samples.length - 1;
+      const startIndex = Math.max(0, Math.floor(from * last));
+      const endIndex = Math.min(last, Math.ceil(to * last));
+      const denom = Math.max(1, last);
+      const amp = (sample) => minHeight + Math.pow(clamp01(sample), 1.55) * travel;
+
+      waveCtx.beginPath();
+      const firstX = startIndex / denom * waveWidth;
+      waveCtx.moveTo(firstX, baseline);
+
+      let prevX = firstX;
+      let prevY = baseline - amp(samples[startIndex]);
+      waveCtx.lineTo(prevX, prevY);
+
+      for (let i = startIndex + 1; i <= endIndex; i++) {
+        const x = i / denom * waveWidth;
+        const y = baseline - amp(samples[i]);
+        const mx = (prevX + x) * .5;
+        const my = (prevY + y) * .5;
+        waveCtx.quadraticCurveTo(prevX, prevY, mx, my);
+        prevX = x;
+        prevY = y;
+      }
+      waveCtx.lineTo(prevX, prevY);
+      waveCtx.lineTo(prevX, baseline);
+      waveCtx.closePath();
+      waveCtx.fillStyle = fillStyle;
+      waveCtx.fill();
+    }
+
+    function renderWave() {
+      resizeWaveCanvas();
+      waveCtx.clearRect(0, 0, waveWidth, waveHeight);
+
+      const raw = mode === 'recorded' ? recordedSamples : liveSamples.slice(-VISUAL_SAMPLES);
+      const samples = resample(raw, VISUAL_SAMPLES);
+      if (!samples.length) return;
+
+      const available = Math.max(.001, maxSeekTime());
+      const ratio = clamp01(current / available);
+      drawWaveShape(samples, 0, 1, 'rgba(65,65,65,.14)');
+      drawWaveShape(samples, 0, ratio, '#f7c974');
+    }
+
+    // Pitch por autocorrelación (f0) + energía RMS. No usa bins FFT.
+    function voiceLevelFromAnalyser(analyser, _frequencies, sampleRate) {
+      const frame = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(frame);
+
+      let energy = 0;
+      for (let i = 0; i < frame.length; i++) energy += frame[i] * frame[i];
+      const rms = Math.sqrt(energy / Math.max(1, frame.length));
+      if (rms < .008) return clamp01(rms * 3);
+
+      const minLag = Math.max(2, Math.floor(sampleRate / 500));
+      const maxLag = Math.min(frame.length - 2, Math.floor(sampleRate / 70));
+      let bestLag = minLag;
+      let bestCorr = -1;
+      const mean = energy / Math.max(1, frame.length);
+
+      for (let lag = minLag; lag <= maxLag; lag++) {
+        let corr = 0;
+        const count = frame.length - lag;
+        for (let i = 0; i < count; i++) corr += frame[i] * frame[i + lag];
+        corr /= count;
+        if (corr > bestCorr) {
+          bestCorr = corr;
+          bestLag = lag;
+        }
+      }
+
+      const clarity = mean > 1e-8 ? bestCorr / mean : 0;
+      const hz = sampleRate / bestLag;
+      const voiced = clarity > .25 && hz >= 70 && hz <= 500;
+      const pitch = voiced ? clamp01((hz - 70) / 430) : .35;
+      return clamp01(rms * 4.2 * (.42 + .58 * (voiced ? .3 + .7 * pitch : .2)));
+    }
+
+    // Convierte un frame de frecuencias real en una amplitud visual de voz.
+    // Los bins se ponderan principalmente entre 80 Hz y 3.8 kHz, rango útil para voz telefónica.
+    function amplitudeFromFrequencyFrame(frequencies, sampleRate = 16000) {
+      if (!frequencies || !frequencies.length) return .05;
+      const nyquist = sampleRate / 2;
+      let energy = 0;
+      let weightSum = 0;
+
+      for (let i = 0; i < frequencies.length; i++) {
+        const hz = i / Math.max(1, frequencies.length - 1) * nyquist;
+        if (hz < 80 || hz > 3800) continue;
+        const speechWeight = hz < 300 ? .7 : hz < 2600 ? 1 : .72;
+        const normalized = frequencies[i] / 255;
+        energy += normalized * normalized * speechWeight;
+        weightSum += speechWeight;
+      }
+
+      if (!weightSum) return .05;
+      return clamp01(Math.sqrt(energy / weightSum) * 1.05);
+    }
+
+    function pushAmplitude(value) {
+      if (callEnded || (mode === 'live' && liveEdge >= DEMO_DURATION)) return;
+      liveSamples.push(clamp01(value));
+      if (liveSamples.length > 1080) liveSamples.shift();
+    }
+
+    function pushFrequencyFrame(frequencies, sampleRate = 16000) {
+      pushAmplitude(amplitudeFromFrequencyFrame(frequencies, sampleRate));
+    }
+
+    function readAnalyserFrame(analyser, bins, sampleRate) {
+      try {
+        analyser.getByteFrequencyData(bins);
+        return { bins, sampleRate };
+      } catch {
+        try {
+          return { amplitude: voiceLevelFromAnalyser(analyser, bins, sampleRate) };
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    function mixFrequencyBins(left, leftRate, right, rightRate) {
+      if (!left.length) return { bins: right, sampleRate: rightRate };
+      if (!right.length) return { bins: left, sampleRate: leftRate };
+      const length = Math.max(left.length, right.length);
+      const mixed = new Uint8Array(length);
+      for (let i = 0; i < length; i++) {
+        const li = left[Math.min(left.length - 1, Math.floor(i * left.length / length))] ?? 0;
+        const ri = right[Math.min(right.length - 1, Math.floor(i * right.length / length))] ?? 0;
+        mixed[i] = li > ri ? li : ri;
+      }
+      return { bins: mixed, sampleRate: Math.max(leftRate, rightRate) };
+    }
+
+    const SPEECH_SEGMENTS = [
+      [1.0, 4.7, 'customer'],
+      [5.2, 8.9, 'agent'],
+      [9.2, 11.9, 'customer'],
+      [20.3, 25.3, 'agent'],
+      [25.8, 27.5, 'customer'],
+      [32.2, 35.5, 'agent']
+    ];
+
+    function speechEnvelope(t) {
+      const segment = SPEECH_SEGMENTS.find(([start, end]) => t >= start && t <= end);
+      if (!segment) return .025;
+      const [start, end] = segment;
+      const local = (t - start) / Math.max(.001, end - start);
+      const attack = Math.min(1, local / .08);
+      const release = Math.min(1, (1 - local) / .08);
+      const syllables = .42 + .58 * Math.max(0, Math.sin(t * 8.4) * .55 + Math.sin(t * 4.15 + .7) * .35 + .28);
+      return clamp01(syllables * Math.min(attack, release));
+    }
+
+    function demoFrequencyFrame(t) {
+      const bins = new Uint8Array(128);
+      const sampleRate = 16000;
+      const nyquist = sampleRate / 2;
+      const voice = speechEnvelope(t);
+      const formants = [150, 620, 1180, 2250, 3150];
+      const widths = [110, 260, 360, 520, 480];
+
+      for (let i = 0; i < bins.length; i++) {
+        const hz = i / (bins.length - 1) * nyquist;
+        let mag = voice > .04 ? 4 : 1;
+        formants.forEach((f, idx) => {
+          const drift = Math.sin(t * (.8 + idx * .17) + idx) * (idx === 0 ? 35 : 90);
+          const z = (hz - (f + drift)) / widths[idx];
+          mag += Math.exp(-z * z) * voice * (idx === 0 ? 195 : 145 - idx * 13);
+        });
+        mag += voice * (Math.sin(i * .91 + t * 11) * .5 + .5) * 8;
+        bins[i] = Math.max(0, Math.min(255, Math.round(mag)));
+      }
+      return bins;
+    }
+
+    // API preparada para conectar audio real sin cambiar el componente visual.
+    window.callMonitorAudio = {
+      pushAmplitude,
+      pushFrequencyFrame,
+      connectAnalyser(analyser, sampleRate = 16000) {
+        externalAnalyser = analyser;
+        externalSampleRate = sampleRate;
+        analyserBins = new Uint8Array(analyser.frequencyBinCount);
+        void analyser.context?.resume?.();
+      },
+      connectPlaybackAnalyser(analyser, sampleRate = 16000) {
+        playbackAnalyser = analyser;
+        playbackSampleRate = sampleRate;
+        playbackBins = new Uint8Array(analyser.frequencyBinCount);
+        void analyser.context?.resume?.();
+      },
+      disconnectPlaybackAnalyser() {
+        playbackAnalyser = null;
+        playbackBins = null;
+      },
+      disconnectAnalyser() {
+        externalAnalyser = null;
+        analyserBins = null;
+        playbackAnalyser = null;
+        playbackBins = null;
+      },
+      setPlaying,
+      resetLiveWave() {
+        liveSamples.length = 0;
+        liveSamples.push(.025);
+        liveEdge = 0;
+        current = 0;
+        sampleAccumulator = 0;
+        callEnded = false;
+        renderPlayer();
+      },
+      setRecordedWaveform(values) {
+        recordedSamples.length = 0;
+        values.forEach(v => recordedSamples.push(clamp01(v)));
+        if (mode === 'recorded') renderWave();
+      }
+    };
+
+    function seedRecordedWaveform() {
+      recordedSamples.length = 0;
+      for (let i = 0; i < 430; i++) {
+        const t = i / 430 * DEMO_DURATION;
+        recordedSamples.push(amplitudeFromFrequencyFrame(demoFrequencyFrame(t), 16000));
+      }
+    }
+
+    function replacePlayIcon(name) { if (window.__liveDebugControls) return;
+      const existing = playBtn.querySelector('svg, i');
+      if (existing) existing.remove();
+      const node = document.createElement('i');
+      node.setAttribute('data-lucide', name);
+      node.setAttribute('aria-hidden', 'true');
+      playBtn.appendChild(node);
+      lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    }
+
+    function setPlaying(next) {
+      if (playing === next) return;
+      playing = next;
+      replacePlayIcon(playing ? 'pause' : 'play');
+      playBtn.setAttribute('aria-label', playing ? 'Pausar' : 'Reproducir');
+    }
+
+    function clearTokenTimers(message) {
+      const timers = tokenTimers.get(message) || [];
+      timers.forEach(clearTimeout);
+      tokenTimers.delete(message);
+    }
+
+    function renderMessageInstant(message) {
+      clearTokenTimers(message);
+      message.textContent = message.dataset.text;
+      const stamp = document.createElement('span');
+      stamp.className = 'message-time';
+      stamp.textContent = message.dataset.time;
+      stamp.style.opacity = '.48';
+      stamp.style.transform = 'none';
+      message.appendChild(stamp);
+      message.classList.add('complete');
+      message.dataset.rendered = '1';
+    }
+
+    function animateMessage(message) {
+      clearTokenTimers(message);
+      message.textContent = '';
+      message.classList.remove('complete');
+      message.dataset.rendered = '1';
+
+      const parts = message.dataset.text.split(/(\s+)/).filter(Boolean);
+      const tokenDelay = Math.min(92, Math.max(48, 1450 / parts.length));
+      let visibleTokenIndex = 0;
+
+      parts.forEach(part => {
+        if (/^\s+$/.test(part)) { message.appendChild(document.createTextNode(part)); return; }
+        const token = document.createElement('span');
+        token.className = 'token';
+        token.textContent = part;
+        token.style.animationDelay = `${visibleTokenIndex * tokenDelay}ms`;
+        message.appendChild(token);
+        visibleTokenIndex++;
+      });
+
+      const stamp = document.createElement('span');
+      stamp.className = 'message-time';
+      stamp.textContent = message.dataset.time;
+      message.appendChild(stamp);
+      const timer = setTimeout(() => message.classList.add('complete'), visibleTokenIndex * tokenDelay + 260);
+      tokenTimers.set(message, [timer]);
+    }
+
+    function resetMessage(message) {
+      clearTokenTimers(message);
+      message.textContent = '';
+      message.classList.remove('complete');
+      delete message.dataset.rendered;
+    }
+
+    function showItem(item, animate) {
+      if (item.classList.contains('visible')) return;
+      const followLive = appContent && appContent.scrollHeight - appContent.scrollTop - appContent.clientHeight <= 120;
+      item.classList.add('visible');
+      if (animate) {
+        item.classList.remove('enter');
+        void item.offsetWidth;
+        item.classList.add('enter');
+        setTimeout(() => item.classList.remove('enter'), 900);
+      }
+      const message = item.querySelector('.message[data-text]');
+      if (message) animate ? animateMessage(message) : renderMessageInstant(message);
+      if (animate && !seeking) setTimeout(() => callScroll.follow(), 180);
+    }
+
+    function hideItem(item) {
+      if (!item.classList.contains('visible')) return;
+      item.classList.remove('visible', 'enter');
+      const message = item.querySelector('.message[data-text]');
+      if (message) resetMessage(message);
+    }
+
+    function patchSession(partial) {
+      window.dispatchEvent(new CustomEvent('call-session-patch', { detail: partial }));
+    }
+
+    function setNameResolved(resolved, animate) {
+      patchSession({ name: resolved ? 'Sofía Martínez' : '' });
+    }
+
+    function setToolState(id, done, instant = false) {
+      const tool = document.getElementById(id);
+      if (!tool) return;
+      const desired = done ? '1' : '0';
+      if (!instant && tool.dataset.done === desired) return;
+      tool.dataset.done = desired;
+
+      const status = document.getElementById(id + 'Status');
+      const title = document.getElementById(id + 'Title');
+      tool.classList.toggle('done', done);
+      if (status) status.classList.toggle('loading', !done);
+
+      if (id === 'tool1') {
+        title.textContent = done ? 'Reserva encontrada' : 'Consultando la reserva de Sofía Martínez';
+        status.textContent = done ? 'Disponibilidad consultada · completado' : 'Cargando…';
+      } else {
+        title.textContent = done ? 'Reserva actualizada a las 5:30 p. m.' : 'Actualizando hora de llegada';
+        status.textContent = done ? 'Cambio guardado · completado' : 'Cargando…';
+      }
+
+      const mark = tool.querySelector('.done-mark');
+      if (instant) {
+        if (mark) { mark.style.opacity = done ? '1' : '0'; mark.style.transform = done ? 'scale(1)' : 'scale(.3)'; }
+      } else {
+        if (mark) { mark.style.opacity = ''; mark.style.transform = ''; }
+      }
+    }
+
+    function syncTimeline(now, animateCrossings = true) {
+      const movingForward = now >= previousTimelineTime;
+      timelineItems.forEach(item => {
+        const at = Number(item.dataset.at || 0);
+        const shouldShow = now >= at;
+        if (shouldShow) {
+          const crossed = movingForward && previousTimelineTime < at && now >= at;
+          showItem(item, animateCrossings && crossed);
+        } else hideItem(item);
+      });
+
+      const crossedName = movingForward && previousTimelineTime < 11.2 && now >= 11.2;
+      /* live: no resolver el nombre de la demo */
+
+      const reconnected = now >= 14.9;
+      reconnect?.classList.toggle('reconnected', reconnected);
+      if (reconnectText) reconnectText.textContent = reconnected ? 'Reconectado · 2 s' : 'Reconectando';
+      setToolState('tool1', now >= 19.2, !animateCrossings);
+      setToolState('tool2', now >= 31.5, !animateCrossings);
+
+      if (!window.__liveDebugControls) {
+        const hasMessages = [...document.querySelectorAll('.message-row.timeline-item')].some(item => now >= Number(item.dataset.at || 0));
+        conversationEmpty.hidden = hasMessages;
+      }
+      previousTimelineTime = now;
+    }
+
+    function maxSeekTime() { return mode === 'live' && !callEnded ? liveEdge : DEMO_DURATION; }
+
+    function renderPlayer() {
+      const available = Math.max(.001, maxSeekTime());
+      const ratio = mode === 'live' && liveEdge < .001 ? 1 : clamp01(current / available);
+      const atLiveEdge = mode === 'live' && Math.abs(current - liveEdge) < .14;
+
+      waveShell.style.setProperty('--progress', `${ratio * 100}%`);
+      currentTimeEl.textContent = formatTime(current);
+      durationEl.textContent = formatTime(maxSeekTime());
+      waveShell.setAttribute('aria-valuemax', Math.round(maxSeekTime()));
+      waveShell.setAttribute('aria-valuenow', Math.round(current));
+      waveShell.classList.toggle('at-live-edge', atLiveEdge);
+      if (!window.__liveDebugControls) startBtn.disabled = current <= .01;
+      if (liveBtn) liveBtn.disabled = mode !== 'live' || callEnded || atLiveEdge;
+      if (liveBtn) liveBtn.hidden = mode !== 'live' || callEnded;
+      renderWave();
+    }
+
+    function seek(value) {
+      current = Math.max(0, Math.min(maxSeekTime(), value));
+      const old = previousTimelineTime;
+      previousTimelineTime = Math.min(old, current);
+      syncTimeline(current, false);
+      renderPlayer();
+    }
+
+    function jumpToLive() {
+      if (mode !== 'live' || callEnded) return;
+      const old = previousTimelineTime;
+      current = liveEdge;
+      previousTimelineTime = Math.min(old, current);
+      syncTimeline(current, false);
+      renderPlayer();
+    }
+
+    function seekFromPointer(clientX) {
+      const rect = waveShell.getBoundingClientRect();
+      const ratio = clamp01((clientX - rect.left) / rect.width);
+      seek(ratio * maxSeekTime());
+    }
+
+    function beginSeek(e) {
+      seeking = true;
+      waveShell.classList.add('seeking');
+      waveShell.setPointerCapture(e.pointerId);
+      seekFromPointer(e.clientX);
+    }
+
+    let seekRevealTimer;
+    function endSeek(e) {
+      seeking = false;
+      if (waveShell.hasPointerCapture(e.pointerId)) waveShell.releasePointerCapture(e.pointerId);
+      clearTimeout(seekRevealTimer);
+      seekRevealTimer = setTimeout(() => waveShell.classList.remove('seeking'), 420);
+    }
+
+    function resetConversation() {
+      timelineItems.forEach(hideItem);
+      messages.forEach(resetMessage);
+      setToolState('tool1', false, true);
+      setToolState('tool2', false, true);
+      reconnect?.classList.remove('reconnected');
+      if (reconnectText) reconnectText.textContent = 'Reconectando';
+      conversationEmpty.hidden = false;
+      previousTimelineTime = 0;
+    }
+
+    function setMode(next) {
+      mode = next;
+      document.querySelectorAll('.demo-switcher button').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
+      if (authPanel?.classList.contains('is-app')) {
+        appContent.hidden = mode === 'empty' || mode === 'error';
+      }
+      emptyState.hidden = mode !== 'empty';
+      errorState.hidden = mode !== 'error';
+
+      if (mode === 'empty' || mode === 'error') {
+        setPlaying(false);
+        lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+        return;
+      }
+
+      resetConversation();
+      current = 0;
+      callEnded = false;
+      setPlaying(true);
+
+      if (mode === 'live') {
+        liveEdge = 0;
+        liveSamples.length = 0;
+        sampleAccumulator = 0;
+        if (screenTitle) screenTitle.textContent = 'Llamada en tiempo real';
+        patchSession({ status: 'En vivo' });
+        liveSamples.push(.025);
+      } else {
+        liveEdge = DEMO_DURATION;
+        if (screenTitle) screenTitle.textContent = 'Grabación de llamada';
+        patchSession({ status: 'Grabada' });
+        renderWave();
+      }
+
+      renderPlayer();
+      lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    }
+
+    function finalizeCall() {
+      if (callEnded) return;
+      callEnded = true;
+      liveEdge = DEMO_DURATION;
+      current = DEMO_DURATION;
+      setPlaying(false);
+      if (screenTitle) screenTitle.textContent = 'Llamada finalizada';
+      patchSession({ status: 'Finalizada' });
+      previousTimelineTime = Math.min(previousTimelineTime, DEMO_DURATION - .001);
+      syncTimeline(DEMO_DURATION, true);
+      renderPlayer();
+      lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    }
+
+    if (!window.__liveDebugControls) playBtn.addEventListener('click', () => setPlaying(!playing));
+    if (!window.__liveDebugControls) startBtn.addEventListener('click', () => seek(0));
+    if (!window.__liveDebugControls) liveBtn?.addEventListener('click', jumpToLive);
+    if (!window.__liveDebugControls) document.getElementById('rewindBtn').addEventListener('click', () => seek(current - 10));
+    if (!window.__liveDebugControls) document.getElementById('forwardBtn')?.addEventListener('click', () => seek(current + 10));
+
+    waveShell.addEventListener('pointerdown', beginSeek);
+    waveShell.addEventListener('pointermove', e => { if (waveShell.hasPointerCapture(e.pointerId)) seekFromPointer(e.clientX); });
+    waveShell.addEventListener('pointerup', endSeek);
+    waveShell.addEventListener('pointercancel', endSeek);
+
+    waveShell.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); seek(current - 5); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); seek(current + 5); }
+      if (e.key === 'Home') { e.preventDefault(); seek(0); }
+      if (e.key === 'End') { e.preventDefault(); seek(maxSeekTime()); }
+      if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
+    });
+
+    document.querySelectorAll('.demo-switcher button').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+
+    function tick(now) {
+      const dt = Math.min(.05, (now - last) / 1000);
+      last = now;
+
+     if (window.__kogniaPageLeaving) return;
+
+     if (mode === 'live' && !callEnded) {
+        const wasAtEdge = Math.abs(current - liveEdge) < .14;
+        const previousEdge = liveEdge;
+        const frozen = window.__liveDebugControls && !playing;
+        if (!frozen) liveEdge = Math.min(DEMO_DURATION, liveEdge + dt);
+        if (frozen) sampleAccumulator = 0;
+        else sampleAccumulator += dt;
+        while (!frozen && sampleAccumulator >= SAMPLE_INTERVAL && liveEdge < DEMO_DURATION) {
+          sampleAccumulator -= SAMPLE_INTERVAL;
+          const sampleTime = Math.max(previousEdge, liveEdge - sampleAccumulator);
+          const micFrame = externalAnalyser && analyserBins
+            ? readAnalyserFrame(externalAnalyser, analyserBins, externalSampleRate)
+            : null;
+          const ttsFrame = playbackAnalyser && playbackBins
+            ? readAnalyserFrame(playbackAnalyser, playbackBins, playbackSampleRate)
+            : null;
+          if (micFrame?.bins && ttsFrame?.bins) {
+            const mixed = mixFrequencyBins(micFrame.bins, micFrame.sampleRate, ttsFrame.bins, ttsFrame.sampleRate);
+            pushFrequencyFrame(mixed.bins, mixed.sampleRate);
+          } else if (micFrame?.bins) {
+            pushFrequencyFrame(micFrame.bins, micFrame.sampleRate);
+          } else if (ttsFrame?.bins) {
+            pushFrequencyFrame(ttsFrame.bins, ttsFrame.sampleRate);
+          } else if (micFrame?.amplitude != null || ttsFrame?.amplitude != null) {
+            pushAmplitude(Math.max(micFrame?.amplitude ?? 0, ttsFrame?.amplitude ?? 0));
+          } else if (!window.__liveDebugControls) {
+            pushFrequencyFrame(demoFrequencyFrame(sampleTime), 16000);
+          }
+        }
+
+        if (playing && !seeking) {
+          if (wasAtEdge) current = liveEdge;
+          else current = Math.min(liveEdge, current + dt);
+        }
+
+        syncTimeline(current, true);
+        if (isAppShellReady()) renderPlayer();
+
+        if (liveEdge >= DEMO_DURATION - .0001) finalizeCall();
+      } else if (mode === 'recorded' && playing && !seeking) {
+        const prev = current;
+        current = Math.min(DEMO_DURATION, current + dt);
+        previousTimelineTime = prev;
+        syncTimeline(current, true);
+        renderPlayer();
+        if (current >= DEMO_DURATION) setPlaying(false);
+      } else if (mode === 'live' && callEnded && playing && !seeking) {
+        const prev = current;
+        current = Math.min(DEMO_DURATION, current + dt);
+        previousTimelineTime = prev;
+        syncTimeline(current, true);
+        renderPlayer();
+        if (current >= DEMO_DURATION) setPlaying(false);
+      } else if (mode === 'live' && callEnded) {
+        renderPlayer();
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    if (waveShell) new ResizeObserver(() => {
+      if (isAppShellReady()) renderWave();
+    }).observe(waveShell);
+    const loginRight = document.querySelector('.login-right');
+    if (loginRight) new ResizeObserver(() => {
+      if (isAppShellReady()) renderWave();
+    }).observe(loginRight);
+    window.addEventListener('resize', () => renderWave());
+    visualViewport?.addEventListener('resize', () => renderWave());
+    seedRecordedWaveform();
+    lucide.createIcons({ attrs: { 'stroke-width': 2.5 } });
+    setMode('live');
+    if (window.__liveDebugControls) setPlaying(false);
+    const trackWaveLayout = () => {
+      if (!isAppShellReady()) return;
+      let frames = 48;
+      const step = () => {
+        renderWave();
+        frames -= 1;
+        if (frames > 0) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+    window.addEventListener('app-layout-change', trackWaveLayout);
+    requestAnimationFrame(tick);
+  </script>
+
+       <script>
+        import { bootDashboard } from '../features/dashboard/dashboard';
+        import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
+        import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
+        import { showToast } from '../features/voice-call/infrastructure/toast';
+        import { checkSession, installAuthFetch, installSessionGuard } from '../features/auth/session-guard';
+
+      const apiUrl = document.body.dataset.apiUrl ?? '';
+      installAuthFetch(apiUrl);
+      const authPanel = document.getElementById('authPanel');
+      const authForm = document.getElementById('authForm');
+         const authEmail = document.getElementById('authEmail');
+         const authPassword = document.getElementById('authPassword');
+         const authPasswordToggle = document.getElementById('authPasswordToggle');
+        const authSubmit = document.getElementById('authSubmit');
+       const appContent = document.getElementById('appContent');
+       const loginFormContent = document.querySelector('.login-form-content');
+       const tokenKey = 'kognia.auth.access-token';
+       const conversationKey = 'kognia.auth.conversation-id';
+
+       // Maps friendly aliases to the mascot emotion keys.
+       const faceEmotionAliases: Record<string, string> = {
+         happy: 'default-happy',
+         neutral: 'default-happy',
+       };
+
+       function setFaceEmotion(emotion: string): void {
+         const value = faceEmotionAliases[emotion] ?? emotion;
+         document.querySelectorAll<HTMLElement & { setEmotion?: (value: string) => void }>('.login-face-wrap [data-mascot-face], .app-header__face [data-mascot-face]').forEach((mascot) => {
+           mascot.setEmotion?.(value);
+         });
+       }
+
+        function setLoginLoading(loading: boolean): void {
+         if (!(authSubmit instanceof HTMLButtonElement)) return;
+         authSubmit.disabled = loading;
+         authSubmit.classList.toggle('is-loading', loading);
+          authSubmit.setAttribute('aria-busy', String(loading));
+          authSubmit.closest('.auth-submit-wrap')?.classList.toggle('is-loading', loading);
+        }
+
+        function setPasswordVisibility(visible: boolean): void {
+          if (!(authPassword instanceof HTMLInputElement) || !(authPasswordToggle instanceof HTMLButtonElement)) return;
+          authPassword.type = visible ? 'text' : 'password';
+          authPasswordToggle.setAttribute('aria-label', visible ? 'Ocultar contraseña' : 'Mostrar contraseña');
+          authPasswordToggle.setAttribute('aria-pressed', String(visible));
+          authPasswordToggle.innerHTML = `<i data-lucide="${visible ? 'eye-off' : 'eye'}" aria-hidden="true"></i>`;
+          const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+           lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+         }
+
+        authPasswordToggle?.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+        });
+        authPasswordToggle?.addEventListener('click', () => {
+          if (!(authPassword instanceof HTMLInputElement)) return;
+          const visible = authPassword.type === 'password';
+          setPasswordVisibility(visible);
+        });
+        setPasswordVisibility(false);
+
+       function setFormInert(inert: boolean): void {
+         if (!(loginFormContent instanceof HTMLElement)) return;
+         if (inert) {
+           loginFormContent.setAttribute('inert', '');
+           loginFormContent.setAttribute('aria-hidden', 'true');
+           return;
+         }
+         loginFormContent.removeAttribute('inert');
+         loginFormContent.removeAttribute('aria-hidden');
+       }
+
+       function loginMaterial(): HTMLElement | null {
+         const material = document.querySelector('.login-material');
+         return material instanceof HTMLElement ? material : null;
+       }
+
+       function collapseStrip(immediate: boolean): void {
+         const material = loginMaterial();
+         if (!material) return;
+         if (immediate) {
+           material.classList.add('is-gone');
+           return;
+         }
+         const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+         let fallback = 0;
+         const onEnd = (event: TransitionEvent) => {
+           if (event.propertyName !== 'width' && event.propertyName !== 'height') return;
+           window.clearTimeout(fallback);
+           material.removeEventListener('transitionend', onEnd);
+           material.classList.add('is-gone');
+         };
+         fallback = window.setTimeout(() => {
+           material.removeEventListener('transitionend', onEnd);
+           material.classList.add('is-gone');
+         }, reduced ? 40 : 2800);
+         material.addEventListener('transitionend', onEnd);
+       }
+
+        function restoreStrip(): void {
+          loginMaterial()?.classList.remove('is-gone');
+        }
+
+        let resizeStabilizationTimer = 0;
+        function stabilizeLoginLayout(): void {
+          const material = loginMaterial();
+          authPanel?.classList.add('is-resizing');
+          material?.classList.add('is-resizing');
+          window.clearTimeout(resizeStabilizationTimer);
+          resizeStabilizationTimer = window.setTimeout(() => {
+            authPanel?.classList.remove('is-resizing');
+            material?.classList.remove('is-resizing');
+          }, 180);
+        }
+
+        window.addEventListener('resize', stabilizeLoginLayout, { passive: true });
+        window.addEventListener('orientationchange', stabilizeLoginLayout, { passive: true });
+        visualViewport?.addEventListener('resize', stabilizeLoginLayout, { passive: true });
+
+        const appHeader = document.getElementById('appHeader');
+         const appNav = document.getElementById('appNav');
+        const mobileNavToggle = document.querySelector<HTMLButtonElement>('.mobile-nav-toggle');
+        const callsGroup = document.getElementById('callsGroup');
+       const callsToggle = document.getElementById('callsToggle');
+       const sectionViews = Array.from(document.querySelectorAll<HTMLElement>('.section-view'));
+       const detailPanel = document.getElementById('detailPanel');
+        const headerReadyMs = 1590;
+        let navReadyTimer = 0;
+         let dashboardStarted = false;
+         let dashboardCleanup: (() => void) | null = null;
+         let dashboardStartPending = false;
+         let dashboardPendingToken = '';
+         let analyticsHandoffPending = false;
+       let stopSessionGuard: (() => void) | null = null;
+
+       function lucideRefresh(): void {
+         const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+         lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+       }
+
+         function clearNavReadyWait(): void {
+         window.clearTimeout(navReadyTimer);
+        }
+
+        function startDashboard(token: string): void {
+          if (dashboardStarted || !authPanel?.classList.contains('is-app')) return;
+          dashboardStartPending = false;
+          dashboardPendingToken = '';
+          dashboardStarted = true;
+          dashboardCleanup = bootDashboard(apiUrl, token);
+        }
+
+          function markNavReady(): void {
+          if (!authPanel) return;
+           clearNavReadyWait();
+           authPanel.classList.add('is-nav-ready', 'is-header-ready');
+            appHeader?.classList.remove('app-header--pending');
+            appNav?.removeAttribute('aria-hidden');
+            appNav?.removeAttribute('inert');
+            syncMobileNavToggle();
+            notifyLayoutChange();
+            if (dashboardStartPending) {
+              startDashboard(dashboardPendingToken || (sessionStorage.getItem(tokenKey)?.trim() ?? ''));
+            }
+            if (analyticsHandoffPending && authPanel.dataset.view === 'dashboard') {
+            analyticsHandoffPending = false;
+            history.replaceState(history.state, '', '/analytics');
+            document.title = 'Kognia — Analíticas';
+          }
+       }
+
+       function scheduleNavReady(immediate: boolean): void {
+         if (!authPanel) return;
+         if (immediate || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+           markNavReady();
+           return;
+         }
+         clearNavReadyWait();
+          navReadyTimer = window.setTimeout(markNavReady, headerReadyMs);
+       }
+
+        function notifyLayoutChange(): void {
+          window.dispatchEvent(new Event('app-layout-change'));
+        }
+
+        function syncMobileNavToggle(): void {
+          if (!authPanel || !mobileNavToggle) return;
+          mobileNavToggle.hidden = !authPanel.classList.contains('is-app') || !authPanel.classList.contains('is-nav-ready') || !isCompactShell();
+          const collapsed = authPanel.classList.contains('is-nav-collapsed');
+          appHeader?.classList.toggle('is-nav-expanded', isCompactShell() && !collapsed);
+          mobileNavToggle.setAttribute('aria-expanded', String(!collapsed));
+          mobileNavToggle.setAttribute('aria-label', collapsed ? 'Expandir navegación' : 'Contraer navegación');
+          if (!isCompactShell() || !collapsed) appNav?.removeAttribute('inert');
+          else appNav?.setAttribute('inert', '');
+        }
+
+        function setMobileNavExpanded(expanded: boolean): void {
+          if (!authPanel?.classList.contains('is-app') || !isCompactShell()) return;
+          authPanel.classList.toggle('is-nav-collapsed', !expanded);
+          appHeader?.classList.toggle('is-nav-expanded', expanded);
+          syncMobileNavToggle();
+          notifyLayoutChange();
+        }
+
+       function setCallsOpen(open: boolean): void {
+         callsGroup?.classList.toggle('is-open', open);
+         callsToggle?.setAttribute('aria-expanded', String(open));
+         const children = document.getElementById('callsChildren');
+         if (open) {
+           children?.removeAttribute('inert');
+           children?.removeAttribute('aria-hidden');
+           return;
+         }
+         children?.setAttribute('inert', '');
+         children?.setAttribute('aria-hidden', 'true');
+       }
+
+       function setAppView(view: string): void {
+         if (!authPanel) return;
+         const empty = view !== 'call-demo';
+         const isCall = view === 'call-demo' || view === 'call-1' || view === 'call-2';
+         authPanel.dataset.view = view;
+         authPanel.classList.toggle('is-empty-view', empty);
+         setCallsOpen(true);
+         callsToggle?.classList.toggle('is-active', isCall);
+         appNav?.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+           const active = button.dataset.view === view;
+           button.classList.toggle('is-active', active);
+           if (active) button.setAttribute('aria-current', 'page');
+           else button.removeAttribute('aria-current');
+         });
+         const route = view === 'dashboard' ? 'analytics' : view === 'calls' ? 'calls' : view === 'dev' ? 'dev' : '';
+         appNav?.querySelectorAll<HTMLElement>('[data-route]').forEach((link) => {
+           const active = Boolean(route) && link.dataset.route === route;
+           link.classList.toggle('is-active', active);
+           if (active) link.setAttribute('aria-current', 'page');
+           else link.removeAttribute('aria-current');
+         });
+         sectionViews.forEach((section) => {
+           const active = empty && section.dataset.section === view;
+           section.classList.toggle('is-active', active);
+           section.setAttribute('aria-hidden', active ? 'false' : 'true');
+           if (active) section.removeAttribute('inert');
+           else section.setAttribute('inert', '');
+         });
+         notifyLayoutChange();
+         if (empty) {
+           appContent?.setAttribute('aria-hidden', 'true');
+           appContent?.setAttribute('inert', '');
+           detailPanel?.setAttribute('inert', '');
+           return;
+         }
+         appContent?.removeAttribute('aria-hidden');
+         appContent?.removeAttribute('inert');
+         detailPanel?.removeAttribute('inert');
+       }
+
+        let wipeProxyCleanup: (() => void) | null = null;
+
+        function resetAppShell(): void {
+          wipeProxyCleanup?.();
+          wipeProxyCleanup = null;
+           clearNavReadyWait();
+           stopSessionGuard?.();
+           stopSessionGuard = null;
+           dashboardStartPending = false;
+           dashboardPendingToken = '';
+           authPanel?.classList.remove('is-app', 'no-wipe', 'is-wipe-proxy', 'is-wipe-source-hidden', 'is-nav-ready', 'is-header-ready', 'is-empty-view', 'is-nav-collapsed');
+          appHeader?.classList.remove('is-nav-expanded');
+          appHeader?.setAttribute('hidden', '');
+          mobileNavToggle?.setAttribute('hidden', '');
+          mobileNavToggle?.setAttribute('aria-expanded', 'false');
+          mobileNavToggle?.setAttribute('aria-label', 'Expandir navegación');
+         authPanel?.removeAttribute('data-view');
+         appNav?.setAttribute('aria-hidden', 'true');
+         appNav?.setAttribute('inert', '');
+         setCallsOpen(false);
+         callsToggle?.classList.remove('is-active');
+          sectionViews.forEach((section) => {
+            section.classList.remove('is-active');
+            section.setAttribute('aria-hidden', 'true');
+            section.setAttribute('inert', '');
+          });
+         appContent?.removeAttribute('inert');
+         detailPanel?.removeAttribute('inert');
+       }
+
+        type WipeSvgSnapshot = {
+          transform: string;
+          transformOrigin: string;
+        };
+
+        type WipeMaterialSnapshot = {
+          rect: {
+            left: number;
+            top: number;
+            width: number;
+            height: number;
+          };
+          styles: {
+            transform: string;
+            transformOrigin: string;
+            opacity: string;
+            visibility: string;
+          };
+          svg: WipeSvgSnapshot | null;
+        };
+
+        type WipeSnapshot = {
+          rect: {
+            left: number;
+            top: number;
+            width: number;
+            height: number;
+          };
+          styles: {
+            backgroundColor: string;
+            padding: string;
+            display: string;
+            flexDirection: string;
+            alignItems: string;
+            justifyContent: string;
+          };
+          material: WipeMaterialSnapshot | null;
+        };
+
+        type WipeLayout = {
+          visual: WipeSnapshot | null;
+        };
+
+        function snapshotWipeMaterial(visual: HTMLElement): WipeMaterialSnapshot | null {
+          const material = visual.querySelector<HTMLElement>('.login-material');
+          if (!material) return null;
+          const rect = material.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          const styles = getComputedStyle(material);
+          const svg = Array.from(material.querySelectorAll<SVGElement>('.login-liquid-svg'))
+            .find((candidate) => getComputedStyle(candidate).display !== 'none');
+          const svgStyles = svg ? getComputedStyle(svg) : null;
+          return {
+            rect: {
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+              height: rect.height,
+            },
+            styles: {
+              transform: styles.transform,
+              transformOrigin: styles.transformOrigin,
+              opacity: styles.opacity,
+              visibility: styles.visibility,
+            },
+            svg: svgStyles
+              ? {
+                  transform: svgStyles.transform,
+                  transformOrigin: svgStyles.transformOrigin,
+                }
+              : null,
+          };
+        }
+
+        function snapshotWipeVisual(root: ParentNode = document): WipeSnapshot | null {
+          const element = root.querySelector('.login-visual');
+          if (!(element instanceof HTMLElement)) return null;
+          const rect = element.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          const styles = getComputedStyle(element);
+          return {
+            rect: {
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+              height: rect.height,
+            },
+            styles: {
+              backgroundColor: styles.backgroundColor,
+              padding: styles.padding,
+              display: styles.display,
+              flexDirection: styles.flexDirection,
+              alignItems: styles.alignItems,
+              justifyContent: styles.justifyContent,
+            },
+            material: snapshotWipeMaterial(element),
+          };
+        }
+
+        function snapshotWipeLayout(root: ParentNode = document): WipeLayout {
+          return { visual: snapshotWipeVisual(root) };
+        }
+
+        function setWipeStyle(element: HTMLElement | SVGElement, property: string, value: string): void {
+          element.style.setProperty(property, value, 'important');
+        }
+
+        function createWipeProxy(source: HTMLElement, snapshot: WipeSnapshot): HTMLElement {
+          const proxy = source.cloneNode(true) as HTMLElement;
+          proxy.removeAttribute('id');
+          proxy.querySelectorAll<HTMLElement>('[id]').forEach((element) => element.removeAttribute('id'));
+          proxy.querySelectorAll<HTMLElement>('[data-mascot-trigger], [data-mascot-id], [data-password-input-id]').forEach((element) => {
+            element.removeAttribute('data-mascot-trigger');
+            element.removeAttribute('data-mascot-id');
+            element.removeAttribute('data-password-input-id');
+          });
+          proxy.removeAttribute('transition:name');
+          proxy.removeAttribute('transition:persist');
+          proxy.setAttribute('aria-hidden', 'true');
+          proxy.classList.add('login-wipe-proxy');
+          Object.assign(proxy.style, {
+            left: `${snapshot.rect.left}px`,
+            top: `${snapshot.rect.top}px`,
+            width: `${snapshot.rect.width}px`,
+            height: `${snapshot.rect.height}px`,
+            minHeight: `${snapshot.rect.height}px`,
+            boxSizing: 'border-box',
+            backgroundColor: snapshot.styles.backgroundColor,
+            padding: snapshot.styles.padding,
+            display: snapshot.styles.display,
+            flexDirection: snapshot.styles.flexDirection,
+            alignItems: snapshot.styles.alignItems,
+            justifyContent: snapshot.styles.justifyContent,
+            opacity: '1',
+            transform: 'translate(0px, 0px)',
+            transformOrigin: 'top left',
+          });
+
+          const proxyMaterial = proxy.querySelector<HTMLElement>('.login-material');
+          if (proxyMaterial && snapshot.material) {
+            const material = snapshot.material;
+            setWipeStyle(proxyMaterial, 'position', 'absolute');
+            setWipeStyle(proxyMaterial, 'inset', 'auto');
+            setWipeStyle(proxyMaterial, 'left', `${material.rect.left - snapshot.rect.left}px`);
+            setWipeStyle(proxyMaterial, 'top', `${material.rect.top - snapshot.rect.top}px`);
+            setWipeStyle(proxyMaterial, 'right', 'auto');
+            setWipeStyle(proxyMaterial, 'bottom', 'auto');
+            setWipeStyle(proxyMaterial, 'width', `${material.rect.width}px`);
+            setWipeStyle(proxyMaterial, 'height', `${material.rect.height}px`);
+            setWipeStyle(proxyMaterial, 'transform', material.styles.transform);
+            setWipeStyle(proxyMaterial, 'transform-origin', material.styles.transformOrigin);
+            setWipeStyle(proxyMaterial, 'opacity', material.styles.opacity);
+            setWipeStyle(proxyMaterial, 'visibility', material.styles.visibility);
+            setWipeStyle(proxyMaterial, 'transition', 'none');
+
+            const proxySvg = Array.from(proxyMaterial.querySelectorAll<SVGElement>('.login-liquid-svg'))
+              .find((candidate) => getComputedStyle(candidate).display !== 'none');
+            if (proxySvg && material.svg) {
+              // Cloning the liquid SVG restarts its CSS animation at t=0.
+              // Freeze it at the source transform so the yellow separator
+              // cannot jump before the proxy starts moving left.
+              setWipeStyle(proxySvg, 'animation', 'none');
+              setWipeStyle(proxySvg, 'transform', material.svg.transform);
+              setWipeStyle(proxySvg, 'transform-origin', material.svg.transformOrigin);
+            }
+          }
+
+          document.body.append(proxy);
+          return proxy;
+        }
+
+        function createWipeProxies(layout: WipeLayout): { visual: HTMLElement | null; nodes: HTMLElement[] } {
+          const source = document.querySelector<HTMLElement>('.login-visual');
+          const visual = layout.visual && source ? createWipeProxy(source, layout.visual) : null;
+          return { visual, nodes: visual ? [visual] : [] };
+        }
+
+        function playWipeProxies(initial: WipeLayout, proxies: { visual: HTMLElement | null; nodes: HTMLElement[] }): void {
+          const duration = 1550;
+          const easing = 'cubic-bezier(.32, .04, .18, 1)';
+          const animations: Animation[] = [];
+          const animateVisual = (proxy: HTMLElement, from: WipeSnapshot): void => {
+            const exitX = -(from.rect.left + from.rect.width + 48);
+            animations.push(proxy.animate([
+              { transform: 'translate(0px, 0px)', opacity: 1 },
+              {
+                transform: `translate(${exitX}px, 0px)`,
+                opacity: 1,
+              },
+            ], { duration, easing, fill: 'both' }));
+          };
+
+          if (proxies.visual && initial.visual) animateVisual(proxies.visual, initial.visual);
+          if (!animations.length) {
+            proxies.nodes.forEach((node) => node.remove());
+            authPanel?.classList.remove('is-wipe-proxy', 'is-wipe-source-hidden');
+            return;
+          }
+
+          let cleaned = false;
+          let fallback = 0;
+          const cleanup = (cancel: boolean): void => {
+            if (cleaned) return;
+            cleaned = true;
+            window.clearTimeout(fallback);
+            if (cancel) animations.forEach((animation) => animation.cancel());
+            proxies.nodes.forEach((node) => node.remove());
+            authPanel?.classList.remove('is-wipe-proxy', 'is-wipe-source-hidden');
+            if (!cancel) markNavReady();
+            wipeProxyCleanup = null;
+          };
+          wipeProxyCleanup = () => cleanup(true);
+          // Keep the visual copies alive for the full wipe even if the
+          // browser reports a premature WAAPI finish while the layout is
+          // still settling. The real login visual stays hidden until this timer
+          // expires, so it cannot flash hidden between the two layers.
+          fallback = window.setTimeout(() => cleanup(false), duration + 40);
+        }
+
+        function revealApp(animate: boolean): void {
+         if (!authPanel) return;
+          wipeProxyCleanup?.();
+          wipeProxyCleanup = null;
+          if (animate && window.scrollY !== 0) window.scrollTo(0, 0);
+          const initial = animate && !matchMedia('(prefers-reduced-motion: reduce)').matches
+            ? snapshotWipeLayout()
+            : { visual: null };
+          const proxies = initial.visual ? createWipeProxies(initial) : { visual: null, nodes: [] };
+          if (proxies.nodes.length) {
+            authPanel.classList.add('is-wipe-proxy');
+            requestAnimationFrame(() => {
+              if (authPanel.classList.contains('is-wipe-proxy')) {
+                authPanel.classList.add('is-wipe-source-hidden');
+              }
+            });
+          }
+          if (!animate) authPanel.classList.add('no-wipe');
+          authPanel.classList.add('is-app');
+          authPanel.classList.toggle('is-nav-collapsed', isCompactShell());
+          appHeader?.removeAttribute('hidden');
+          appHeader?.classList.remove('is-nav-expanded');
+          authPanel.setAttribute('aria-labelledby', 'screenTitle');
+         setFormInert(true);
+         setAppView('dashboard');
+         // The proxy owns the separator during an animated wipe. Hide the
+         // real copy immediately so its delayed CSS transition cannot flash
+         // back into the final rail when the proxy is removed.
+         collapseStrip(proxies.nodes.length > 0 || !animate);
+         scheduleNavReady(!animate);
+         lucideRefresh();
+         notifyLayoutChange();
+         if (proxies.nodes.length) playWipeProxies(initial, proxies);
+         if (!animate) {
+           requestAnimationFrame(() => {
+             requestAnimationFrame(() => authPanel.classList.remove('no-wipe'));
+           });
+         }
+       }
+
+       appNav?.addEventListener('click', (event) => {
+         const target = event.target;
+         if (!(target instanceof Element)) return;
+         const toggle = target.closest('#callsToggle');
+          if (toggle) {
+            setCallsOpen(!callsGroup?.classList.contains('is-open'));
+            return;
+          }
+          const routeLink = target.closest('a[data-route]');
+          if (routeLink) {
+            if (isCompactShell()) setMobileNavExpanded(false);
+            return;
+          }
+          const button = target.closest<HTMLButtonElement>('[data-view]');
+         if (!button) return;
+         const view = button.dataset.view?.trim();
+          if (!view) return;
+          setAppView(view);
+          if (isCompactShell()) setMobileNavExpanded(false);
+        });
+
+        function isCompactShell(): boolean {
+          return matchMedia('(max-width: 767px)').matches;
+        }
+        mobileNavToggle?.addEventListener('click', () => {
+          setMobileNavExpanded(!(appHeader?.classList.contains('is-nav-expanded') ?? false));
+        });
+        matchMedia('(max-width: 767px)').addEventListener('change', (event) => {
+          if (!authPanel?.classList.contains('is-app')) return;
+          authPanel.classList.toggle('is-nav-collapsed', event.matches);
+          appHeader?.classList.remove('is-nav-expanded');
+          syncMobileNavToggle();
+          notifyLayoutChange();
+        });
+
+        function showApp(token: string, conversationId: string, animate = true): void {
+          analyticsHandoffPending = true;
+          setFaceEmotion('happy');
+          if (!dashboardStarted) {
+            dashboardStartPending = true;
+            dashboardPendingToken = token;
+          }
+          revealApp(animate);
+          startSessionGuard();
+          void fillCallNav(apiUrl);
+        }
+
+        function startSessionGuard(): void {
+          stopSessionGuard?.();
+          stopSessionGuard = installSessionGuard(apiUrl);
+        }
+
+       async function responseData(response: Response, fallback: string): Promise<Record<string, unknown>> {
+         if (!response.ok) throw await backendErrorFromResponse(response, fallback);
+         try {
+          const data: unknown = await response.json();
+          return data && typeof data === 'object' && !Array.isArray(data)
+            ? data as Record<string, unknown>
+            : {};
+        } catch {
+          return {};
+        }
+      }
+
+      async function restoreSession(): Promise<void> {
+        const token = sessionStorage.getItem(tokenKey)?.trim() ?? '';
+        const conversationId = sessionStorage.getItem(conversationKey)?.trim() ?? '';
+        if (!token || !conversationId) return;
+        setFaceEmotion('surprised');
+        const state = await checkSession(apiUrl);
+        if (state !== 'invalid') {
+          // Keep the session on transient failures; only 401/403 logs out.
+          showApp(sessionStorage.getItem(tokenKey)?.trim() || token, conversationId, false);
+          return;
+        }
+        sessionStorage.removeItem(tokenKey);
+        sessionStorage.removeItem(conversationKey);
+        resetAppShell();
+        authPanel?.setAttribute('aria-labelledby', 'authTitle');
+        setFormInert(false);
+        appContent?.setAttribute('aria-hidden', 'true');
+        restoreStrip();
+        setFaceEmotion('neutral');
+      }
+
+      async function createSession(email: string, password: string): Promise<void> {
+        const loginResponse = await fetch(`${apiUrl}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+         const login = await responseData(loginResponse, 'No se pudo iniciar sesión.');
+        const token = typeof login.access_token === 'string' ? login.access_token.trim() : '';
+        if (!token) throw new Error('La API no devolvió una sesión válida.');
+
+        const conversationResponse = await fetch(`${apiUrl}/conversations`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ channel: 'voice-demo' }),
+        });
+         const conversation = await responseData(conversationResponse, 'El usuario no puede abrir una conversación.');
+        const conversationId = typeof conversation.id === 'string' ? conversation.id.trim() : '';
+        if (!conversationId) throw new Error('La API no devolvió una conversación válida.');
+
+        sessionStorage.setItem(tokenKey, token);
+        sessionStorage.setItem(conversationKey, conversationId);
+        showApp(token, conversationId);
+      }
+
+       authForm?.addEventListener('submit', (event) => {
+         event.preventDefault();
+        const email = authEmail instanceof HTMLInputElement ? authEmail.value : '';
+        const password = authPassword instanceof HTMLInputElement ? authPassword.value : '';
+         if (!(authSubmit instanceof HTMLButtonElement)) return;
+          setLoginLoading(true);
+         setFaceEmotion('surprised');
+         void createSession(email, password)
+           .catch((error: unknown) => {
+              const message = errorMessage(error, 'No se pudo iniciar sesión.');
+              setFaceEmotion('auth-error');
+              showToast(message, 'error');
+           })
+           .finally(() => {
+             setLoginLoading(false);
+          });
+      });
+
+       document.addEventListener('astro:before-swap', () => {
+         window.__kogniaPageLeaving = true;
+         callScroll.dispose();
+         dashboardCleanup?.();
+         dashboardCleanup = null;
+         stopSessionGuard?.();
+         stopSessionGuard = null;
+       });
+
+       void restoreSession().catch(() => {
+        sessionStorage.removeItem(tokenKey);
+        sessionStorage.removeItem(conversationKey);
+        resetAppShell();
+        authPanel?.setAttribute('aria-labelledby', 'authTitle');
+        setFormInert(false);
+        appContent?.setAttribute('aria-hidden', 'true');
+        restoreStrip();
+      });
+    </script>
+  </body>
+</html>

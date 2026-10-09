@@ -1,0 +1,73 @@
+---
+import AppLayout from '../layouts/AppLayout.astro';
+import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
+---
+
+<AppLayout title="Kognia — Analíticas">
+  <AnalyticsContent />
+</AppLayout>
+
+<script>
+  import { bootDashboard } from '../features/dashboard/dashboard';
+  import { accessTokenKey, checkSession, conversationIdKey, redirectToLogin } from '../features/auth/session-guard';
+  import { waitForRouteSettle } from '../features/ui/loading-reveal';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+  let mountedRoot: HTMLElement | null = null;
+  let pendingRoot: HTMLElement | null = null;
+  let mountGeneration = 0;
+
+  function lucideRefresh(): void {
+    const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+    lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+  }
+
+  function isAnalyticsRoute(): boolean {
+    return window.location.pathname === '/analytics' || window.location.pathname === '/analytics/';
+  }
+
+  async function mountAnalytics(): Promise<void> {
+    if (!isAnalyticsRoute()) return;
+    const root = document.querySelector<HTMLElement>('.analytics-dashboard');
+    if (!root || mountedRoot === root || pendingRoot === root) return;
+    const token = sessionStorage.getItem(accessTokenKey)?.trim();
+    const conversationId = sessionStorage.getItem(conversationIdKey)?.trim();
+    if (!token || !conversationId) {
+      window.location.replace('/');
+      return;
+    }
+    pendingRoot = root;
+    const generation = ++mountGeneration;
+    await waitForRouteSettle();
+    if (generation !== mountGeneration || !root.isConnected) return;
+    if (await checkSession(apiUrl) === 'invalid') {
+      redirectToLogin();
+      return;
+    }
+    const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+    if (!freshToken) {
+      redirectToLogin();
+      return;
+    }
+    if (generation !== mountGeneration || !root.isConnected) return;
+    cleanup?.();
+    cleanup = bootDashboard(apiUrl, freshToken);
+    mountedRoot = root;
+    pendingRoot = null;
+    root.setAttribute('aria-hidden', 'false');
+    lucideRefresh();
+  }
+
+  function unmountAnalytics(): void {
+    cleanup?.();
+    cleanup = null;
+    mountedRoot = null;
+    pendingRoot = null;
+    mountGeneration += 1;
+  }
+
+  document.addEventListener('astro:before-swap', unmountAnalytics);
+  document.addEventListener('astro:page-load', mountAnalytics);
+  void mountAnalytics();
+</script>

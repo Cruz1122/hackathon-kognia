@@ -1,0 +1,74 @@
+/* Dev replay deliberately keeps the saved-call composition. Technical data is
+   discoverable through small reactions, not a second dashboard inside chat. */
+.call-demo-page--dev .player { grid-template-columns: minmax(0, 1fr) auto; }
+.call-demo-page--dev .controls { gap: 10px; }
+.call-demo-page--dev .control.primary { background: var(--ui-graphite); }
+.call-demo-page--dev .dev-replay-summary { display: none !important; }
+.call-demo-page--dev .conversation { margin-top: 22px; }
+.call-demo-page--dev .message { position: relative; }
+.call-demo-page--dev .dev-replay-message-tech {
+  margin: 6px 10px 0;
+  color: rgba(65, 65, 65, .54);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  line-height: 1.35;
+}
+.call-demo-page--dev .dev-bubble-reactions {
+  position: absolute;
+  right: -8px;
+  bottom: -20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(65, 65, 65, .12);
+  border-radius: var(--radius-full);
+  background: var(--ui-paper);
+  box-shadow: 0 5px 14px rgb(65 65 65 / 12%);
+  animation: dev-reactions-in .42s cubic-bezier(.18, .9, .25, 1) both;
+}
+@keyframes dev-reactions-in {
+  from { opacity: 0; transform: translateY(-8px) scale(.9); }
+  72% { opacity: 1; transform: translateY(2px) scale(1.03); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.call-demo-page--dev .dev-bubble-reaction {
+  display: inline-flex;
+  min-width: 25px;
+  height: 25px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--ui-accent-soft);
+  color: var(--ui-graphite);
+  padding: 0 7px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform .2s ease, background-color .36s ease, color .36s ease;
+}
+.call-demo-page--dev .dev-bubble-reaction:hover { background: var(--ui-accent); transform: translateY(-1px); }
+.call-demo-page--dev .dev-bubble-reaction:focus-visible { outline: 3px solid var(--ui-accent); outline-offset: 2px; }
+.call-demo-page--dev .dev-bubble-reaction svg { width: 13px; height: 13px; stroke-width: 2.5; }
+.call-demo-page--dev .dev-bubble-reaction.is-error { background: #ffe1e1; color: #c44242; border: 1px solid rgb(196 66 66 / 24%); }
+.call-demo-page--dev .dev-bubble-reaction.is-error:hover { background: #f7bcbc; color: #8f2929; }
+.call-demo-page--dev .dev-bubble-reaction.is-error:focus-visible { outline-color: #d55353; }
+.call-demo-page--dev .dev-reaction-arrow { display: grid; width: 12px; height: 20px; place-items: center; color: color-mix(in srgb, var(--ui-accent) 72%, var(--ui-graphite)); }
+.call-demo-page--dev .dev-reaction-arrow svg { width: 11px; height: 11px; stroke-width: 2.8; }
+.call-demo-page--dev .message.channel-whatsapp { background: var(--ui-accent-soft); }
+.call-demo-page--dev .message.channel-whatsapp .message-time { color: color-mix(in srgb, var(--ui-accent) 72%, var(--ui-graphite)); }
+.call-demo-page--dev .dev-replay-whatsapp-divider { color: color-mix(in srgb, var(--ui-accent) 84%, var(--ui-graphite)); }
+
+@media (max-width: 767px) {
+  .call-demo-page--dev .player { grid-template-columns: 1fr; }
+  .call-demo-page--dev .dev-bubble-reactions { right: -4px; bottom: -18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .call-demo-page--dev .dev-bubble-reaction,
+  .call-demo-page--dev .dev-bubble-reactions { transition-duration: .001ms; animation-duration: .001ms; }
+}

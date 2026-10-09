@@ -1,0 +1,28 @@
+.content-loader.is-leaving {
+  animation: kognia-loader-fade-out .24s ease both !important;
+}
+
+.loading-curtain-armed {
+  clip-path: inset(0 0 100% 0);
+}
+
+.loading-curtain-fallback {
+  animation: kognia-content-curtain-in .78s cubic-bezier(.22, .8, .24, 1) both;
+  transform-origin: top center;
+}
+
+@keyframes kognia-loader-fade-out {
+  to { opacity: 0; transform: translateY(-4px); }
+}
+
+@keyframes kognia-content-curtain-in {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .content-loader.is-leaving,
+  .loading-curtain-fallback {
+    animation-duration: .001ms !important;
+  }
+}

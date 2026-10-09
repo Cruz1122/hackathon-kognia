@@ -1,0 +1,103 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import CallDemoContent from '../../components/calls/CallDemoContent.astro';
+import '../../styles/call-demo.css';
+---
+
+<AppLayout title="Kognia — Llamada Demo">
+  <CallDemoContent />
+</AppLayout>
+
+<script>
+  import { bootLiveMonitor } from '../../features/voice-call/application/live-monitor';
+  import { accessTokenKey, checkSession, conversationIdKey, redirectToLogin } from '../../features/auth/session-guard';
+  import { revealLoadedContent, waitForRouteSettle } from '../../features/ui/loading-reveal';
+  import { mountCallDemoWave } from '../../features/voice-call/ui/call-demo-wave';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let cleanup: (() => void) | null = null;
+  let waveCleanup: (() => void) | null = null;
+  let mountedRoot: HTMLElement | null = null;
+  let pendingRoot: HTMLElement | null = null;
+
+  function isCallDemoRoute(): boolean {
+    return window.location.pathname === '/calls/demo' || window.location.pathname === '/calls/demo/';
+  }
+
+  function lucideRefresh(): void {
+    const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
+    lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
+  }
+
+  async function mountCallDemo(): Promise<void> {
+    if (!isCallDemoRoute()) return;
+    const root = document.querySelector<HTMLElement>('.call-demo-page');
+    if (!root || mountedRoot === root || pendingRoot === root) return;
+    pendingRoot = root;
+    await waitForRouteSettle();
+    if (!root.isConnected || pendingRoot !== root) return;
+    try {
+      const token = sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
+      const conversationId = sessionStorage.getItem(conversationIdKey)?.trim() ?? '';
+      const sessionState = await checkSession(apiUrl);
+      if (sessionState === 'invalid' || !token || !conversationId) {
+        redirectToLogin();
+        return;
+      }
+      const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+      if (!freshToken) {
+        redirectToLogin();
+        return;
+      }
+      cleanup?.();
+      waveCleanup?.();
+      waveCleanup = mountCallDemoWave();
+      const autoStart = new URLSearchParams(window.location.search).get('autostart') === '1';
+      cleanup = bootLiveMonitor(apiUrl, freshToken, conversationId, autoStart);
+      if (autoStart) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('autostart');
+        const suffix = `${url.search}${url.hash}`;
+        window.history.replaceState(window.history.state, '', `${url.pathname}${suffix}`);
+      }
+      mountedRoot = root;
+      pendingRoot = null;
+      lucideRefresh();
+      await revealLoadedContent(
+        document.getElementById('callLoading'),
+        document.getElementById('appContent'),
+        () => document.querySelector('.app-shell')?.classList.remove('is-call-loading'),
+      );
+      window.dispatchEvent(new Event('resize'));
+    } catch (error) {
+      pendingRoot = null;
+      const reason = error instanceof TypeError
+        ? 'No se pudo conectar con el servidor para iniciar esta llamada.'
+        : error instanceof Error && error.message.trim()
+        ? error.message
+        : 'El servidor no respondió al iniciar esta llamada.';
+      const status = document.getElementById('callConnectionStatus');
+      const reasonElement = document.getElementById('callErrorReason');
+      if (status) status.hidden = true;
+      if (reasonElement) reasonElement.textContent = reason;
+      lucideRefresh();
+      await revealLoadedContent(
+        document.getElementById('callLoading'),
+        document.getElementById('callError'),
+      );
+    }
+  }
+
+  function unmountCallDemo(): void {
+    cleanup?.();
+    waveCleanup?.();
+    cleanup = null;
+    waveCleanup = null;
+    mountedRoot = null;
+    pendingRoot = null;
+  }
+
+  document.addEventListener('astro:before-swap', unmountCallDemo);
+  document.addEventListener('astro:page-load', mountCallDemo);
+  void mountCallDemo();
+</script>

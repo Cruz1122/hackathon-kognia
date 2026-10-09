@@ -1,0 +1,296 @@
+:root {
+  --ui-graphite: #414141;
+  --ui-amber: #f7c974;
+  --ui-cream: #faeccf;
+  --ui-paper: #f8f8f8;
+  --ui-accent: var(--ui-amber);
+  --ui-accent-soft: var(--ui-cream);
+  --ui-brand-face-size: 64px;
+  --font-ui: "Urbanist", sans-serif;
+  --radius-full: 9999px;
+  --radius-min: 14px;
+  --radius-max: 32px;
+  --radius-ui: min(var(--radius-max), 50%);
+}
+
+@property --ui-accent {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #f7c974;
+}
+
+@property --ui-accent-soft {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #faeccf;
+}
+
+html[data-ui-mode="dev"] {
+  --ui-accent: #6EA8FE;
+  --ui-accent-soft: #DCEBFF;
+}
+
+html {
+  transition: --ui-accent .56s cubic-bezier(.22, .8, .24, 1), --ui-accent-soft .56s cubic-bezier(.22, .8, .24, 1);
+}
+
+html, body, button, input, textarea, select, option,
+.app-header, .app-main, .app-header__face, .app-nav__item, .app-nav__label,
+.call-demo-page, .call-demo-page *, .app-detail-panel * {
+  transition-property: color, background-color, border-color, outline-color, box-shadow, fill, stroke, stop-color;
+  transition-duration: .56s;
+  transition-timing-function: cubic-bezier(.22, .8, .24, 1);
+}
+
+[data-mascot-face] [data-stop],
+[data-category-stop] {
+  transition: stop-color .56s cubic-bezier(.22, .8, .24, 1);
+}
+
+html[data-ui-mode="dev"] .agent-signals {
+  --ui-accent: #6EA8FE;
+  --ui-accent-soft: #DCEBFF;
+}
+
+/* Presentation attributes on persisted SVG faces survive Astro route swaps.
+   Override the actual stops as well as the semantic tokens so the mascot is
+   visibly blue before and after its runtime animation initializes. */
+html[data-ui-mode="dev"] [data-mascot-face]:not([data-mascot-ready]) [data-stop="0"] { stop-color: #DCEBFF; }
+html[data-ui-mode="dev"] [data-mascot-face]:not([data-mascot-ready]) [data-stop="1"] { stop-color: #BED8FF; }
+html[data-ui-mode="dev"] [data-mascot-face]:not([data-mascot-ready]) [data-stop="2"] { stop-color: #6EA8FE; }
+html[data-ui-mode="dev"] [data-mascot-face]:not([data-mascot-ready]) [data-stop="3"] { stop-color: #3F7CCC; }
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; min-height: 100%; background: var(--ui-paper); color: var(--ui-graphite); font-family: var(--font-ui); }
+body { min-height: 100dvh; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button, input { font: inherit; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell.has-detail-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(264px, min(21%, 25.2rem));
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-header {
+  position: relative;
+  z-index: 5;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 32px;
+  min-width: 0;
+  min-height: 96px;
+  padding: 16px 28px;
+  background: var(--ui-graphite);
+  color: var(--ui-paper);
+}
+
+.app-header__brand {
+  display: grid;
+  grid-template-columns: var(--ui-brand-face-size) minmax(0, max-content);
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  min-height: var(--ui-brand-face-size);
+  color: var(--ui-paper);
+  font-size: 1.65rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.app-header__face {
+  --interactive-mascot-width: var(--ui-brand-face-size);
+  display: grid;
+  width: var(--ui-brand-face-size);
+  height: var(--ui-brand-face-size);
+  flex: 0 0 var(--ui-brand-face-size);
+  align-self: center;
+  aspect-ratio: 1;
+  place-items: center;
+  border-radius: 50%;
+  overflow: visible;
+}
+
+.app-header__face svg { display: block; width: 100%; height: 100%; }
+.app-header__brand > span { display: inline-flex; align-items: center; align-self: center; min-width: 0; line-height: 1; }
+.mobile-nav-toggle { display: none; }
+.mobile-nav-toggle[hidden] { display: none !important; }
+
+.app-header .app-nav {
+  grid-column: 2 / -1;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  overflow: visible;
+}
+
+.app-header .app-nav__item,
+.app-header .app-nav__label {
+  display: grid;
+  grid-template-columns: 28px max-content;
+  align-items: center;
+  gap: 12px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ui-paper);
+  font: inherit;
+  font-size: clamp(.95rem, 1.05vw, 1.15rem);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .24s ease, transform .24s ease;
+}
+
+.app-header .app-nav__item span,
+.app-header .app-nav__label span { min-width: 0; white-space: nowrap; }
+.app-header .app-nav__icon { display: grid; width: 28px; height: 28px; place-items: center; align-self: center; line-height: 0; }
+.app-header .app-nav__icon svg { display: block; width: 100%; height: 100%; }
+.app-header .app-nav__label { opacity: .78; }
+.app-header .app-nav__item svg,
+.app-header .app-nav__label svg { width: 24px; height: 24px; flex-shrink: 0; stroke-width: 2.3; }
+.app-header .app-nav__item:not(.app-nav__item--disabled):hover,
+.app-header .app-nav__label:hover { background: transparent; color: var(--ui-accent); transform: translateY(-2px); }
+.app-header .app-nav__item:focus-visible,
+.app-header .app-nav__label:focus-visible { outline: 3px solid var(--ui-accent); outline-offset: 2px; }
+.app-header .app-nav__item.is-active,
+.app-header .app-nav__label.is-active { color: var(--ui-accent); }
+.app-header .app-nav__item--disabled { cursor: not-allowed; opacity: .42; }
+.app-header .app-nav__group { display: flex; width: auto; flex-direction: column; gap: 4px; }
+.app-header .app-nav__children { display: grid; grid-template-rows: 0fr; width: fit-content; max-width: 100%; min-width: 0; margin-inline: auto; padding-left: 40px; transition: grid-template-rows .45s cubic-bezier(.32, .04, .18, 1); }
+.app-header .app-nav__group.is-open .app-nav__children { grid-template-rows: 1fr; }
+.app-header .app-nav__children-inner { display: flex; min-height: 0; flex-direction: column; gap: 4px; overflow: hidden; }
+.app-header .app-nav__children .app-nav__item { grid-template-columns: minmax(0, 1fr); width: 100%; margin-inline: 0; padding: 10px 14px; font-size: .95rem; font-weight: 600; white-space: nowrap; }
+.app-header .app-nav__call { font-style: italic; font-weight: 500; opacity: .88; }
+.app-header .app-nav__call.is-active { opacity: 1; }
+.app-header .app-nav__children .app-nav__call.is-live { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.app-nav__live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ui-accent); animation: app-nav-live-blink 1.1s ease-in-out infinite; }
+@keyframes app-nav-live-blink { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
+
+.app-main {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ui-paper);
+}
+
+.app-main > .section-view { display: block; height: 100%; min-height: 0; opacity: 1; visibility: visible; pointer-events: auto; transform: none; }
+.analytics-dashboard { height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+.app-detail-panel { grid-column: 2; grid-row: 2; min-width: 0; height: 100%; }
+.app-shell.is-call-loading .app-detail-panel { display: none; visibility: hidden; opacity: 0; clip-path: inset(0 0 100% 0); pointer-events: none; }
+.app-shell:not(.is-call-loading) .app-detail-panel { transition: clip-path .78s cubic-bezier(.22, .8, .24, 1), opacity .3s ease; }
+
+/* While a call loads, the detail panel must not reserve its grid column yet. */
+@media (min-width: 768px) {
+  .app-shell.has-detail-panel.is-call-loading { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Route swaps hand control to the explicit loader + curtain sequence below. */
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation: none !important;
+  mix-blend-mode: normal;
+}
+::view-transition-old(*) { opacity: 0 !important; }
+
+::view-transition-group(app-main) {
+  z-index: 1;
+  animation: none;
+}
+::view-transition-old(app-main),
+::view-transition-new(app-main) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-group(app-header),
+::view-transition-old(app-header),
+::view-transition-new(app-header) {
+  z-index: 5;
+  animation: none;
+  mix-blend-mode: normal;
+  isolation: isolate;
+}
+
+/* Browsers without native View Transitions keep the header static while the
+   explicit content transition runs underneath it. */
+[data-astro-transition-fallback] .app-header,
+[data-astro-transition-fallback] [data-astro-transition-persist="app-header"] {
+  animation: none !important;
+  position: relative;
+  z-index: 5;
+}
+[data-astro-transition-fallback] .app-main { animation: none !important; }
+
+@media (max-width: 767px) {
+  .app-shell,
+  .app-shell.has-detail-panel {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .app-header {
+    grid-column: 1;
+    grid-row: 1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    min-height: auto;
+    padding: 18px 16px 12px;
+  }
+
+  .app-header__brand { grid-template-columns: minmax(0, 1fr); gap: 0; min-height: 0; }
+  .app-header__face { display: none; }
+  .app-header .mobile-nav-toggle { display: grid; width: 32px; height: 32px; place-items: center; align-self: center; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ui-accent); cursor: pointer; padding: 4px; }
+  .app-header .mobile-nav-toggle svg { width: 20px; height: 20px; transition: transform .3s ease; }
+  .app-header.is-nav-expanded .mobile-nav-toggle svg { transform: rotate(180deg); }
+  .app-header .app-nav { grid-column: 1 / -1; align-items: stretch; justify-content: flex-start; height: 0; margin-top: 0; overflow: hidden; opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(-8px); transition: height .35s ease, opacity .25s ease, transform .35s ease, visibility 0s .35s; }
+  .app-header.is-nav-expanded .app-nav { height: auto; margin-top: 14px; overflow: visible; opacity: 1; visibility: visible; pointer-events: auto; transform: none; transition: height .35s ease, opacity .25s ease, transform .35s ease, visibility 0s; }
+  .app-header .app-nav__item, .app-header .app-nav__label { grid-template-columns: 28px minmax(0, 1fr); width: 100%; margin-inline: 0; padding: 11px 12px; font-size: .95rem; }
+  .app-header .app-nav__group { width: 100%; }
+  .app-header .app-nav__children { width: 100%; margin-inline: 0; }
+  .app-main { grid-column: 1; grid-row: 2; height: auto; min-height: 0; overflow: visible; }
+  .app-main > .section-view, .analytics-dashboard { height: auto; min-height: 0; overflow: visible; }
+  .app-detail-panel { grid-column: 1; grid-row: 3; min-height: 36dvh; height: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  ::view-transition-group(app-main), ::view-transition-old(app-main), ::view-transition-new(app-main) { animation-duration: .001ms !important; }
+}

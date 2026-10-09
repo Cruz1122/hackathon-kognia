@@ -1,0 +1,138 @@
+---
+import MascotFace from '../mascot/MascotFace.astro';
+import { SIGNAL_EMOTIONS } from '../../lib/agent-signals/fleybo-emotions';
+import { snapScale } from '../../lib/agent-signals/model';
+import type { ScaleSnapshot } from '../../lib/agent-signals/types';
+
+interface Props {
+  snapshot: ScaleSnapshot;
+}
+
+const { snapshot } = Astro.props;
+const snapped = snapScale(snapshot.score);
+---
+
+<article class="compact-scale" data-signal-scale={snapshot.key}>
+  <div class="compact-scale__heading">
+    <h4>{snapshot.title}</h4>
+    <p data-scale-percentage>{snapshot.percentage}%</p>
+  </div>
+
+  <div
+    class="compact-scale__meter"
+    role="meter"
+    aria-valuemin="0"
+    aria-valuemax="5"
+    aria-valuenow={snapshot.score.toFixed(2)}
+    aria-valuetext={`${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`}
+    aria-label={`${snapshot.title}: ${snapshot.percentage}%${snapshot.stale ? ' · sin datos recientes' : ''}`}
+    data-scale-meter
+  >
+    <div class="compact-scale__endpoints" aria-hidden="true">
+      <span>{snapshot.bottomLabel}</span>
+      <span>{snapshot.topLabel}</span>
+    </div>
+    <div class="compact-scale__track">
+      <div class="compact-scale__rail" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <div class="compact-scale__mascot" data-scale-mascot style={`--position:${snapped.position}`}>
+        <MascotFace
+          emotion={snapped.emotion}
+          emotions={SIGNAL_EMOTIONS}
+          mergeDefaultEmotions={false}
+          pointerTracking={false}
+          ariaLabel={`${snapshot.title}: ${snapshot.percentage}%`}
+        />
+      </div>
+    </div>
+  </div>
+</article>
+
+<style>
+  .compact-scale {
+    min-width: 0;
+    min-height: 100px;
+    padding: 7px 0 4px;
+    color: var(--ui-graphite, #414141);
+  }
+
+  .compact-scale__heading {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .compact-scale__heading h4 {
+    margin: 0;
+    font: 800 .78rem/1.05 "Urbanist", sans-serif;
+  }
+
+  .compact-scale__heading p {
+    margin: 0;
+    flex: 0 0 auto;
+    font: 800 .78rem/1 "Urbanist", sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .compact-scale__meter {
+    width: 100%;
+    margin-top: 7px;
+  }
+
+  .compact-scale__endpoints {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font: 700 .56rem/1 "Urbanist", sans-serif;
+    opacity: .58;
+  }
+
+  .compact-scale__track {
+    position: relative;
+    height: 48px;
+    margin: 0 26px;
+  }
+
+  .compact-scale__rail {
+    position: absolute;
+    inset: 23px 0 auto;
+    height: 1px;
+    background: rgb(65 65 65 / 38%);
+  }
+
+  .compact-scale__rail span {
+    position: absolute;
+    top: 50%;
+    width: 1px;
+    height: 12px;
+    translate: -50% -50%;
+    background: var(--ui-graphite, #414141);
+    opacity: .48;
+  }
+
+  .compact-scale__rail span:nth-child(1) { left: 0; }
+  .compact-scale__rail span:nth-child(2) { left: 25%; }
+  .compact-scale__rail span:nth-child(3) { left: 50%; }
+  .compact-scale__rail span:nth-child(4) { left: 75%; }
+  .compact-scale__rail span:nth-child(5) { left: 100%; }
+
+  .compact-scale__mascot {
+    position: absolute;
+    z-index: 2;
+    left: calc(var(--position, .5) * 100%);
+    top: 23px;
+    width: 48px;
+    height: 48px;
+    translate: -50% -50%;
+    transition: left 440ms cubic-bezier(.22, 1, .36, 1);
+    will-change: left;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .compact-scale__mascot { transition-duration: .001ms; }
+  }
+</style>

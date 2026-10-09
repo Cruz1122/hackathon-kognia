@@ -1,0 +1,38 @@
+---
+import InteractiveMascotFace from '../mascot/InteractiveMascotFace.astro';
+import AppNav from './AppNav.astro';
+
+interface Props {
+  active?: 'analytics' | 'calls' | 'dev';
+  initiallyHidden?: boolean;
+  mascotPasswordInputId?: string;
+}
+
+const {
+  active = 'analytics',
+  initiallyHidden = false,
+  mascotPasswordInputId,
+} = Astro.props;
+---
+
+<header
+  class:list={['app-header', initiallyHidden && 'app-header--pending']}
+  id="appHeader"
+  aria-label="Demo"
+  hidden={initiallyHidden ? true : undefined}
+  transition:persist
+  transition:name="app-header"
+>
+  <div class="app-header__brand">
+    <InteractiveMascotFace
+      class="app-header__face"
+      label="Cambiar expresión de Demo"
+      passwordInputId={mascotPasswordInputId}
+    />
+    <span>Demo</span>
+  </div>
+  <button class="mobile-nav-toggle" type="button" hidden aria-controls="appNav" aria-expanded="false" aria-label="Expandir navegación">
+    <i data-lucide="chevron-down" aria-hidden="true"></i>
+  </button>
+  <AppNav active={active} initiallyHidden={initiallyHidden} />
+</header>
