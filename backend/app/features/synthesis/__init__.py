@@ -1,1 +1,1 @@
-"""Local text-to-speech feature."""
+"""Streaming text-to-speech feature."""

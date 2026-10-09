@@ -6,6 +6,7 @@ import EmptyState from '../components/ui/EmptyState.astro';
 
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
+import TourDock from '../components/onboarding/TourDock.astro';
 import '../styles/toast.css';
 import '../styles/detail-panel.css';
 import '../styles/app-shell.css';
@@ -1367,6 +1368,7 @@ import '../styles/phone.css';
   </svg>
 
   <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+  <TourDock />
 
   <main class="page">
     <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
@@ -1474,7 +1476,7 @@ import '../styles/phone.css';
       <EmptyState icon="phone" title="Esta llamada aún no está disponible." />
     </section>
       </section>
-    <aside class="detail-panel" id="detailPanel" aria-label="Cliente">
+    <aside class="detail-panel" id="detailPanel" data-tour="client-panel" aria-label="Cliente">
       <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
         <i data-lucide="x" aria-hidden="true"></i>
       </button>
@@ -3022,6 +3024,10 @@ import '../styles/phone.css';
         appContent?.setAttribute('aria-hidden', 'true');
         restoreStrip();
       });
+    </script>
+    <script>
+      import { installTourHandlers } from '../lib/onboarding';
+      installTourHandlers();
     </script>
   </body>
 </html>

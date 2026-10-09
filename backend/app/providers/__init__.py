@@ -3,11 +3,11 @@ from .errors import ProviderError
 from .fakes import FakeLLM, FakeSTT, FakeTTS
 from .llm import GeminiLLM, OpenAICompatibleLLM, RoutedLLM, _gemini_text, _openai_text, stream_chat, stream_provider
 from .stt import SherpaSpeechToText
-from .tts import PiperTextToSpeech
+from .tts import ElevenLabsTextToSpeech
 
 llm_provider: LLMProvider = RoutedLLM()
 stt_provider: SpeechToTextProvider = SherpaSpeechToText()
-tts_provider: TextToSpeechProvider = PiperTextToSpeech()
+tts_provider: TextToSpeechProvider = ElevenLabsTextToSpeech()
 
 __all__ = [
     "CanonicalTool",
@@ -18,7 +18,7 @@ __all__ = [
     "LLMCapabilities",
     "LLMProvider",
     "OpenAICompatibleLLM",
-    "PiperTextToSpeech",
+    "ElevenLabsTextToSpeech",
     "ProviderError",
     "RoutedLLM",
     "SherpaSpeechToText",

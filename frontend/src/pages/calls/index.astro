@@ -14,13 +14,13 @@ const statusOptions = [
 ---
 
 <AppLayout title="Kognia — Llamadas">
-  <section class="section-view section-view--dashboard analytics-dashboard" aria-label="Llamadas">
+  <section class="section-view section-view--dashboard analytics-dashboard" data-tour-scope="calls" aria-label="Llamadas">
     <div class="dashboard-page calls-page">
       <ContentLoader id="callsLoading" copy="Cargando llamadas…" class="dashboard-state" />
       <div id="callsContent" hidden inert aria-hidden="true">
         <header class="dashboard-topline">
-          <div class="dashboard-heading"><h2>Llamadas</h2></div>
-          <div class="dashboard-filters" aria-label="Buscar y filtrar llamadas">
+          <div class="dashboard-heading"><h2 data-tour="calls-heading">Llamadas</h2></div>
+          <div class="dashboard-filters" data-tour="calls-filters" aria-label="Buscar y filtrar llamadas">
             <label class="calls-search">
               <span class="sr-only">Buscar</span>
               <i class="calls-search__icon" data-lucide="search" aria-hidden="true"></i>
@@ -29,11 +29,11 @@ const statusOptions = [
             <GooeyDropdown id="callsStatus" name="status" label="Estado" ariaLabel="Filtrar por estado" options={statusOptions} />
           </div>
         </header>
-        <EmptyState id="callsError" class="dashboard-state" tone="error" icon="triangle-alert" title="No pudimos cargar las llamadas." role="alert" hidden>
+        <EmptyState id="callsError" class="dashboard-state" tone="error" icon="triangle-alert" title="No pudimos cargar las llamadas." role="alert" tour="calls-error" hidden>
           <button id="callsRetry" type="button">Reintentar</button>
         </EmptyState>
         <div class="calls-board" id="callsBoard" hidden>
-        <div class="calls-table-card">
+        <div class="calls-table-card" data-tour="calls-table">
           <div class="calls-table-scroll" id="callsTable">
             <table class="calls-table">
               <colgroup>
@@ -57,7 +57,7 @@ const statusOptions = [
               <tbody id="callsTableBody"></tbody>
             </table>
           </div>
-          <EmptyState id="callsEmpty" class="calls-empty" icon="phone-off" title="Aún no hay llamadas." hidden />
+          <EmptyState id="callsEmpty" class="calls-empty" icon="phone-off" title="Aún no hay llamadas." tour="calls-empty" hidden />
         </div>
         <nav class="calls-pager" id="callsPager" aria-label="Paginación" hidden>
           <div class="calls-pager__controls" id="callsPagerControls"></div>

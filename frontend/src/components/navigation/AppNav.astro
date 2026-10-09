@@ -10,27 +10,22 @@ const { active = null, initiallyHidden = false } = Astro.props;
 ---
 
 <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden={initiallyHidden ? 'true' : undefined} inert={initiallyHidden ? true : undefined}>
-  <a class:list={['app-nav__item', active === 'instructions' && 'is-active']} href="/instructions" data-route="instructions" aria-current={active === 'instructions' ? 'page' : undefined}>
-    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="book-open"></i></span>
-    <span>Instrucciones</span>
-  </a>
-
-  <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="/analytics" data-route="analytics" aria-current={active === 'analytics' ? 'page' : undefined}>
+  <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="/analytics" data-route="analytics" data-tour="nav-dashboard" aria-current={active === 'analytics' ? 'page' : undefined}>
     <span class="app-nav__icon" aria-hidden="true"><i data-lucide="layout-dashboard"></i></span>
     <span>Dashboard</span>
   </a>
 
-  <a class:list={['app-nav__item', active === 'calls' && 'is-active']} href="/calls" data-route="calls" aria-current={active === 'calls' ? 'page' : undefined}>
+  <a class:list={['app-nav__item', active === 'calls' && 'is-active']} href="/calls" data-route="calls" data-tour="nav-calls" aria-current={active === 'calls' ? 'page' : undefined}>
     <span class="app-nav__icon" aria-hidden="true"><i data-lucide="phone"></i></span>
     <span>Llamadas</span>
   </a>
 
-  <a class:list={['app-nav__item', active === 'dev' && 'is-active']} href="/dev" data-route="dev" aria-current={active === 'dev' ? 'page' : undefined}>
+  <a class:list={['app-nav__item', active === 'dev' && 'is-active']} href="/dev" data-route="dev" data-tour="nav-dev" aria-current={active === 'dev' ? 'page' : undefined}>
     <span class="app-nav__icon" aria-hidden="true"><i data-lucide="bug"></i></span>
     <span>Modo dev</span>
   </a>
 
-  <a class:list={['app-nav__item', active === 'specifications' && 'is-active']} href="/specifications" data-route="specifications" aria-current={active === 'specifications' ? 'page' : undefined}>
+  <a class:list={['app-nav__item', active === 'specifications' && 'is-active']} href="/specifications" data-route="specifications" data-tour="nav-specifications" aria-current={active === 'specifications' ? 'page' : undefined}>
     <span class="app-nav__icon" aria-hidden="true"><i data-lucide="cpu"></i></span>
     <span>Especificaciones técnicas</span>
   </a>

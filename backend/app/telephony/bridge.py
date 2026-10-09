@@ -10,6 +10,8 @@ from typing import Any
 
 from ..agent.tools.contracts import ToolContext
 from ..features.agent.service import stream_agent
+from ..features.synthesis.chunk import take_semantic_chunk
+from ..features.synthesis.service import open_speech_turn
 from ..platform.tracing import TraceRecorder, save_trace
 from .audio import CANONICAL_RATE, pcm16le_to_wire, resample_pcm16le, timeline_ms
 from .frames import CHANNEL_AGENT, encode_audio_frame
@@ -17,12 +19,12 @@ from .live_audio import live_audio_hub
 from .marks import MarkTracker
 from .sessions import CallSession
 from .timeline import timeline
-from .tts import PiperTTSProvider
+from .tts import ElevenLabsTTSProvider
 
 logger = logging.getLogger("hackathon.telnyx.bridge")
 
 
-async def _with_holding(generator, session: CallSession, voice):
+async def _with_holding(generator, session: CallSession, on_hold):
     from ..agent.phrases import HOLDING, pick
 
     held = False
@@ -53,7 +55,7 @@ async def _with_holding(generator, session: CallSession, voice):
                     return
                 if not held:
                     held = True
-                    await _speak(session, voice, pick(HOLDING))
+                    await on_hold(pick(HOLDING))
                 continue
             if event is end:
                 return
@@ -70,10 +72,10 @@ async def run_agent_turn(
     transcript: str,
     *,
     agent: Any = stream_agent,
-    tts: PiperTTSProvider | None = None,
+    tts: ElevenLabsTTSProvider | None = None,
     system_initiated: bool = False,
 ) -> None:
-    voice = tts or PiperTTSProvider()
+    voice = tts or ElevenLabsTTSProvider()
     if session.marks is None:
         session.marks = MarkTracker()
     customer_turn_offset_ms = next(
@@ -117,10 +119,50 @@ async def run_agent_turn(
     trace_status = 'ok'
     reservation_confirmed = False
     session.awaiting_agent_reply = True
-    waiting = _with_holding(generator, session, voice)
+    speech_buffer = ""
+    turn = None
+    pump: asyncio.Task[None] | None = None
+
+    async def ensure_speech() -> None:
+        nonlocal turn, pump
+        if turn is not None:
+            return
+        turn = open_speech_turn(voice)
+        await turn.open()
+        pump = asyncio.create_task(_pump_agent_audio(session, turn))
+
+    async def say(text: str) -> None:
+        cleaned = text.strip()
+        if not cleaned or session.closed:
+            return
+        await ensure_speech()
+        timeline.record(session, "transcript.final", {"speaker": "agent", "text": cleaned})
+        await turn.say(cleaned)
+
+    async def close_speech(*, cancel: bool) -> None:
+        nonlocal turn, pump
+        active = turn
+        task = pump
+        turn = None
+        pump = None
+        if active is None:
+            return
+        try:
+            if cancel:
+                await active.cancel()
+            else:
+                await active.finish()
+        finally:
+            if task is not None:
+                if cancel:
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    waiting = _with_holding(generator, session, say)
     try:
         async for kind, payload in waiting:
             if session.closed:
+                await close_speech(cancel=True)
                 break
             if kind == 'done':
                 last_done = payload
@@ -128,6 +170,11 @@ async def run_agent_turn(
             if (kind == 'tool.completed' and payload.get('tool') == 'create_booking'
                     and payload.get('ok') is True):
                 reservation_confirmed = True
+            if kind == "token":
+                speech_buffer += str(payload.get("text") or "")
+                sentence, speech_buffer = take_semantic_chunk(speech_buffer)
+                if sentence:
+                    await say(sentence)
             await _publish_agent_event(
                 session,
                 kind,
@@ -135,12 +182,18 @@ async def run_agent_turn(
                 answer,
                 customer_turn_offset_ms=customer_turn_offset_ms,
             )
+        else:
+            if speech_buffer.strip():
+                await say(speech_buffer.strip())
+            await close_speech(cancel=False)
     except asyncio.CancelledError:
         trace_status = 'cancelled'
+        await close_speech(cancel=True)
         await _cancel_playback(session)
         raise
     except Exception:
         trace_status = 'error'
+        await close_speech(cancel=True)
         raise
     finally:
         await waiting.aclose()
@@ -165,7 +218,6 @@ async def run_agent_turn(
                     Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT, content=spoken, channel='voice'),
                 ])
                 await db.commit()
-        await _speak(session, voice, spoken)
         session.awaiting_agent_reply = False
         marks = session.marks
         if reservation_confirmed and session.websocket and marks is not None:
@@ -216,43 +268,58 @@ async def _publish_agent_event(
         timeline.record(session, "agent.error", {"message": payload.get("message") or "error"})
 
 
-async def _speak(session: CallSession, voice: PiperTTSProvider, text: str) -> None:
-    source_rate = await asyncio.to_thread(voice.sample_rate)
-    loop = asyncio.get_running_loop()
-    chunks: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=8)
-
-    def produce() -> None:
-        try:
-            for chunk in voice.stream_audio(text):
-                asyncio.run_coroutine_threadsafe(chunks.put(chunk), loop).result()
-        except Exception:
-            logger.exception("Piper stream failed")
-        finally:
-            asyncio.run_coroutine_threadsafe(chunks.put(None), loop).result()
-
-    producer = asyncio.create_task(asyncio.to_thread(produce))
+async def _pump_agent_audio(
+    session: CallSession,
+    turn: Any,
+    transcript: str | None = None,
+) -> None:
     announced = False
     try:
-        while True:
-            chunk = await chunks.get()
-            if chunk is None or session.closed:
+        async for chunk in turn.audio():
+            if session.closed:
                 break
             if not announced:
                 announced = True
                 at = _agent_heard_ms(session)
-                timeline.record(session, "transcript.final", {"speaker": "agent", "text": text}, at_offset_ms=at)
+                if transcript:
+                    timeline.record(
+                        session,
+                        "transcript.final",
+                        {"speaker": "agent", "text": transcript},
+                        at_offset_ms=at,
+                    )
                 session.agent_state = "speaking"
                 timeline.record(session, "agent.state", {"state": "speaking"}, at_offset_ms=at)
-            canonical = resample_pcm16le(chunk, source_rate, CANONICAL_RATE)
+            canonical = resample_pcm16le(chunk, int(turn.sample_rate), CANONICAL_RATE)
             await emit_agent_audio(session, canonical)
-        if text.strip() and not announced and not session.closed:
-            timeline.record(session, "transcript.final", {"speaker": "agent", "text": text})
-    except asyncio.CancelledError:
-        await _cancel_playback(session)
-        raise
+        if transcript and transcript.strip() and not announced and not session.closed:
+            timeline.record(session, "transcript.final", {"speaker": "agent", "text": transcript})
     finally:
         session.agent_segment_open = False
-        producer.cancel()
+
+
+async def _speak(session: CallSession, voice: Any, text: str) -> None:
+    if not text.strip() or session.closed:
+        return
+    turn = open_speech_turn(voice)
+    await turn.open()
+    pump = asyncio.create_task(_pump_agent_audio(session, turn, transcript=text))
+    try:
+        await turn.say(text)
+        await turn.finish()
+        await pump
+    except asyncio.CancelledError:
+        await turn.cancel()
+        pump.cancel()
+        await asyncio.gather(pump, return_exceptions=True)
+        await _cancel_playback(session)
+        raise
+    except Exception:
+        logger.exception("Voice synthesis failed")
+        await turn.cancel()
+        pump.cancel()
+        await asyncio.gather(pump, return_exceptions=True)
+        raise
 
 
 def _agent_heard_ms(session: CallSession) -> int:

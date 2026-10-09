@@ -19,12 +19,13 @@ const {
 <header
   class:list={['app-header', initiallyHidden && 'app-header--pending']}
   id="appHeader"
+  data-tour="app-header"
   aria-label="Demo"
   hidden={initiallyHidden ? true : undefined}
   transition:persist
   transition:name="app-header"
 >
-  <div class="app-header__brand">
+  <div class="app-header__brand" data-tour="header-brand">
     <InteractiveMascotFace
       class="app-header__face"
       label="Cambiar expresión de Demo"
@@ -32,7 +33,7 @@ const {
     />
     <span>Demo</span>
   </div>
-  <button class="mobile-nav-toggle" type="button" hidden aria-controls="appNav" aria-expanded="false" aria-label="Expandir navegación">
+  <button class="mobile-nav-toggle" type="button" data-tour="nav-toggle" hidden aria-controls="appNav" aria-expanded="false" aria-label="Expandir navegación">
     <i data-lucide="chevron-down" aria-hidden="true"></i>
   </button>
   <AppNav active={active} initiallyHidden={initiallyHidden} />

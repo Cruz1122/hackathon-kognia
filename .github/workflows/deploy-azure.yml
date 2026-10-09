@@ -321,6 +321,8 @@ jobs:
           TELNYX_ENABLED: ${{ vars.TELNYX_ENABLED }}
           TELNYX_WEBHOOK_HOST: ${{ vars.TELNYX_WEBHOOK_HOST }}
           TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ vars.ELEVENLABS_VOICE_ID }}
           TELNYX_PUBLIC_KEY: ${{ vars.TELNYX_PUBLIC_KEY }}
           TELNYX_CONNECTION_ID: ${{ vars.TELNYX_CONNECTION_ID }}
           TELNYX_PHONE_NUMBER: ${{ vars.TELNYX_PHONE_NUMBER }}
@@ -416,10 +418,14 @@ jobs:
           add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
           add_secret TYPESAFE_API_KEY typesafe-api-key "${TYPESAFE_API_KEY:-}"
           add_secret TELNYX_API_KEY telnyx-api-key "${TELNYX_API_KEY:-}"
+          add_secret ELEVENLABS_API_KEY elevenlabs-api-key "${ELEVENLABS_API_KEY:-}"
           add_secret WHATSAPP_ACCESS_TOKEN whatsapp-access-token "${WHATSAPP_ACCESS_TOKEN:-}"
           add_secret WHATSAPP_APP_SECRET whatsapp-app-secret "${WHATSAPP_APP_SECRET:-}"
           add_secret WHATSAPP_VERIFY_TOKEN whatsapp-verify-token "${WHATSAPP_VERIFY_TOKEN:-}"
 
+          if [[ -n "${ELEVENLABS_VOICE_ID:-}" ]]; then
+            env_args+=("ELEVENLABS_VOICE_ID=$ELEVENLABS_VOICE_ID")
+          fi
           if [[ -n "${TELNYX_PUBLIC_KEY:-}" ]]; then
             env_args+=("TELNYX_PUBLIC_KEY=$TELNYX_PUBLIC_KEY")
           fi

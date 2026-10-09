@@ -122,7 +122,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   let bargeHits = 0;
   let bargeArmedAt = 0;
   let bargePending = false;
-  let listeningAnnounced = false;
   let noiseFloor = 0.08;
   let reconnectTimer = 0;
   let connectionHideTimer = 0;
@@ -216,12 +215,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     return true;
   }
 
-  function announceListening(): void {
-    if (listeningAnnounced) return;
-    listeningAnnounced = true;
-    showToast('Te escucho…', 'info');
-  }
-
   function holdPlayback(): void {
     bargeHits = 0;
     bargePending = true;
@@ -230,7 +223,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     pcm.pause();
     unhookTtsWave();
     hookMicWave();
-    announceListening();
   }
 
   function handleLocalBarge(): void {
@@ -472,7 +464,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       if (!bargePending) holdPlayback();
     } else if (type === 'tts.resume') {
       bargePending = false;
-      listeningAnnounced = false;
       pcm.resume();
       hookTtsWave();
     } else if (type === 'tts.cancel' || type === 'turn.cancelled') {
@@ -535,7 +526,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         if (!pcmReady) {
           pcm.start(ttsRate);
           pcmReady = true;
-          listeningAnnounced = false;
           bargeArmedAt = performance.now() + 250;
           bargeHits = 0;
         }
@@ -623,7 +613,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     processing = false;
     pcmReady = false;
     bargePending = false;
-    listeningAnnounced = false;
     closing = false;
     reconnectAttempts = 0;
     setConnectionStatus('connecting', 'Conectando llamada…');
@@ -650,7 +639,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     processing = false;
     pcmReady = false;
     bargePending = false;
-    listeningAnnounced = false;
     waveApi?.setPlaying?.(true);
     syncControls();
     if (connected && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();

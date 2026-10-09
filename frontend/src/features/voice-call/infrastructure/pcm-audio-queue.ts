@@ -1,5 +1,7 @@
 import { voiceLevelFromSamples } from './audio-capture-adapter';
 
+const AGENT_GAIN = 2.5;
+
 export class PcmAudioQueue {
   private context?: AudioContext;
   private analyser?: AnalyserNode;
@@ -12,6 +14,7 @@ export class PcmAudioQueue {
   private tail = new Float32Array(0);
   private sources = new Set<AudioBufferSourceNode>();
   private paused = false;
+  private output?: GainNode;
 
   frequencyAnalyser(): { analyser: AnalyserNode; sampleRate: number } | undefined {
     if (!this.context || !this.analyser) return undefined;
@@ -40,13 +43,20 @@ export class PcmAudioQueue {
     this.prime();
     const context = this.context;
     if (!context) return;
+    if (!this.output || this.output.context !== context) {
+      this.output?.disconnect();
+      this.output = context.createGain();
+      this.output.gain.value = AGENT_GAIN;
+      this.output.connect(context.destination);
+    }
     if (!this.analyser || this.analyser.context !== context) {
+      this.analyser?.disconnect();
       this.analyser = context.createAnalyser();
       this.analyser.fftSize = 2048;
       this.analyser.smoothingTimeConstant = 0.18;
       this.analyser.minDecibels = -90;
       this.analyser.maxDecibels = -12;
-      this.analyser.connect(context.destination);
+      this.analyser.connect(this.output);
     }
     if (!this.paused) void context.resume();
   }
@@ -131,6 +141,8 @@ export class PcmAudioQueue {
     this.cancel();
     this.analyser?.disconnect();
     this.analyser = undefined;
+    this.output?.disconnect();
+    this.output = undefined;
     void this.context?.close();
     this.context = undefined;
   }

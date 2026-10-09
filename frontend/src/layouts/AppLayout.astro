@@ -2,6 +2,7 @@
 import { ClientRouter } from 'astro:transitions';
 import { appRouteFromPath } from '../features/navigation/active-route';
 import AppHeader from '../components/navigation/AppHeader.astro';
+import TourDock from '../components/onboarding/TourDock.astro';
 import AgentSignalsPanel from '../components/agent-signals/AgentSignalsPanel.astro';
 import '../styles/app-shell.css';
 import '../styles/dashboard.css';
@@ -47,7 +48,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
       <main class="app-main" id="appMain" transition:name="app-main" transition:animate="none">
         <slot />
       </main>
-      {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" aria-label="Cliente">
+      {showDetailPanel && <aside class="detail-panel app-detail-panel" id="detailPanel" data-tour="client-panel" aria-label="Cliente">
         <button class="detail-panel__close" type="button" data-detail-close="true" hidden aria-label="Volver al cliente">
           <i data-lucide="x" aria-hidden="true"></i>
         </button>
@@ -62,8 +63,10 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
       </aside>}
     </div>
     <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+    <TourDock />
     <script>
       import { installAuthFetch, installSessionGuard } from '../features/auth/session-guard';
+      import { installTourHandlers } from '../lib/onboarding';
       import { appRouteFromPath } from '../features/navigation/active-route';
       import { fillCallNav, stopCallNav } from '../features/voice-call/application/fill-call-nav';
 
@@ -72,6 +75,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
       const apiUrl = document.body.dataset.apiUrl ?? '';
 
       installAuthFetch(apiUrl);
+      installTourHandlers();
 
       function setMobileNavExpanded(expanded: boolean): void {
         if (!header || !mobileNavToggle) return;

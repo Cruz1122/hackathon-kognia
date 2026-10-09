@@ -26,7 +26,7 @@ from .signatures import SignatureError, verify_telnyx_signature
 from .stt import SherpaSTTProvider
 from .telnyx_api import TelnyxApi
 from .timeline import timeline
-from .tts import PiperTTSProvider
+from .tts import ElevenLabsTTSProvider
 
 logger = logging.getLogger("hackathon.telnyx")
 BARGE_RMS = 0.02
@@ -661,7 +661,7 @@ class TelephonyRuntime:
                 except Exception:
                     logger.exception('Could not build the callback resume greeting')
             session.history.append({'role': 'assistant', 'content': text})
-            await _speak(session, PiperTTSProvider(), text)
+            await _speak(session, ElevenLabsTTSProvider(), text)
             session.awaiting_agent_reply = False
             if proposal_id and session.websocket and session.marks is not None and not session.closed:
                 mark = session.marks.generated()
@@ -685,7 +685,7 @@ class TelephonyRuntime:
                     await db.commit()
             except Exception:
                 logger.exception("Greeting persist failed")
-        await _speak(session, PiperTTSProvider(), text)
+        await _speak(session, ElevenLabsTTSProvider(), text)
         session.idle_since = time.monotonic()
 
     async def _watch_silence(self, session: CallSession) -> None:
@@ -713,7 +713,7 @@ class TelephonyRuntime:
                             db.add(Message(conversation_id=session.conversation_id,
                                 role=MessageRole.ASSISTANT, content=message, channel='voice'))
                             await db.commit()
-                    await _speak(session, PiperTTSProvider(), message)
+                    await _speak(session, ElevenLabsTTSProvider(), message)
                 finally:
                     session.idle_since = time.monotonic()
 
@@ -843,8 +843,8 @@ def _remember_tenant(organization_id: uuid.UUID, user_id: uuid.UUID) -> None:
 
 
 def warm_voice_pipeline() -> None:
-    """Run one Sherpa pass and one Piper phrase so the first call does not pay that cost."""
-    from ..features.synthesis import service as piper
+    """Run one Sherpa pass so the first call does not pay that cost."""
+    from ..features.synthesis import service as voice
     from ..features.transcription import service as sherpa
 
     started = time.perf_counter()
@@ -852,9 +852,7 @@ def warm_voice_pipeline() -> None:
     stream = sherpa.create_stream()
     sherpa.feed_pcm(stream, b"\x00\x00" * 16000, 16000)
     sherpa.finish_stream(stream, 16000)
-    piper.preload_tts()
-    for _chunk in piper.stream_tts_audio("Hola."):
-        pass
+    voice.preload_tts()
     from ..platform.rag.runtime import embeddings as rag_embeddings
 
     rag_embeddings.preload()
