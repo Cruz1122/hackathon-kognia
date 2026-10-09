@@ -226,7 +226,6 @@ export function bootCallReplay(
   let finalSignalsFallback: Record<string, unknown> | null = null;
   const devMode = options.dev === true;
   const devDetails = new Map<string, TechnicalDetail>();
-  let devProgressMarkers: Array<{ playbackMs: number; icon: WaveMark['icon']; tone?: WaveMark['tone'] }> = [];
   let devDetailSequence = 0;
 
   const registerDevDetail = (detail: Omit<TechnicalDetail, 'kind'>): string => {
@@ -235,8 +234,8 @@ export function bootCallReplay(
     return id;
   };
 
-  const devReaction = (id: string, icon: string, label: string, tone: 'error' | undefined = undefined): string => (
-    `<button class="dev-bubble-reaction${tone ? ` is-${tone}` : ''}" type="button" data-dev-reaction="${escapeHtml(id)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"><i data-lucide="${escapeHtml(icon)}" aria-hidden="true"></i></button>`
+  const devReaction = (id: string, icon: string, label: string, tone: 'error' | undefined = undefined, text = ''): string => (
+    `<button class="dev-bubble-reaction${tone ? ` is-${tone}` : ''}" type="button" data-dev-reaction="${escapeHtml(id)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"><i data-lucide="${escapeHtml(icon)}" aria-hidden="true"></i>${text ? `<span>${escapeHtml(text)}</span>` : ''}</button>`
   );
 
   const onDevReaction = (event: Event): void => {
@@ -299,10 +298,6 @@ export function bootCallReplay(
         const ratio = (Number(item.dataset.at ?? 0) * 1000 - offsetMs) / (duration * 1000);
         if (ratio < 0 || ratio > 1) continue;
         marks.push({ ratio, icon });
-      }
-      for (const marker of devProgressMarkers) {
-        const ratio = marker.playbackMs / (duration * 1000);
-        if (ratio >= 0 && ratio <= 1) marks.push({ ratio, icon: marker.icon, tone: marker.tone });
       }
     }
     paintCallWave(context, canvas, customerPeaks, agentPeaks, progress, marks);
@@ -465,7 +460,6 @@ export function bootCallReplay(
     const turns = payload.turns ?? [];
     signalEvents = events.filter((event) => event.name === 'agent.signals' || event.type === 'agent.signals');
     visibleSignalCount = -1;
-    devProgressMarkers = [];
     let fallbackTurnIndex = 0;
     let whatsappSeparatorAdded = false;
     const clock = (playbackMs: number): string => formatTime(Math.max(0, playbackMs) / 1000);
@@ -553,13 +547,6 @@ export function bootCallReplay(
       if (event.kind === 'error' || event.name === 'agent.error' || event.name === 'provider.error') return 'error';
       return null;
     };
-    const failedModelAttempts = new Set(
-      events
-        .filter((event) => technicalKind(event) === 'error')
-        .map((event) => ({ event, attempt: record(event.payload?.attributes).attempt }))
-        .filter(({ attempt }) => typeof attempt === 'number' || typeof attempt === 'string')
-        .map(({ event, attempt }) => `${event.turn_id ?? ''}:${String(attempt)}`),
-    );
     const agentTranscriptEvents = events.filter((event) => {
       const isTranscript = event.kind === 'transcript' || (event.type ?? '').startsWith('transcript.');
       return isTranscript && String(event.payload?.speaker ?? '') === 'agent';
@@ -567,20 +554,16 @@ export function bootCallReplay(
     const transcriptTargets = agentTranscriptEvents.length
       ? agentTranscriptEvents
       : events.filter((event) => event.kind === 'transcript' || (event.type ?? '').startsWith('transcript.'));
+    const transcriptByTurn = new Map<string, TimelineEvent>();
+    transcriptTargets.forEach((event) => {
+      if (event.turn_id) transcriptByTurn.set(String(event.turn_id), event);
+    });
     const technicalByTranscript = new Map<TimelineEvent, TimelineEvent[]>();
     events.forEach((event) => {
       const kind = technicalKind(event);
       if (!kind) return;
-      const markerIcon = kind === 'rag' ? 'book-search' : kind === 'error' ? 'triangle-alert' : 'bot';
-      const attempt = record(event.payload?.attributes).attempt;
-      if (!(kind === 'llm' && failedModelAttempts.has(`${event.turn_id ?? ''}:${String(attempt)}`))) {
-        devProgressMarkers.push({
-          playbackMs: Math.max(0, Number(event.playback_ms ?? Math.max(0, event.offset_ms - originMs))),
-          icon: markerIcon,
-          tone: kind === 'error' ? 'error' : 'accent',
-        });
-      }
-      const target = transcriptTargets.find((candidate) => Number(candidate.playback_ms ?? candidate.offset_ms) >= Number(event.playback_ms ?? event.offset_ms))
+      const explicitTarget = event.turn_id ? transcriptByTurn.get(String(event.turn_id)) : undefined;
+      const target = explicitTarget ?? transcriptTargets.find((candidate) => Number(candidate.playback_ms ?? candidate.offset_ms) >= Number(event.playback_ms ?? event.offset_ms))
         ?? transcriptTargets.at(-1);
       if (!target) return;
       const related = technicalByTranscript.get(target) ?? [];
@@ -634,7 +617,9 @@ export function bootCallReplay(
             })
           : '';
         const relatedEvents = [
-          ...(turn ? events.filter((candidate) => candidate.turn_id === turn.id && technicalKind(candidate)) : []),
+          ...(turn && transcriptByTurn.get(String(turn.id)) === event
+            ? events.filter((candidate) => candidate.turn_id === turn.id && technicalKind(candidate))
+            : []),
           ...transcriptTechnicalEvents,
         ];
         const uniqueRelated = Array.from(new Map(relatedEvents.map((related, index) => [related.id ?? `${related.name ?? 'event'}-${index}-${related.offset_ms}`, related])).values());
@@ -666,6 +651,7 @@ export function bootCallReplay(
           const failedModel = Boolean(modelEvent && errorEvent);
           if (modelEvent) hasLlmReaction = true;
           const detailKind = modelEvent ? 'llm' : kind;
+          const toolName = String(related.name ?? record(related.payload?.attributes).tool ?? related.payload?.tool ?? '').trim();
           const detailSections = [
             ...(modelEvent?.usage ? [{ title: 'Uso', value: modelEvent.usage }] : []),
             ...(modelEvent?.status ? [{ title: 'Estado', value: modelEvent.status }] : []),
@@ -676,15 +662,17 @@ export function bootCallReplay(
             { title: 'Payload', value: modelEvent?.payload ?? related.payload ?? {} },
           ];
           const relatedId = registerDevDetail({
-            title: failedModel ? 'Modelo · error' : detailKind === 'tool' ? `Tool ${related.name ?? String(related.payload?.tool ?? '')}`.trim() : detailKind === 'rag' ? 'RAG' : detailKind === 'error' ? 'Error del provider' : 'Ejecución del modelo',
+            title: failedModel ? 'Modelo · error' : detailKind === 'tool' ? `Tool ${toolName || 'usada'}` : detailKind === 'rag' ? 'RAG' : detailKind === 'error' ? 'Error del provider' : 'Ejecución del modelo',
             sections: detailSections,
           });
           const isError = failedModel || detailKind === 'error';
+          const pillText = detailKind === 'tool' ? `Tool${toolName ? ` · ${toolName}` : ''}` : detailKind === 'rag' ? 'RAG' : '';
           turnReactions.push(devReaction(
             relatedId,
             detailKind === 'tool' ? 'wrench' : detailKind === 'rag' ? 'library' : isError ? 'triangle-alert' : 'cpu',
-            failedModel ? 'Abrir llamada al modelo y error' : detailKind === 'tool' ? 'Abrir tool' : detailKind === 'rag' ? 'Abrir RAG' : isError ? 'Abrir error' : 'Abrir modelo',
+            failedModel ? 'Abrir llamada al modelo y error' : detailKind === 'tool' ? `Abrir tool${toolName ? ` ${toolName}` : ''}` : detailKind === 'rag' ? 'Abrir RAG' : isError ? 'Abrir error' : 'Abrir modelo',
             isError ? 'error' : undefined,
+            pillText,
           ));
         });
         if (!customer && responseDetailId && !hasLlmReaction) {

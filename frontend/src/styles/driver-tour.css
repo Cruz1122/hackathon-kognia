@@ -30,6 +30,20 @@ body.driver-active .driver-overlay {
   font-weight: 800;
   font-size: 17px;
   line-height: 1.2;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.driver-popover.hackakognia-tour.is-user-positioned {
+  position: fixed !important;
+  margin: 0 !important;
+  transform: none !important;
+}
+
+.driver-popover.hackakognia-tour.is-dragging,
+.driver-popover.hackakognia-tour.is-dragging .driver-popover-title {
+  cursor: grabbing;
 }
 
 .driver-popover.hackakognia-tour .driver-popover-description {

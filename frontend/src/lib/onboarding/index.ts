@@ -22,6 +22,15 @@ let queuedFrame = 0;
 let observedRoot: Node | null = null;
 let retryTimer = 0;
 let retryAttempts = 0;
+let tourPopoverPosition: { left: number; top: number } | null = null;
+let tourPopoverDrag: {
+  popover: HTMLElement;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  left: number;
+  top: number;
+} | null = null;
 
 const IDLE_EMOTION = 'surprised';
 const ACTIVE_EMOTION = 'default-happy';
@@ -47,6 +56,75 @@ function syncTourHeaderOffset(): void {
 function clearTourHeaderOffset(): void {
   document.documentElement.style.removeProperty('--tour-header-offset');
   window.removeEventListener('resize', syncTourHeaderOffset);
+}
+
+function resetTourPopoverPosition(): void {
+  tourPopoverPosition = null;
+  tourPopoverDrag = null;
+  const popover = document.querySelector<HTMLElement>('.driver-popover.hackakognia-tour');
+  if (!popover) return;
+  popover.classList.remove('is-user-positioned', 'is-dragging');
+  ['position', 'left', 'top', 'right', 'bottom', 'transform', 'margin'].forEach((property) => {
+    popover.style.removeProperty(property);
+  });
+}
+
+function placeTourPopover(popover: HTMLElement, left: number, top: number): void {
+  const rect = popover.getBoundingClientRect();
+  const minLeft = 12;
+  const maxLeft = Math.max(minLeft, window.innerWidth - rect.width - 12);
+  const header = document.getElementById('appHeader');
+  const minTop = Math.min(
+    header instanceof HTMLElement && !header.hidden ? header.getBoundingClientRect().bottom + 12 : 12,
+    Math.max(12, window.innerHeight - rect.height - 12),
+  );
+  const maxTop = Math.max(minTop, window.innerHeight - rect.height - 12);
+  const boundedLeft = Math.max(minLeft, Math.min(maxLeft, left));
+  const boundedTop = Math.max(minTop, Math.min(maxTop, top));
+  popover.classList.add('is-user-positioned');
+  popover.style.setProperty('position', 'fixed', 'important');
+  popover.style.setProperty('left', `${boundedLeft}px`, 'important');
+  popover.style.setProperty('top', `${boundedTop}px`, 'important');
+  popover.style.setProperty('right', 'auto', 'important');
+  popover.style.setProperty('bottom', 'auto', 'important');
+  popover.style.setProperty('transform', 'none', 'important');
+  popover.style.setProperty('margin', '0', 'important');
+  tourPopoverPosition = { left: boundedLeft, top: boundedTop };
+}
+
+function onTourPopoverPointerDown(event: PointerEvent): void {
+  if (!currentTour || event.button !== 0 || !(event.target instanceof Element)) return;
+  const title = event.target.closest('.driver-popover.hackakognia-tour .driver-popover-title');
+  const popover = title?.closest<HTMLElement>('.driver-popover.hackakognia-tour');
+  if (!popover) return;
+  const rect = popover.getBoundingClientRect();
+  tourPopoverDrag = {
+    popover,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    left: rect.left,
+    top: rect.top,
+  };
+  event.preventDefault();
+}
+
+function onTourPopoverPointerMove(event: PointerEvent): void {
+  const drag = tourPopoverDrag;
+  if (!drag || drag.pointerId !== event.pointerId || !drag.popover.isConnected) return;
+  placeTourPopover(
+    drag.popover,
+    drag.left + event.clientX - drag.startX,
+    drag.top + event.clientY - drag.startY,
+  );
+  drag.popover.classList.add('is-dragging');
+  event.preventDefault();
+}
+
+function onTourPopoverPointerEnd(event: PointerEvent): void {
+  if (!tourPopoverDrag || tourPopoverDrag.pointerId !== event.pointerId) return;
+  tourPopoverDrag.popover.classList.remove('is-dragging');
+  tourPopoverDrag = null;
 }
 
 const TOUR_VERSION = '3';
@@ -97,6 +175,7 @@ export function stopTour(): void {
   currentTour = null;
   activeTourId = null;
   suppressDismiss = false;
+  resetTourPopoverPosition();
   clearTourHeaderOffset();
   setDockEmotion(IDLE_EMOTION);
 }
@@ -198,17 +277,19 @@ export function startTour(id: TourId, source: 'auto' | 'manual' = 'manual'): voi
     stageRadius: 32,
     skipMissingElement: true,
     waitForElement: 400,
-    onHighlightStarted: () => {
-      syncTourHeaderOffset();
-    },
+    onHighlightStarted: () => syncTourHeaderOffset(),
     onHighlighted: () => {
       syncTourHeaderOffset();
+    },
+    onPopoverRender: (popover) => {
+      if (tourPopoverPosition) placeTourPopover(popover.wrapper, tourPopoverPosition.left, tourPopoverPosition.top);
     },
     onDoneClick: (_element, _step, { driver: active }) => {
       markCompleted(id);
       active.destroy();
     },
     onDestroyed: (_element, _step, { driver: destroyed }) => {
+      resetTourPopoverPosition();
       if (currentTour === destroyed) {
         currentTour = null;
         activeTourId = null;
@@ -287,6 +368,11 @@ export function installTourHandlers(): void {
   const runtime = window as Window & { __kogniaTour?: boolean };
   if (!runtime.__kogniaTour) {
     runtime.__kogniaTour = true;
+
+    document.addEventListener('pointerdown', onTourPopoverPointerDown);
+    document.addEventListener('pointermove', onTourPopoverPointerMove);
+    document.addEventListener('pointerup', onTourPopoverPointerEnd);
+    document.addEventListener('pointercancel', onTourPopoverPointerEnd);
 
     document.addEventListener('click', (event) => {
       if (!(event.target instanceof Element)) return;
