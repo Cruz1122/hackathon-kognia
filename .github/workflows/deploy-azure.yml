@@ -1,0 +1,841 @@
+name: Deploy Azure
+
+# Datos se crean solo si faltan. En cada push/manual se despliega `latest` de
+# backend/worker/frontend; sus imágenes solo se reconstruyen cuando hay cambios.
+# El job final `bootstrap-backend` aplica migraciones y crea el admin demo dentro
+# del backend ya desplegado (idempotente). La action manual sigue disponible para
+# recuperar la base a mano.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-deploy-all
+  cancel-in-progress: false
+
+jobs:
+  detect-changes:
+    name: Detect backend and frontend changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          # For push and manual runs on the same long-lived branch, the action
+          # compares against that branch's previous commit.
+          base: ${{ github.ref }}
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+
+  deploy-postgres:
+    name: Create PostgreSQL if missing
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+      APP: ${{ vars.AZURE_DATABASE_APP_NAME }}
+      POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+      POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create PostgreSQL only when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          POSTGRES_DB="${POSTGRES_DB:-kognia}"
+          POSTGRES_USER="${POSTGRES_USER:-kognia}"
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_APP_ENVIRONMENT"
+          test -n "$APP"
+          test -n "$POSTGRES_PASSWORD"
+
+          if az containerapp show --name "$APP" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            printf '%s\n' "PostgreSQL ($APP) ya existe; no se modifica."
+            exit 0
+          fi
+
+          az containerapp create \
+            --name "$APP" --resource-group "$RESOURCE_GROUP" \
+            --environment "$CONTAINER_APP_ENVIRONMENT" \
+            --image postgres:16.4-alpine \
+            --min-replicas 1 --max-replicas 1 \
+            --ingress internal --target-port 5432 --transport tcp \
+            --secrets postgres-password="$POSTGRES_PASSWORD" \
+            --env-vars \
+              POSTGRES_DB="$POSTGRES_DB" \
+              POSTGRES_USER="$POSTGRES_USER" \
+              POSTGRES_PASSWORD=secretref:postgres-password
+
+  deploy-redis:
+    name: Create Redis if missing
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+      APP: ${{ vars.AZURE_REDIS_APP_NAME }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create Redis only when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_APP_ENVIRONMENT"
+          test -n "$APP"
+
+          if az containerapp show --name "$APP" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            printf '%s\n' "Redis ($APP) ya existe; no se modifica."
+            exit 0
+          fi
+
+          az containerapp create \
+            --name "$APP" --resource-group "$RESOURCE_GROUP" \
+            --environment "$CONTAINER_APP_ENVIRONMENT" \
+            --image redis:7.4-alpine \
+            --min-replicas 1 --max-replicas 1 \
+            --ingress internal --target-port 6379 --transport tcp
+
+  deploy-chroma:
+    name: Create Chroma if missing
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+      APP: ${{ vars.AZURE_CHROMA_APP_NAME }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create Chroma only when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_APP_ENVIRONMENT"
+          test -n "$APP"
+
+          if az containerapp show --name "$APP" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            printf '%s\n' "Chroma ($APP) ya existe; no se modifica."
+            exit 0
+          fi
+
+          az containerapp create \
+            --name "$APP" --resource-group "$RESOURCE_GROUP" \
+            --environment "$CONTAINER_APP_ENVIRONMENT" \
+            --image chromadb/chroma:1.1.1 \
+            --min-replicas 1 --max-replicas 1 \
+            --ingress internal --target-port 8000 --transport http \
+            --allow-insecure true --env-vars IS_PERSISTENT=TRUE
+  build-backend:
+    name: Build backend image
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:${{ github.sha }}
+
+  # La URL del backend es estable y se resuelve desde Azure durante el build.
+
+  build-frontend:
+    name: Build frontend image
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Resolve backend URL
+        id: backend-url
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$PUBLIC_API_URL" ]]; then
+            echo "url=$PUBLIC_API_URL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            fqdn="$(az containerapp show \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn \
+              --output tsv)"
+          else
+            # Permite construir el frontend incluso en el primer despliegue,
+            # antes de que exista la Container App del backend.
+            default_domain="$(az containerapp env show \
+              --name "$CONTAINER_APP_ENVIRONMENT" \
+              --resource-group "$RESOURCE_GROUP" \
+              --query properties.defaultDomain \
+              --output tsv)"
+            fqdn="${APP_NAME}.${default_domain}"
+          fi
+          test -n "$fqdn"
+          echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            PUBLIC_API_URL=${{ steps.backend-url.outputs.url }}
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
+
+  deploy-backend:
+    name: Deploy backend
+    needs: [detect-changes, build-backend, deploy-postgres, deploy-redis, deploy-chroma]
+    if: >-
+      always() && !cancelled() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') &&
+      needs.deploy-postgres.result == 'success' &&
+      needs.deploy-redis.result == 'success' &&
+      needs.deploy-chroma.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy backend Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
+          registryUrl: docker.io
+          registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
+          registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
+          containerAppName: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+          containerAppEnvironment: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+          location: ${{ vars.AZURE_LOCATION }}
+          targetPort: 18474
+          ingress: external
+          disableTelemetry: true
+
+      - name: Configure backend runtime
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          DATABASE_APP_NAME: ${{ vars.AZURE_DATABASE_APP_NAME }}
+          CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
+          CHROMA_RAG_COLLECTION: ${{ vars.CHROMA_RAG_COLLECTION }}
+          REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
+          ANALYTICS_CACHE_TTL_SECONDS: ${{ vars.ANALYTICS_CACHE_TTL_SECONDS }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
+          TELNYX_ENABLED: ${{ vars.TELNYX_ENABLED }}
+          TELNYX_WEBHOOK_HOST: ${{ vars.TELNYX_WEBHOOK_HOST }}
+          TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+          TELNYX_PUBLIC_KEY: ${{ vars.TELNYX_PUBLIC_KEY }}
+          TELNYX_CONNECTION_ID: ${{ vars.TELNYX_CONNECTION_ID }}
+          TELNYX_PHONE_NUMBER: ${{ vars.TELNYX_PHONE_NUMBER }}
+          LLM_ENV: ${{ vars.APP_ENV || 'test' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$RESOURCE_GROUP"
+          test -n "$BACKEND_APP_NAME"
+          test -n "$DATABASE_APP_NAME"
+          test -n "$POSTGRES_PASSWORD"
+          test -n "$JWT_SECRET_KEY"
+
+          database_url="$(DATABASE_HOST="$DATABASE_APP_NAME" python - <<'PY'
+          import os
+          import urllib.parse
+
+          user = urllib.parse.quote(os.environ.get("POSTGRES_USER") or "kognia", safe="")
+          password = urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe="")
+          database = urllib.parse.quote(os.environ["POSTGRES_DB"], safe="")
+          print(f"postgresql+asyncpg://{user}:{password}@{os.environ['DATABASE_HOST']}:5432/{database}")
+          PY
+          )"
+          echo "::add-mask::$database_url"
+
+          chroma_args=()
+          if [[ -n "${CHROMA_APP_NAME:-}" ]] && az containerapp show \
+            --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            chroma_host="$(az containerapp show \
+              --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn -o tsv)"
+            test -n "$chroma_host"
+            az containerapp ingress update \
+              --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --allow-insecure true >/dev/null
+            chroma_args=(
+              "CHROMA_HOST=$chroma_host"
+              "CHROMA_PORT=80"
+              "CHROMA_SSL=false"
+              "CHROMA_RAG_COLLECTION=${CHROMA_RAG_COLLECTION:-rag_documents}"
+            )
+          fi
+
+          redis_args=()
+          if [[ -n "${REDIS_APP_NAME:-}" ]] && az containerapp show \
+            --name "$REDIS_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            redis_args=("REDIS_URL=redis://${REDIS_APP_NAME}:6379/0")
+          fi
+
+          # Telnyx entrega los webhooks y abre el WebSocket de audio contra este
+          # mismo backend, así que el host se deriva del ingress externo. Sin esto
+          # el código usaría el host de ngrok hardcodeado en settings.py.
+          backend_fqdn="$(az containerapp show \
+            --name "$BACKEND_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+
+          secret_args=(
+            "database-url=$database_url"
+            "jwt-secret-key=$JWT_SECRET_KEY"
+          )
+          env_args=(
+            "APP_ENV=${LLM_ENV:-test}"
+            "DATABASE_URL=secretref:database-url"
+            "JWT_SECRET_KEY=secretref:jwt-secret-key"
+            "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15"
+            "AGENT_TOOL_MODULES=app.domains.demo_booking.tools,app.domains.business_analytics.tools"
+            "TELNYX_RECORDINGS_DIR=/var/lib/kognia/recordings"
+            "TELNYX_CAPTURE_DIR=/tmp/telnyx-captures"
+            "TELNYX_ENABLED=${TELNYX_ENABLED:-false}"
+            "TELNYX_WEBHOOK_HOST=${TELNYX_WEBHOOK_HOST:-$backend_fqdn}"
+          )
+          env_args+=("${chroma_args[@]}")
+          env_args+=("${redis_args[@]}")
+
+          if [[ -n "${ANALYTICS_CACHE_TTL_SECONDS:-}" ]]; then
+            env_args+=("ANALYTICS_CACHE_TTL_SECONDS=$ANALYTICS_CACHE_TTL_SECONDS")
+          fi
+          if [[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]]; then
+            env_args+=("WHATSAPP_PHONE_NUMBER_ID=$WHATSAPP_PHONE_NUMBER_ID")
+          fi
+
+          add_secret() {
+            if [[ -n "$3" ]]; then
+              secret_args+=("$2=$3")
+              env_args+=("$1=secretref:$2")
+            fi
+          }
+
+          add_secret OPENAI_API_KEY openai-api-key "${OPENAI_API_KEY:-}"
+          add_secret GEMINI_API_KEY gemini-api-key "${GEMINI_API_KEY:-}"
+          add_secret OPENROUTER_API_KEY openrouter-api-key "${OPENROUTER_API_KEY:-}"
+          add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
+          add_secret TYPESAFE_API_KEY typesafe-api-key "${TYPESAFE_API_KEY:-}"
+          add_secret TELNYX_API_KEY telnyx-api-key "${TELNYX_API_KEY:-}"
+          add_secret WHATSAPP_ACCESS_TOKEN whatsapp-access-token "${WHATSAPP_ACCESS_TOKEN:-}"
+          add_secret WHATSAPP_APP_SECRET whatsapp-app-secret "${WHATSAPP_APP_SECRET:-}"
+          add_secret WHATSAPP_VERIFY_TOKEN whatsapp-verify-token "${WHATSAPP_VERIFY_TOKEN:-}"
+
+          if [[ -n "${TELNYX_PUBLIC_KEY:-}" ]]; then
+            env_args+=("TELNYX_PUBLIC_KEY=$TELNYX_PUBLIC_KEY")
+          fi
+          if [[ -n "${TELNYX_CONNECTION_ID:-}" ]]; then
+            env_args+=("TELNYX_CONNECTION_ID=$TELNYX_CONNECTION_ID")
+          fi
+          if [[ -n "${TELNYX_PHONE_NUMBER:-}" ]]; then
+            env_args+=("TELNYX_PHONE_NUMBER=$TELNYX_PHONE_NUMBER")
+          fi
+
+          az containerapp secret set \
+            --name "$BACKEND_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --secrets "${secret_args[@]}"
+          az containerapp update \
+            --name "$BACKEND_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --min-replicas 1 \
+            --set-env-vars "${env_args[@]}"
+
+  # Worker y backend usan la misma última imagen publicada.
+
+  deploy-worker:
+    name: Deploy worker
+    needs: [detect-changes, build-backend, deploy-postgres, deploy-redis, deploy-chroma]
+    if: >-
+      always() && !cancelled() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') &&
+      needs.deploy-postgres.result == 'success' &&
+      needs.deploy-redis.result == 'success' &&
+      needs.deploy-chroma.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+      WORKER_APP_NAME: ${{ vars.AZURE_WORKER_APP_NAME }}
+      DATABASE_APP_NAME: ${{ vars.AZURE_DATABASE_APP_NAME }}
+      REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
+      CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
+      POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+      POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      APP_ENV: ${{ vars.APP_ENV || 'test' }}
+      CHROMA_RAG_COLLECTION: ${{ vars.CHROMA_RAG_COLLECTION }}
+      ANALYTICS_CACHE_TTL_SECONDS: ${{ vars.ANALYTICS_CACHE_TTL_SECONDS }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+      WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+      WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+      WHATSAPP_PHONE_NUMBER_ID: ${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
+      TELNYX_ENABLED: ${{ vars.TELNYX_ENABLED }}
+      TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+      TELNYX_CONNECTION_ID: ${{ vars.TELNYX_CONNECTION_ID }}
+      TELNYX_PHONE_NUMBER: ${{ vars.TELNYX_PHONE_NUMBER }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Resolve worker connections
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$WORKER_APP_NAME"
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_APP_ENVIRONMENT"
+          test -n "$DATABASE_APP_NAME"
+          test -n "$REDIS_APP_NAME"
+          test -n "$CHROMA_APP_NAME"
+          test -n "$POSTGRES_PASSWORD"
+          test -n "$DOCKERHUB_USERNAME"
+          test -n "$DOCKERHUB_TOKEN"
+
+          database_url="$(DATABASE_HOST="$DATABASE_APP_NAME" python - <<'PY'
+          import os
+          import urllib.parse
+
+          user = urllib.parse.quote(os.environ.get("POSTGRES_USER") or "kognia", safe="")
+          password = urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe="")
+          database = urllib.parse.quote(os.environ["POSTGRES_DB"], safe="")
+          print(f"postgresql+asyncpg://{user}:{password}@{os.environ['DATABASE_HOST']}:5432/{database}")
+          PY
+          )"
+          echo "::add-mask::$database_url"
+
+          chroma_host="$(az containerapp show \
+            --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+
+          echo "DATABASE_URL=$database_url" >> "$GITHUB_ENV"
+          echo "REDIS_URL=redis://${REDIS_APP_NAME}:6379/0" >> "$GITHUB_ENV"
+          echo "CHROMA_HOST=$chroma_host" >> "$GITHUB_ENV"
+
+      - name: Create or update worker Container App
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          image="$IMAGE"
+
+          secret_args=("database-url=$DATABASE_URL")
+          env_args=(
+            "APP_ENV=${APP_ENV:-test}"
+            "DATABASE_URL=secretref:database-url"
+            "REDIS_URL=$REDIS_URL"
+            "CHROMA_HOST=$CHROMA_HOST"
+            "CHROMA_PORT=80"
+            "CHROMA_SSL=false"
+            "CHROMA_RAG_COLLECTION=${CHROMA_RAG_COLLECTION:-rag_documents}"
+            "AGENT_TOOL_MODULES=app.domains.demo_booking.tools,app.domains.business_analytics.tools"
+            # Los turnos de WhatsApp corren en el worker y `call_customer` marca
+            # por Telnyx, así que aquí también hace falta la API key y la conexión.
+            "TELNYX_ENABLED=${TELNYX_ENABLED:-false}"
+            "TELNYX_RECORDINGS_DIR=/var/lib/kognia/recordings"
+            "PYTHONPATH=/app/backend"
+          )
+
+          if [[ -n "${ANALYTICS_CACHE_TTL_SECONDS:-}" ]]; then
+            env_args+=("ANALYTICS_CACHE_TTL_SECONDS=$ANALYTICS_CACHE_TTL_SECONDS")
+          fi
+          if [[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]]; then
+            env_args+=("WHATSAPP_PHONE_NUMBER_ID=$WHATSAPP_PHONE_NUMBER_ID")
+          fi
+          if [[ -n "${TELNYX_CONNECTION_ID:-}" ]]; then
+            env_args+=("TELNYX_CONNECTION_ID=$TELNYX_CONNECTION_ID")
+          fi
+          if [[ -n "${TELNYX_PHONE_NUMBER:-}" ]]; then
+            env_args+=("TELNYX_PHONE_NUMBER=$TELNYX_PHONE_NUMBER")
+          fi
+
+          add_secret() {
+            if [[ -n "$3" ]]; then
+              secret_args+=("$2=$3")
+              env_args+=("$1=secretref:$2")
+            fi
+          }
+          add_secret OPENAI_API_KEY openai-api-key "${OPENAI_API_KEY:-}"
+          add_secret GEMINI_API_KEY gemini-api-key "${GEMINI_API_KEY:-}"
+          add_secret OPENROUTER_API_KEY openrouter-api-key "${OPENROUTER_API_KEY:-}"
+          add_secret GROQ_API_KEY groq-api-key "${GROQ_API_KEY:-}"
+          add_secret TYPESAFE_API_KEY typesafe-api-key "${TYPESAFE_API_KEY:-}"
+          add_secret TELNYX_API_KEY telnyx-api-key "${TELNYX_API_KEY:-}"
+          add_secret WHATSAPP_ACCESS_TOKEN whatsapp-access-token "${WHATSAPP_ACCESS_TOKEN:-}"
+          add_secret WHATSAPP_APP_SECRET whatsapp-app-secret "${WHATSAPP_APP_SECRET:-}"
+          add_secret WHATSAPP_VERIFY_TOKEN whatsapp-verify-token "${WHATSAPP_VERIFY_TOKEN:-}"
+
+          # El worker arranca con un script del repo: `--args` no puede pasar
+          # `-m app.worker` como dos argv porque argparse rechaza tokens que
+          # empiezan por guion. Ver backend/scripts/run-worker.sh.
+          # min/max replicas 1: el worker hace polling a Redis.
+          if az containerapp show \
+            --name "$WORKER_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            az containerapp secret set \
+              --name "$WORKER_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --secrets "${secret_args[@]}"
+            az containerapp update \
+              --name "$WORKER_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --image "$image" \
+              --min-replicas 1 --max-replicas 1 \
+              --command "/bin/sh" --args "/app/backend/scripts/run-worker.sh" \
+              --set-env-vars "${env_args[@]}"
+          else
+            az containerapp create \
+              --name "$WORKER_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --environment "$CONTAINER_APP_ENVIRONMENT" \
+              --image "$IMAGE" \
+              --registry-server docker.io \
+              --registry-username "$DOCKERHUB_USERNAME" \
+              --registry-password "$DOCKERHUB_TOKEN" \
+              --min-replicas 1 --max-replicas 1 \
+              --command "/bin/sh" --args "/app/backend/scripts/run-worker.sh" \
+              --secrets "${secret_args[@]}" \
+              --env-vars "${env_args[@]}"
+          fi
+
+  deploy-frontend:
+    name: Deploy frontend
+    needs: [detect-changes, build-frontend]
+    if: >-
+      always() && !cancelled() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy frontend Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
+          registryUrl: docker.io
+          registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
+          registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
+          containerAppName: ${{ vars.AZURE_FRONTEND_APP_NAME }}
+          resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+          containerAppEnvironment: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+          location: ${{ vars.AZURE_LOCATION }}
+          targetPort: 80
+          ingress: external
+          disableTelemetry: true
+
+  # CORS apunta al FQDN del frontend recién desplegado.
+
+  configure-backend-cors:
+    name: Configure backend CORS
+    needs: [deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Link backend CORS to frontend
+        shell: bash
+        env:
+          BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          FRONTEND_APP_NAME: ${{ vars.AZURE_FRONTEND_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+
+          fqdn="$(az containerapp show \
+            --name "$FRONTEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "$fqdn"
+
+          az containerapp update \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --set-env-vars "FRONTEND_ORIGIN=https://${fqdn}"
+
+  # Último paso: entra en el contenedor del backend ya desplegado y deja el
+  # esquema al día + el admin demo. Idempotente, así que corre en cada push/manual.
+  bootstrap-backend:
+    name: Migrate and bootstrap backend database
+    needs: [deploy-backend, deploy-worker, configure-backend-cors]
+    if: >-
+      always() && !cancelled() &&
+      needs.deploy-backend.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+      DEMO_ADMIN_EMAIL: ${{ vars.DEMO_ADMIN_EMAIL }}
+      DEMO_ADMIN_PASSWORD: ${{ secrets.DEMO_ADMIN_PASSWORD }}
+      DEMO_ORG_NAME: ${{ vars.DEMO_ORG_NAME }}
+      DEMO_ORG_SLUG: ${{ vars.DEMO_ORG_SLUG }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Resolve backend endpoint
+        id: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$RESOURCE_GROUP"
+          test -n "$BACKEND_APP_NAME"
+
+          fqdn="$(az containerapp show \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+          test -n "$fqdn"
+          echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for a live backend replica
+        shell: bash
+        env:
+          URL: ${{ steps.backend.outputs.url }}
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..24}; do
+            replicas="$(az containerapp replica list \
+              -n "$BACKEND_APP_NAME" -g "$RESOURCE_GROUP" \
+              --query 'length(@)' -o tsv 2>/dev/null || echo 0)"
+            if [[ "${replicas:-0}" -gt 0 ]] && \
+              curl --fail --silent --max-time 10 "${URL}/health/live" >/dev/null; then
+              printf '%s\n' "Backend listo (réplicas: ${replicas})."
+              exit 0
+            fi
+            printf '%s\n' "Esperando al backend (${attempt}/24)..."
+            curl --silent --max-time 10 "${URL}/health/live" >/dev/null 2>&1 || true
+            sleep 5
+          done
+
+          printf '%s\n' 'El backend no respondió a tiempo.' >&2
+          exit 1
+
+      - name: Run migrations and bootstrap inside the backend container
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$RESOURCE_GROUP"
+          test -n "$BACKEND_APP_NAME"
+
+          # El contenedor del backend no tiene DEMO_ADMIN_*/DEMO_ORG_*, así que se
+          # inyectan inline. Se arma el script completo y se transfiere en Base64
+          # para evitar el anidamiento de comillas de `az containerapp exec`.
+          bootstrap_script="$(python - <<'PY'
+          import os
+          import shlex
+
+          variables = {
+              "DEMO_ADMIN_EMAIL": os.environ.get("DEMO_ADMIN_EMAIL", ""),
+              "DEMO_ADMIN_PASSWORD": os.environ.get("DEMO_ADMIN_PASSWORD", ""),
+              "DEMO_ORG_NAME": os.environ.get("DEMO_ORG_NAME") or "Demo Kognia",
+              "DEMO_ORG_SLUG": os.environ.get("DEMO_ORG_SLUG") or "demo-kognia",
+          }
+
+          assignments = " ".join(
+              f"{key}={shlex.quote(value)}"
+              for key, value in variables.items()
+          )
+
+          # `upgrade head` es idempotente y `--demo-only` también: si el admin ya
+          # existe, el bootstrap lo detecta y no falla.
+          print(
+              "set -eu\n"
+              "cd /app/backend\n"
+              "alembic -c alembic.ini upgrade head\n"
+              f"{assignments} python -m app.auth.bootstrap --demo-only\n"
+              "printf '%s\\n' BOOTSTRAP_OK\n"
+          )
+          PY
+          )"
+
+          payload="$(printf '%s' "$bootstrap_script" | base64 -w 0)"
+
+          # El payload Base64 solo tiene caracteres seguros; el `/bin/sh -c`
+          # garantiza que el pipe se interprete como comando.
+          remote_command="/bin/sh -c \"printf %s ${payload} | base64 -d | /bin/sh\""
+          export REMOTE_COMMAND="$remote_command"
+
+          # az containerapp exec rechaza stdin sin TTY; `script` le da una PTY.
+          cat > /tmp/container-exec.sh <<'EOF'
+          #!/bin/sh
+          exec az containerapp exec -n "$BACKEND_APP_NAME" -g "$RESOURCE_GROUP" --command "$REMOTE_COMMAND"
+          EOF
+          chmod +x /tmp/container-exec.sh
+
+          set +e
+          output="$(timeout 420 script -qec /tmp/container-exec.sh /dev/null 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+
+          if [[ $status -ne 0 ]]; then
+            printf '%s\n' "az containerapp exec terminó con código ${status}." >&2
+            exit 1
+          fi
+          if ! grep -q "BOOTSTRAP_OK" <<<"$output"; then
+            printf '%s\n' 'No se confirmó la migración y el bootstrap dentro del contenedor.' >&2
+            exit 1
+          fi
+
+      - name: Verify login end-to-end
+        shell: bash
+        env:
+          URL: ${{ steps.backend.outputs.url }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${DEMO_ADMIN_EMAIL:-}" && -n "${DEMO_ADMIN_PASSWORD:-}" ]]; then
+            body="$(python - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "email": os.environ["DEMO_ADMIN_EMAIL"],
+              "password": os.environ["DEMO_ADMIN_PASSWORD"],
+          }))
+          PY
+          )"
+            status="$(curl --silent --output /tmp/login.json --write-out '%{http_code}' \
+              -X POST "${URL}/auth/login" \
+              -H 'Content-Type: application/json' -d "$body")"
+            printf 'POST /auth/login -> HTTP %s\n' "$status"
+            cat /tmp/login.json 2>/dev/null || true
+            printf '\n'
+            if [[ "$status" != "200" ]]; then
+              printf '%s\n' 'El login no devolvió 200; el bootstrap no quedó sano.' >&2
+              exit 1
+            fi
+          else
+            # Sin credenciales demo solo comprobamos el esquema: un 401 significa
+            # que la tabla `users` se consultó con éxito; un 503, que falta.
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              -X POST "${URL}/auth/login" \
+              -H 'Content-Type: application/json' \
+              -d '{"email":"schema-check@example.com","password":"invalid"}')"
+            printf 'POST /auth/login -> HTTP %s\n' "$status"
+            if [[ "$status" == "503" ]]; then
+              printf '%s\n' 'El esquema sigue sin aplicarse (503).' >&2
+              exit 1
+            fi
+          fi

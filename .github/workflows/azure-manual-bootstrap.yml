@@ -1,0 +1,38 @@
+name: Azure Manual Bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-manual-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Run migrations and demo bootstrap in Azure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Install or update Container Apps CLI extension
+        run: az extension add --name containerapp --upgrade
+
+      - name: Run bootstrap inside deployed backend
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          AZURE_BACKEND_CONTAINER_NAME: ${{ vars.AZURE_BACKEND_CONTAINER_NAME }}
+          DEMO_ADMIN_EMAIL: ${{ vars.DEMO_ADMIN_EMAIL }}
+          DEMO_ADMIN_PASSWORD: ${{ secrets.DEMO_ADMIN_PASSWORD }}
+          DEMO_ORG_NAME: ${{ vars.DEMO_ORG_NAME }}
+          DEMO_ORG_SLUG: ${{ vars.DEMO_ORG_SLUG }}
+        run: ./scripts/azure-bootstrap.sh
