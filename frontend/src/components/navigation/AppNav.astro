@@ -10,6 +10,11 @@ const { active = null, initiallyHidden = false } = Astro.props;
 ---
 
 <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden={initiallyHidden ? 'true' : undefined} inert={initiallyHidden ? true : undefined}>
+  <a class:list={['app-nav__item', active === 'instructions' && 'is-active']} href="/instructions" data-route="instructions" data-tour="nav-instructions" aria-current={active === 'instructions' ? 'page' : undefined}>
+    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="circle-help"></i></span>
+    <span>Instrucciones</span>
+  </a>
+
   <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="/analytics" data-route="analytics" data-tour="nav-dashboard" aria-current={active === 'analytics' ? 'page' : undefined}>
     <span class="app-nav__icon" aria-hidden="true"><i data-lucide="layout-dashboard"></i></span>
     <span>Dashboard</span>
