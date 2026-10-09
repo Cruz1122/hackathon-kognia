@@ -1,0 +1,46 @@
+{
+  "results": [
+    {
+      "id": "1-chroma-restart",
+      "passed": true
+    },
+    {
+      "id": "2-chroma-interrupted-retrieval",
+      "passed": true
+    },
+    {
+      "id": "3-concurrent-replacement",
+      "passed": true
+    },
+    {
+      "id": "9-cache-invalidation",
+      "passed": true
+    },
+    {
+      "id": "10-real-stack-query-burst",
+      "passed": true
+    },
+    {
+      "id": "5-rewriter-timeout",
+      "passed": true
+    },
+    {
+      "id": "6-rewriter-invalid-json",
+      "passed": true
+    },
+    {
+      "id": "4-interrupted-ingestion-before-swap",
+      "passed": true
+    },
+    {
+      "id": "7-document-prompt-injection",
+      "passed": true
+    },
+    {
+      "id": "8-partial-transcript-boundary",
+      "passed": true
+    }
+  ],
+  "old_id": "doc_ea1a95215bc2",
+  "new_id": "doc_4d260b382271"
+}
