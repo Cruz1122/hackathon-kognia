@@ -128,7 +128,7 @@ jobs:
   build-backend:
     name: Build backend image
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.backend == 'true'
+    if: github.event_name == 'push' && needs.detect-changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -160,7 +160,7 @@ jobs:
   build-frontend:
     name: Build frontend image
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.frontend == 'true'
+    if: github.event_name == 'push' && needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
