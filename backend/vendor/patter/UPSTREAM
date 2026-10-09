@@ -1,0 +1,4 @@
+repository: https://github.com/PatterAI/Patter
+commit: f01875136816c953151a0e61dcf3a0057027b2b4
+path: libraries/python/getpatter/telephony/telnyx.py
+note: Minimal telephony fork. Patter's pipeline, dashboard, and MetricsStore are not included. Codec negotiation is L16/16000 instead of upstream PCMU.

@@ -1,0 +1,16 @@
+{
+  "seed": 42,
+  "transformations": ["remove_accents", "delete_character", "duplicate_character", "phonetic_substitution", "split_word", "number_words", "lowercase", "remove_punctuation"],
+  "examples": [
+    {"base_id":"Q001","query":"cual es la politica de cancelacion"},
+    {"base_id":"Q002","query":"que inclulle acme 447"},
+    {"base_id":"Q003","query":"cuanto tarda un reembolzo"},
+    {"base_id":"Q004","query":"cual es la tolerancia para llegar tarde"},
+    {"base_id":"Q005","query":"que metodos de pago aseptan"},
+    {"base_id":"Q006","query":"cuando queda confirmada una recerva"},
+    {"base_id":"Q007","query":"puedo cambair una reserva sin costo"},
+    {"base_id":"Q008","query":"a que ora sale el transporte acme cuatro cuatro siete"},
+    {"base_id":"Q009","query":"menores de dieciocho deben ir con adulto"},
+    {"base_id":"Q010","query":"atienden domigo"}
+  ]
+}
