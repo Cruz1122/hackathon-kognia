@@ -798,6 +798,61 @@ async def _close_call_speech(speech: Any, forward: asyncio.Task[None] | None, *,
             await asyncio.gather(forward, return_exceptions=True)
 
 
+async def _persist_recording_origin(call_id: uuid.UUID) -> None:
+    """Remember that a browser demo recording starts at offset 0."""
+    try:
+        from sqlalchemy import update
+
+        from .db.session import get_session_factory
+
+        async with get_session_factory()() as db:
+            await db.execute(
+                update(Call).where(Call.id == call_id).values(recording_offset_ms=0)
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("Could not store recording offset")
+
+
+def _announce_agent_phrase(heard: CallSession, text: str) -> None:
+    cleaned = text.strip()
+    if not cleaned or heard.closed:
+        return
+    at = agent_heard_ms(heard)
+    timeline.record(heard, "transcript.final", {"speaker": "agent", "text": cleaned}, at_offset_ms=at)
+    heard.agent_state = "speaking"
+    timeline.record(heard, "agent.state", {"state": "speaking"}, at_offset_ms=at)
+
+
+def _mark_listening(heard: CallSession | None) -> None:
+    if heard is None or heard.closed:
+        return
+    heard.agent_state = "listening"
+    timeline.record(heard, "agent.state", {"state": "listening"})
+
+
+def _customer_mark(heard: CallSession | None) -> int | None:
+    if heard is None:
+        return None
+    if heard.utterance_offset_ms is not None:
+        mark = heard.utterance_offset_ms
+        heard.utterance_offset_ms = None
+        return mark
+    return timeline_ms(heard.recording_offset_ms, len(heard.customer_pcm) // 2)
+
+
+def _record_customer_transcript(heard: CallSession | None, text: str, at_offset_ms: int | None) -> None:
+    cleaned = text.strip()
+    if heard is None or heard.closed or not cleaned:
+        return
+    timeline.record(
+        heard,
+        "transcript.final",
+        {"speaker": "customer", "text": cleaned},
+        at_offset_ms=at_offset_ms,
+    )
+
+
 async def _speak_chunk(
     websocket: WebSocket,
     text: str,
@@ -915,6 +970,8 @@ async def _run_call_turn(
         if speech is None or not text.strip():
             return
         said = True
+        if heard is not None:
+            _announce_agent_phrase(heard, text)
         await _send_call_event(
             websocket,
             "tts.started",
@@ -1022,6 +1079,7 @@ async def _run_call_turn(
         if buffer.strip():
             await speak_sentence(buffer.strip())
         await end_speech(cancel=not said)
+        _mark_listening(heard)
         if said:
             await _send_call_event(
                 websocket,

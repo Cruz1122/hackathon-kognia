@@ -116,8 +116,10 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
 
       syncUiMode();
       document.addEventListener('astro:before-swap', (event) => {
-        const transition = event as Event & { newDocument?: Document };
-        const nextPath = transition.newDocument?.location.pathname ?? window.location.pathname;
+        const transition = event as Event & { to?: URL; newDocument?: Document };
+        const nextPath = transition.to?.pathname
+          ?? transition.newDocument?.location?.pathname
+          ?? window.location.pathname;
         syncUiMode(nextPath);
         syncNavActive(nextPath);
         if (nextPath === '/dev' || nextPath.startsWith('/dev/')) stopCallNav();
