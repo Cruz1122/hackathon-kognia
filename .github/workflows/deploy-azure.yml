@@ -44,6 +44,7 @@ jobs:
               - 'backend/**'
             frontend:
               - 'frontend/**'
+              - '.github/workflows/deploy-azure.yml'
 
   deploy-postgres:
     name: Create PostgreSQL if missing
