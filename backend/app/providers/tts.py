@@ -20,6 +20,9 @@ class ElevenLabsTextToSpeech:
     def stream_audio(self, text: str) -> Iterator[bytes]:
         return voice.stream_tts_audio(text)
 
+    def stream_audio_async(self, text: str):
+        return voice.stream_tts_audio_async(text)
+
     def preload_phrases(self, texts: list[str] | tuple[str, ...]) -> None:
         voice.preload_tts_phrases(texts)
 

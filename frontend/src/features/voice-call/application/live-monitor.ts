@@ -392,10 +392,12 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         if (now >= bargeArmedAt) {
           const floor = Math.max(0.08, noiseFloor);
           const voiced = capture.isVoiced();
-          const speech = (voiced && level >= Math.max(0.18, floor + 0.12))
-            || level >= Math.max(0.32, floor + 0.24);
+          // Broadband noise and speaker bleed can be loud without being speech.
+          // Requiring the capture speech detector prevents false barge-ins that
+          // cancel the agent's TTS before the user has said anything.
+          const speech = voiced && level >= Math.max(0.28, floor + 0.20);
           bargeHits = speech ? bargeHits + 1 : 0;
-          if (bargeHits >= 2) handleLocalBarge();
+          if (bargeHits >= 4) handleLocalBarge();
         }
       } else {
         bargeHits = 0;
@@ -478,7 +480,8 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       hookMicWave();
       finishAgent();
     } else if (type === 'turn.completed') {
-      bargePending = false;
+      // Generation can finish while playback is held for an interruption.
+      // Keep that hold until the server confirms it with tts.cancel or tts.resume.
       cancelPendingRetrieval();
       finishAgent();
       processing = false;
@@ -602,12 +605,15 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       await resumeCall();
       return;
     }
+    // Create/resume both audio contexts while this function still runs from
+    // the user's click. Browsers may reject autoplay if this waits until the
+    // async conversation request or the first WebSocket audio frame.
+    capture.primeContext();
+    pcm.prime();
     resetSession();
     const nextConversationId = await openCallConversation();
     attachedConversationId = nextConversationId;
     sessionStorage.setItem(conversationIdKey, nextConversationId);
-    capture.primeContext();
-    pcm.prime();
     live = true;
     paused = false;
     connected = false;

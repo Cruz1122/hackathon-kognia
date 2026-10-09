@@ -1,0 +1,34 @@
+---
+import MascotFace from '../mascot/MascotFace.astro';
+
+interface Props {
+  initialActive?: boolean;
+}
+
+const { initialActive = false } = Astro.props;
+---
+
+<section
+  class:list={['section-view', 'instructions-view', initialActive && 'is-active']}
+  data-section="instructions"
+  aria-label="Instrucciones"
+  aria-hidden={initialActive ? 'false' : 'true'}
+>
+  <div class="instructions-page">
+    <div class="instructions-mascot" aria-hidden="true">
+      <MascotFace pointerTracking={false} ariaLabel="Carita de bienvenida" />
+      <span class="instructions-mascot__question">?</span>
+    </div>
+
+    <div class="instructions-copy">
+      <h2 id="instructionsHeading">¡Bienvenido! ¿Qué puedes hacer?</h2>
+      <ol>
+        <li>En <a class="instructions-link" href="/calls"><strong>llamadas</strong></a>, puedes hacer una llamada en vivo, el agente te guiará.</li>
+        <li>También puedes llamar por teléfono al <a class="instructions-link" href="tel:+19847880154"><strong>+1 984 788 0154</strong></a>. Necesitas minutos internacionales.</li>
+        <li>En <a class="instructions-link" href="/dev"><strong>modo dev</strong></a> puedes visualizar las repeticiones y ver info importante para debugging.</li>
+        <li>En la <a class="instructions-link" href="/analytics"><strong>dashboard</strong></a>, puedes ver un resumen general de todas las conversaciones.</li>
+        <li>En <a class="instructions-link" href="/specifications"><strong>especificaciones técnicas</strong></a>, es posible visualizar el stack entero y la arquitectura de nuestra solución.</li>
+      </ol>
+    </div>
+  </div>
+</section>

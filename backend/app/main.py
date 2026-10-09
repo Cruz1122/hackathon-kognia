@@ -50,6 +50,7 @@ from .agent.tools.contracts import ToolContext
 from .features.transcription.service import (
     SpeechSanitizer,
     pcm_speech_features,
+    speech_activity,
     recent_speech_tail,
     recover_short_transcript,
     stt_label,
@@ -136,7 +137,10 @@ CALL_BARGE_STRONG_RMS = 0.08
 CALL_BARGE_ARM_SECONDS = 0.2
 CALL_BARGE_HITS = 2
 CALL_BARGE_GRACE_SECONDS = 3.0
-CALL_TURN_GUARD_SECONDS = 2.5
+CALL_TURN_GUARD_SECONDS = max(0.25, float(os.getenv("VOICE_TURN_GUARD_SECONDS", "0.45")))
+CALL_TTS_OPEN_TIMEOUT_SECONDS = max(4.0, float(os.getenv("VOICE_TTS_OPEN_TIMEOUT_SECONDS", "8")))
+CALL_TTS_SEND_TIMEOUT_SECONDS = max(3.0, float(os.getenv("VOICE_TTS_SEND_TIMEOUT_SECONDS", "5")))
+CALL_TTS_FINISH_TIMEOUT_SECONDS = max(8.0, float(os.getenv("VOICE_TTS_FINISH_TIMEOUT_SECONDS", "15")))
 _recording_origin_tasks: set[asyncio.Task[None]] = set()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -173,13 +177,13 @@ async def lifespan(_app: FastAPI):
     logger.info("Checking ElevenLabs voice configuration")
     try:
         await asyncio.to_thread(tts_provider.preload)
-        from .agent.phrases import BACKCHANNEL
+        from .agent.phrases import BACKCHANNEL, IPS_GREETING
         preload_phrases = getattr(tts_provider, "preload_phrases", None)
         if callable(preload_phrases):
             try:
-                await asyncio.to_thread(preload_phrases, BACKCHANNEL)
+                await asyncio.to_thread(preload_phrases, [BACKCHANNEL, IPS_GREETING])
             except Exception:
-                logger.exception("ElevenLabs backchannel warmup failed")
+                logger.exception("ElevenLabs phrase warmup failed")
         tts_status = "ready"
         logger.info("ElevenLabs TTS is ready")
     except Exception:
@@ -541,8 +545,14 @@ async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
         raise HTTPException(status_code=503, detail="La síntesis de voz no está configurada.") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="No se pudo iniciar la síntesis de voz.") from exc
+    stream_audio_async = getattr(tts_provider, "stream_audio_async", None)
+    audio_stream = (
+        stream_audio_async(request.text)
+        if stream_audio_async is not None
+        else tts_provider.stream_audio(request.text)
+    )
     return StreamingResponse(
-        tts_provider.stream_audio(request.text),
+        audio_stream,
         media_type=f"audio/L16; rate={sample_rate}; channels=1",
         headers={
             "X-Audio-Sample-Rate": str(sample_rate),
@@ -950,18 +960,27 @@ async def _speak_chunk(
         speech = open_speech_turn(tts_provider)
         forward: asyncio.Task[None] | None = None
         try:
-            await speech.open()
+            await asyncio.wait_for(speech.open(), timeout=CALL_TTS_OPEN_TIMEOUT_SECONDS)
             forward = asyncio.create_task(
                 _forward_call_audio(websocket, speech, heard=heard, audio_kind=audio_kind)
             )
-            await speech.say(text)
-            await _close_call_speech(speech, forward, cancel=False)
+            await asyncio.wait_for(speech.say(text), timeout=CALL_TTS_SEND_TIMEOUT_SECONDS)
+            await asyncio.wait_for(
+                _close_call_speech(speech, forward, cancel=False),
+                timeout=CALL_TTS_FINISH_TIMEOUT_SECONDS,
+            )
         except asyncio.CancelledError:
             await _close_call_speech(speech, forward, cancel=True)
             raise
         except Exception:
             logger.exception("Call TTS failed")
-            await _close_call_speech(speech, forward, cancel=True)
+            try:
+                await asyncio.wait_for(
+                    _close_call_speech(speech, forward, cancel=True),
+                    timeout=3.0,
+                )
+            except Exception:
+                logger.exception("Call TTS cleanup failed")
             await _send_call_event(
                 websocket,
                 "error",
@@ -1536,8 +1555,16 @@ async def call_socket(
             return False
 
         async def _speak_greeting(text: str) -> bool:
-            await _speak_chunk(websocket, text, organization_id=organization_id,
-                conversation_id=conversation_id, heard=heard)
+            cached_getter = getattr(tts_provider, "cached_audio", None)
+            cached_audio = cached_getter(text) if callable(cached_getter) else None
+            await _speak_chunk(
+                websocket,
+                text,
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+                heard=heard,
+                cached_audio=cached_audio,
+            )
             _mark_listening(heard)
             await _send_call_event(websocket, 'turn.completed', {},
                 organization_id=organization_id, conversation_id=conversation_id)
@@ -1620,12 +1647,14 @@ async def call_socket(
             barge_hits = 0
             task = turn_task
             turn_task = None
+            # The browser may still hold queued audio after generation finishes.
+            # Always release that hold before starting the customer's next turn.
+            try:
+                await websocket.send_json({"type": "tts.cancel"})
+            except Exception:
+                pass
             if task is not None and not task.done():
                 task.cancel()
-                try:
-                    await websocket.send_json({"type": "tts.cancel"})
-                except Exception:
-                    pass
                 try:
                     await task
                 except asyncio.CancelledError:
@@ -1664,8 +1693,10 @@ async def call_socket(
             first_voice_at = 0.0
             ignore_until = 0.0
             if barge_pending:
-                # The reply finished while its playback was held: let the client drain it.
-                await _resume_playback()
+                # Keep the interrupted user's stream alive. The next frames may
+                # complete a real utterance; resetting here used to discard it
+                # exactly when the previous response finished.
+                pass
             try:
                 if await task:
                     ending_call = True
@@ -1673,7 +1704,7 @@ async def call_socket(
                 pass
             except Exception:
                 logger.exception("Call turn failed")
-            if stream is not None:
+            if stream is not None and not barge_pending:
                 await asyncio.to_thread(stt_provider.reset_stream, stream)
                 utterance_pcm.clear()
                 if tail and not ending_call:
@@ -1764,11 +1795,15 @@ async def call_socket(
             text = message.get("text")
             if raw is not None:
                 if pcm_mode:
-                    level, voiced, rms = pcm_speech_features(raw, sample_rate)
+                    level, voiced, rms = speech_activity(
+                        raw, sample_rate, speech_rms=CALL_SPEECH_RMS
+                    )
                     await websocket.send_json({"type": "wave.level", "value": level, "source": "customer"})
                     now = time.monotonic()
                     busy = turn_task is not None and not turn_task.done()
-                    speaking = voiced or rms >= CALL_SPEECH_RMS
+                    # RMS is useful for the visual meter, but loud broadband
+                    # noise must not keep an utterance open forever.
+                    speaking = voiced
                     if heard is not None:
                         if speaking and heard.utterance_offset_ms is None:
                             heard.utterance_offset_ms = timeline_ms(
@@ -1795,11 +1830,11 @@ async def call_socket(
                     if busy and not barge_pending:
                         if speaking:
                             overlap_voice_at = now
-                        if now >= barge_armed_at and rms >= CALL_BARGE_RMS:
+                        if now >= barge_armed_at and voiced:
                             barge_hits += 1
                         else:
                             barge_hits = 0
-                        strong = rms >= CALL_BARGE_STRONG_RMS
+                        strong = voiced and rms >= CALL_BARGE_STRONG_RMS
                         enough = barge_hits >= CALL_BARGE_HITS or (
                             voiced and barge_hits >= max(2, CALL_BARGE_HITS // 2)
                         )
@@ -1889,33 +1924,15 @@ async def call_socket(
             if ending_call:
                 continue
             if not text:
-                await _send_call_event(
-                    websocket,
-                    "error",
-                    {"message": "Mensaje de llamada inválido."},
-                    organization_id=organization_id,
-                    conversation_id=conversation_id,
-                )
+                # Browsers can emit an empty control frame while the mic and
+                # WebSocket are being started. It is not a user turn.
                 continue
             try:
                 payload = json.loads(text)
             except json.JSONDecodeError:
-                await _send_call_event(
-                    websocket,
-                    "error",
-                    {"message": "Mensaje de llamada inválido."},
-                    organization_id=organization_id,
-                    conversation_id=conversation_id,
-                )
+                logger.debug("Ignoring non-JSON call control frame")
                 continue
             if not isinstance(payload, dict):
-                await _send_call_event(
-                    websocket,
-                    "error",
-                    {"message": "Mensaje de llamada inválido."},
-                    organization_id=organization_id,
-                    conversation_id=conversation_id,
-                )
                 continue
             if payload.get("type") == "pcm.start":
                 idle_since = time.monotonic()
@@ -1979,13 +1996,8 @@ async def call_socket(
                     audio_mime = mime
                 continue
             if payload.get("type") != "turn":
-                await _send_call_event(
-                    websocket,
-                    "error",
-                    {"message": "Mensaje de llamada inválido."},
-                    organization_id=organization_id,
-                    conversation_id=conversation_id,
-                )
+                # Ignore unknown control messages so a stale browser event
+                # cannot surface as a false call failure.
                 continue
             prompt = payload.get("prompt")
             if not isinstance(prompt, str) or not prompt.strip():

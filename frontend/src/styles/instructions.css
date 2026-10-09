@@ -1,0 +1,116 @@
+.instructions-view {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  align-content: center;
+  min-height: 100% !important;
+  padding: clamp(28px, 5vw, 72px) clamp(22px, 6vw, 96px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.instructions-page {
+  display: flex;
+  width: min(820px, 100%);
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(28px, 5vh, 54px);
+  padding: 20px 0 36px;
+  color: var(--ui-graphite);
+  text-align: center;
+  clip-path: inset(0 0 100% 0);
+}
+
+.instructions-view.is-active .instructions-page {
+  animation: instructions-curtain-in .82s cubic-bezier(.22, .8, .24, 1) .12s both;
+}
+
+.instructions-mascot {
+  position: relative;
+  width: clamp(126px, 18vw, 188px);
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+}
+
+.instructions-mascot [data-mascot-face] {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.instructions-mascot__question {
+  position: absolute;
+  top: -10%;
+  right: -14%;
+  display: grid;
+  width: clamp(42px, 5vw, 62px);
+  aspect-ratio: 1;
+  place-items: center;
+  border: 5px solid var(--ui-paper);
+  border-radius: 50%;
+  background: var(--ui-amber);
+  color: var(--ui-graphite);
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-weight: 800;
+  line-height: .8;
+}
+
+.instructions-copy {
+  width: min(100%, 760px);
+}
+
+.instructions-copy h2 {
+  margin: 0 0 clamp(22px, 3vw, 32px);
+  font-size: clamp(1.55rem, 3vw, 2.45rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.045em;
+}
+
+.instructions-copy ol {
+  display: grid;
+  gap: 15px;
+  margin: 0;
+  padding-left: 2rem;
+  text-align: left;
+  font-size: clamp(1rem, 1.55vw, 1.18rem);
+  line-height: 1.42;
+}
+
+.instructions-copy li::marker {
+  color: var(--ui-amber);
+  font-weight: 800;
+}
+
+.instructions-link {
+  color: inherit;
+  font-weight: 800;
+  text-decoration-line: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.instructions-link:hover { color: var(--ui-graphite); }
+.instructions-link:focus-visible {
+  outline: 3px solid var(--ui-amber);
+  outline-offset: 3px;
+  border-radius: var(--radius-min);
+}
+
+@keyframes instructions-curtain-in {
+  from { clip-path: inset(0 0 100% 0); opacity: .35; transform: translateY(14px); }
+  to { clip-path: inset(0); opacity: 1; transform: none; }
+}
+
+@media (max-width: 767px) {
+  .instructions-view { padding: 28px 20px 48px; }
+  .instructions-page { gap: 30px; padding-top: 8px; }
+  .instructions-mascot { width: clamp(116px, 34vw, 156px); }
+  .instructions-copy h2 { line-height: 1.05; }
+  .instructions-copy ol { gap: 13px; padding-left: 1.75rem; font-size: 1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .instructions-page { clip-path: none; }
+  .instructions-view.is-active .instructions-page { animation-duration: .001ms; }
+}

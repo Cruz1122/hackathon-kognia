@@ -336,6 +336,19 @@ def stream_tts_audio(text: str) -> Iterator[bytes]:
     return iter(asyncio.run(_collect()))
 
 
+async def stream_tts_audio_async(text: str) -> AsyncIterator[bytes]:
+    """Yield PCM without nesting asyncio.run inside an active server loop."""
+    turn = ElevenLabsTurn()
+    await turn.open()
+    try:
+        await turn.say(text)
+        await turn.finish()
+        async for chunk in turn.audio():
+            yield chunk
+    finally:
+        await turn.cancel()
+
+
 def synthesize_text(text: str) -> bytes:
     """Generate a mono WAV using the streaming voice."""
     return _wav_bytes(b"".join(stream_tts_audio(text)), SAMPLE_RATE)

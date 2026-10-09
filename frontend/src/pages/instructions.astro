@@ -1,0 +1,29 @@
+---
+import AppLayout from '../layouts/AppLayout.astro';
+import InstructionsContent from '../components/instructions/InstructionsContent.astro';
+import '../styles/instructions.css';
+---
+
+<AppLayout title="Kognia — Instrucciones">
+  <InstructionsContent initialActive />
+</AppLayout>
+
+<script>
+  import { accessTokenKey, checkSession, conversationIdKey, redirectToLogin } from '../features/auth/session-guard';
+
+  const apiUrl = document.body.dataset.apiUrl ?? '';
+  let mounted = false;
+
+  async function mountInstructions(): Promise<void> {
+    if (mounted || (window.location.pathname !== '/instructions' && window.location.pathname !== '/instructions/')) return;
+    mounted = true;
+    const token = sessionStorage.getItem(accessTokenKey)?.trim();
+    const conversationId = sessionStorage.getItem(conversationIdKey)?.trim();
+    if (!token || !conversationId || await checkSession(apiUrl) === 'invalid') {
+      redirectToLogin();
+    }
+  }
+
+  document.addEventListener('astro:page-load', () => { void mountInstructions(); });
+  void mountInstructions();
+</script>
