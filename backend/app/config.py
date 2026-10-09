@@ -17,6 +17,11 @@ class Provider(StrEnum):
     OPENAI = "openai"
 
 
+class AgentPromptVariant(StrEnum):
+    BASELINE = "baseline"
+    COMPACT = "compact"
+
+
 DEFAULT_REDIS_URL = "redis://localhost:16379/0"
 DEFAULT_ANALYTICS_CACHE_TTL_SECONDS = 60
 DEFAULT_PRICING_CACHE_TTL_SECONDS = 21600  # 6 hours
@@ -67,6 +72,22 @@ def get_app_env(value: str | None = None) -> AppEnv:
         return AppEnv(raw_value)
     except ValueError as exc:
         raise ValueError("APP_ENV must be 'test' or 'production'") from exc
+
+
+def get_agent_prompt_variant(value: str | None = None) -> AgentPromptVariant:
+    """Return the opt-in prompt variant used by the conversational agent.
+
+    ``compact`` only changes wording sent to the model. It does not bypass the
+    stateful runtime, tools, authorization, integrity, or emergency guards.
+    The short aliases make benchmark A/B commands less error-prone while the
+    manifest records the canonical value.
+    """
+    raw_value = (value or os.getenv("AGENT_PROMPT_VARIANT", AgentPromptVariant.BASELINE)).strip().lower()
+    raw_value = {"b": AgentPromptVariant.COMPACT, "short": AgentPromptVariant.COMPACT}.get(raw_value, raw_value)
+    try:
+        return AgentPromptVariant(raw_value)
+    except ValueError as exc:
+        raise ValueError("AGENT_PROMPT_VARIANT must be 'baseline' or 'compact'") from exc
 
 
 def get_model_chain(app_env: AppEnv | str | None = None) -> tuple[ModelConfig, ...]:

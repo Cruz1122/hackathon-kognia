@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import unicodedata
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,13 @@ from ...ips_soda3.schema import NormalizedDataset
 
 
 SessionFactory = Callable[[], AsyncSession] | async_sessionmaker[AsyncSession]
+
+
+def _location_key(value: str | None) -> str:
+    decomposed = unicodedata.normalize("NFKD", value or "")
+    return " ".join(
+        "".join(char for char in decomposed if not unicodedata.combining(char)).casefold().split()
+    )
 
 
 def site_payload(site: IPSSite, *, include_capacities: bool = True) -> dict[str, Any]:
@@ -231,6 +239,38 @@ class IPSRepository:
             rows = list((await session.scalars(statement.order_by(IPSSite.site_name).distinct().limit(limit))).all())
             return [site_payload(row) for row in rows], total
 
+    async def canonical_location(
+        self,
+        snapshot_id: uuid.UUID,
+        *,
+        department: str | None = None,
+        municipality: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        """Resolve user/model casing and accents to the values stored in one snapshot."""
+
+        if not department and not municipality:
+            return None, None
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(IPSSite.department, IPSSite.municipality)
+                    .where(IPSSite.snapshot_id == snapshot_id)
+                    .distinct()
+                )
+            ).all()
+        department_key = _location_key(department)
+        municipality_key = _location_key(municipality)
+        for stored_department, stored_municipality in rows:
+            if department and _location_key(stored_department) != department_key:
+                continue
+            if municipality and _location_key(stored_municipality) != municipality_key:
+                continue
+            return (
+                stored_department if department else None,
+                stored_municipality if municipality else None,
+            )
+        return department, municipality
+
     async def compare_capacity(self, site_codes: list[str], capacity: str) -> list[dict[str, Any]] | None:
         """Registered quantities of one category, per site. Does not sum groups or pick a winner."""
         async with self._session_factory() as session:
@@ -250,7 +290,7 @@ class IPSRepository:
                     {
                         "group": item.group_name,
                         "description": item.description,
-                        "registered_quantity": item.registered_quantity,
+                        "registered_quantity": item.quantity,
                     }
                     for item in site.capacities
                     if needle in f"{item.group_name} {item.description}".casefold()

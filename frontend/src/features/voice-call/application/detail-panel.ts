@@ -133,18 +133,173 @@ function isLongValue(value: string): boolean {
   return value.length > 64 || value.includes('\n');
 }
 
+function keywordAt(source: string, index: number, word: string): boolean {
+  if (!source.startsWith(word, index)) return false;
+  const next = source[index + word.length] ?? '';
+  return !/[A-Za-z0-9_]/.test(next);
+}
+
+function parsePythonLiteral(source: string): unknown | undefined {
+  let index = 0;
+
+  function skipSpace(): void {
+    while (index < source.length && /\s/.test(source[index] ?? '')) index += 1;
+  }
+
+  function fail(): never {
+    throw new Error('literal');
+  }
+
+  function parseString(): string {
+    const quote = source[index];
+    if (quote !== "'" && quote !== '"') fail();
+    index += 1;
+    let text = '';
+    while (index < source.length) {
+      const char = source[index];
+      index += 1;
+      if (char === '\\') {
+        const escaped = source[index] ?? '';
+        index += 1;
+        text += ({ n: '\n', t: '\t', r: '\r', '\\': '\\', "'": "'", '"': '"' } as Record<string, string>)[escaped] ?? escaped;
+        continue;
+      }
+      if (char === quote) return text;
+      text += char ?? '';
+    }
+    fail();
+  }
+
+  function parseNumber(): number {
+    const start = index;
+    if (source[index] === '-') index += 1;
+    while (index < source.length && /[0-9.eE+-]/.test(source[index] ?? '')) index += 1;
+    const value = Number(source.slice(start, index));
+    if (!Number.isFinite(value) || start === index) fail();
+    return value;
+  }
+
+  function parseValue(): unknown {
+    skipSpace();
+    if (keywordAt(source, index, 'None')) {
+      index += 4;
+      return null;
+    }
+    if (keywordAt(source, index, 'True')) {
+      index += 4;
+      return true;
+    }
+    if (keywordAt(source, index, 'False')) {
+      index += 5;
+      return false;
+    }
+    const char = source[index];
+    if (char === '{') return parseObject();
+    if (char === '[') return parseArray();
+    if (char === "'" || char === '"') return parseString();
+    if (char === '-' || (char !== undefined && char >= '0' && char <= '9')) return parseNumber();
+    fail();
+  }
+
+  function parseObject(): Record<string, unknown> {
+    index += 1;
+    const record: Record<string, unknown> = {};
+    skipSpace();
+    if (source[index] === '}') {
+      index += 1;
+      return record;
+    }
+    while (index < source.length) {
+      const key = parseValue();
+      if (typeof key !== 'string' && typeof key !== 'number') fail();
+      skipSpace();
+      if (source[index] !== ':') fail();
+      index += 1;
+      record[String(key)] = parseValue();
+      skipSpace();
+      if (source[index] === ',') {
+        index += 1;
+        continue;
+      }
+      if (source[index] === '}') {
+        index += 1;
+        return record;
+      }
+      fail();
+    }
+    fail();
+  }
+
+  function parseArray(): unknown[] {
+    index += 1;
+    const items: unknown[] = [];
+    skipSpace();
+    if (source[index] === ']') {
+      index += 1;
+      return items;
+    }
+    while (index < source.length) {
+      items.push(parseValue());
+      skipSpace();
+      if (source[index] === ',') {
+        index += 1;
+        continue;
+      }
+      if (source[index] === ']') {
+        index += 1;
+        return items;
+      }
+      fail();
+    }
+    fail();
+  }
+
+  try {
+    const first = parseValue();
+    skipSpace();
+    if (index < source.length && source[index] === ',') {
+      const items = [first];
+      while (index < source.length && source[index] === ',') {
+        index += 1;
+        items.push(parseValue());
+        skipSpace();
+      }
+      return index === source.length ? items : undefined;
+    }
+    return index === source.length ? first : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function jsonBlock(value: string): unknown | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed !== null && typeof parsed === 'object') return parsed;
+  } catch {
+    const parsed = parsePythonLiteral(trimmed);
+    if (parsed !== undefined && parsed !== null && typeof parsed === 'object') return parsed;
+  }
+  return undefined;
+}
+
 function fieldRow(field: DetailField): string {
   const pending = isPendingValue(field.value);
   if (pending || !field.value.trim()) return '';
-  const long = !pending && isLongValue(field.value);
-  const status = !pending && !long && field.label === 'Estado';
-  const rowClass = ['detail-field', long ? 'is-long' : ''].filter(Boolean).join(' ');
-  const valueClass = [pending ? 'is-pending' : '', long ? 'is-long' : '', status ? 'is-status' : ''].filter(Boolean).join(' ');
-  const value = status
-    ? `<span class="detail-chip">${escapeHtml(field.value)}</span>`
-    : field.label === 'Teléfono'
-      ? phoneDisplayMarkup(field.value)
-    : escapeHtml(field.value);
+  const json = jsonBlock(field.value);
+  const long = json !== undefined || isLongValue(field.value);
+  const status = json === undefined && !long && field.label === 'Estado';
+  const rowClass = ['detail-field', long ? 'is-long' : '', json !== undefined ? 'is-json' : ''].filter(Boolean).join(' ');
+  const valueClass = [long ? 'is-long' : '', status ? 'is-status' : '', json !== undefined ? 'is-json' : ''].filter(Boolean).join(' ');
+  const value = json !== undefined
+    ? `<pre class="detail-json">${prettyJson(json)}</pre>`
+    : status
+      ? `<span class="detail-chip">${escapeHtml(field.value)}</span>`
+      : field.label === 'Teléfono'
+        ? phoneDisplayMarkup(field.value)
+        : escapeHtml(field.value);
   return `<div class="${rowClass}"><dt>${escapeHtml(field.label)}</dt><dd${valueClass ? ` class="${valueClass}"` : ''}>${value}</dd></div>`;
 }
 
@@ -217,14 +372,13 @@ export function patchSession(partial: { name?: string; phone?: string; status?: 
 type AgentStateView = {
   phase?: unknown;
   customer_name?: unknown;
-  booking_slots?: unknown;
   state?: unknown;
 };
 
 function phaseLabel(value: unknown): string {
-  if (value === 'completed') return 'Reserva confirmada';
+  if (value === 'completed') return 'Consulta completada';
   if (value === 'confirming') return 'Esperando confirmación';
-  if (value === 'searching') return 'Consultando disponibilidad';
+  if (value === 'searching') return 'Consultando instituciones';
   if (value === 'presenting') return 'Presentando opciones';
   return 'Recopilando datos';
 }
@@ -233,18 +387,16 @@ export function patchSessionFromAgentState(value: unknown): void {
   const envelope = asRecord(value) as AgentStateView;
   const nested = asRecord(envelope.state);
   const state = Object.keys(nested).length ? nested : asRecord(value);
-  const slots = asRecord(state.booking_slots);
   const stateRecord = state as JsonRecord;
   const hasObservedState = Boolean(
     Object.keys(asRecord(state.signals)).length
       || Object.keys(asRecord(state.facts)).length
-      || Object.keys(slots).length
       || (typeof stateRecord.last_turn_id === 'string' && stateRecord.last_turn_id)
       || (typeof stateRecord.last_response === 'string' && stateRecord.last_response)
       || (typeof state.phase === 'string' && state.phase !== 'understanding'),
   );
   if (!hasObservedState) return;
-  const name = String(state.customer_name ?? slots.customer_name ?? '').trim();
+  const name = String(state.customer_name ?? '').trim();
   const phase = typeof state.phase === 'string' && state.phase !== 'understanding' ? state.phase : '';
   patchSession({
     ...(name ? { name } : {}),
@@ -305,7 +457,7 @@ function showSessionView(): void {
   renderSession();
 }
 
-function renderBody(detail: DetailPayload): string {
+export function renderDetailMarkup(detail: DetailPayload): string {
   if (detail.kind === 'source') {
     const content = detail.content ? `<div class="detail-content">${renderMarkdown(detail.content)}</div>` : '';
     return `<p class="detail-kicker">Fuente</p><h2 class="detail-title">${escapeHtml(detail.title)}</h2>${content}`;
@@ -375,7 +527,7 @@ export function openDetail(detail: DetailPayload, cardId?: string): void {
   const close = root?.querySelector('.detail-panel__close');
   if (!root || !(body instanceof HTMLElement)) return;
   const sameCard = Boolean(cardId && root.dataset.cardId === cardId && root.classList.contains('open'));
-  body.innerHTML = renderBody(detail);
+  body.innerHTML = renderDetailMarkup(detail);
   body.hidden = false;
   if (sessionNode instanceof HTMLElement) sessionNode.hidden = true;
   if (close instanceof HTMLElement) close.hidden = false;

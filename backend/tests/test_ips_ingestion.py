@@ -9,6 +9,7 @@ import pytest
 
 from app.domains.ips.ingestion import IPSIngestionService
 from app.domains.ips import tools as ips_tools
+from app.domains.ips.repository import IPSRepository
 from app.domains.ips.vector_store import IPSVectorStore, semantic_document
 from app.agent.tools.contracts import ToolContext
 from app.ips_soda3.schema import IPSDatasetSchemaError, normalize_dataset
@@ -74,6 +75,59 @@ def test_conflicting_capacity_quantities_are_preserved_not_summed() -> None:
         [source_row(), source_row(num_cantidad_capacidad_instalada="9")]
     )
     assert [item.quantity for item in dataset.sites[0].capacities] == [4, 9]
+
+
+@pytest.mark.asyncio
+async def test_repository_comparison_serializes_capacity_quantity(monkeypatch) -> None:
+    site = SimpleNamespace(
+        site_code="9100100019",
+        site_name="E.S.E. HOSPITAL SAN RAFAEL",
+        municipality="LETICIA",
+        capacities=[
+            SimpleNamespace(
+                group_name="CAMAS",
+                description="Adultos",
+                quantity=4,
+            )
+        ],
+    )
+
+    class FakeScalarResult:
+        def all(self):
+            return [site]
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def scalars(self, statement):
+            return FakeScalarResult()
+
+    repository = IPSRepository(lambda: FakeSession())
+
+    async def active_snapshot_id(session):
+        return uuid.uuid4()
+
+    monkeypatch.setattr(repository, "_active_id", active_snapshot_id)
+    compared = await repository.compare_capacity([site.site_code], "Adultos")
+
+    assert compared == [
+        {
+            "site_code": "9100100019",
+            "site_name": "E.S.E. HOSPITAL SAN RAFAEL",
+            "municipality": "LETICIA",
+            "quantities": [
+                {
+                    "group": "CAMAS",
+                    "description": "Adultos",
+                    "registered_quantity": 4,
+                }
+            ],
+        }
+    ]
 
 
 @dataclass
@@ -304,12 +358,20 @@ class FakeToolRepository:
     async def active_snapshot(self):
         return SimpleNamespace(id=uuid.uuid4()) if self.snapshot else None
 
+    async def canonical_location(self, snapshot_id, *, department=None, municipality=None):
+        del snapshot_id
+        return department, municipality
+
     async def sites_by_ids(self, site_ids):
         return self.results
 
 
 class FakeToolVectors:
+    def __init__(self):
+        self.kwargs = None
+
     async def search(self, *args, **kwargs):
+        self.kwargs = kwargs
         return [SimpleNamespace(site_id="site-1", score=0.91)]
 
 
@@ -328,6 +390,34 @@ async def test_structured_and_semantic_tools_return_exact_records(monkeypatch) -
     assert structured["source"] == "datos.gov.co"
     assert structured["results"][0]["site_code"] == "9100100019"
     assert semantic["results"][0]["semantic_score"] == 0.91
+
+
+@pytest.mark.asyncio
+async def test_semantic_tool_uses_snapshot_canonical_location(monkeypatch) -> None:
+    site = {"site_id": "site-1", "site_code": "2000102330", "site_name": "OD SALUD S.A.S."}
+    repository = FakeToolRepository([site])
+
+    async def canonical_location(snapshot_id, *, department=None, municipality=None):
+        del snapshot_id, department, municipality
+        return "Cesar", "VALLEDUPAR"
+
+    repository.canonical_location = canonical_location
+    vectors = FakeToolVectors()
+    monkeypatch.setattr(ips_tools, "repository", repository)
+    monkeypatch.setattr(ips_tools, "vector_store", vectors)
+
+    result = await ips_tools.semantic_search_ips(
+        ips_tools.SemanticSearchIPSArgs(
+            query="algo parecido a OD Salud",
+            department="cesar",
+            municipality="Valledupar",
+        ),
+        ToolContext("request-test"),
+    )
+
+    assert result["status"] == "ok"
+    assert vectors.kwargs["department"] == "Cesar"
+    assert vectors.kwargs["municipality"] == "VALLEDUPAR"
 
 
 @pytest.mark.asyncio

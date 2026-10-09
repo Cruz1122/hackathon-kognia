@@ -4,6 +4,7 @@ import asyncio
 import base64
 import inspect
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -21,11 +22,76 @@ from .tts import PiperTTSProvider
 
 logger = logging.getLogger("hackathon.telnyx.bridge")
 
+BACKCHANNEL_DELAY_SECONDS = 0.7
+PCM_CHUNK_BYTES = 6400
+
+
+class AudioPlaybackCoordinator:
+    """Keep one voice output active while the agent keeps processing."""
+
+    def __init__(self, session: CallSession, voice: PiperTTSProvider) -> None:
+        self.session = session
+        self.voice = voice
+        self._lock = asyncio.Lock()
+        self._guard_ready = asyncio.Event()
+        self._work_ready = asyncio.Event()
+        self._final_ready = asyncio.Event()
+        self._allow_backchannel = True
+        self._backchannel_task: asyncio.Task[None] | None = None
+
+    def set_agent_guard(self, payload: dict[str, Any]) -> None:
+        """Accept the runtime's structural preflight before playing audio."""
+        self._allow_backchannel = bool(payload.get("allow_backchannel", True))
+        stage = payload.get("stage")
+        if stage is None or stage == "buscando":
+            self._work_ready.set()
+        self._guard_ready.set()
+
+    def mark_work_started(self) -> None:
+        self._work_ready.set()
+
+    def schedule_backchannel(self, text: str) -> None:
+        self._backchannel_task = asyncio.create_task(self._play_backchannel(text))
+        timeline.record(
+            self.session,
+            "audio.backchannel.scheduled",
+            {"delay_ms": int(BACKCHANNEL_DELAY_SECONDS * 1000)},
+        )
+
+    async def _play_backchannel(self, text: str) -> None:
+        try:
+            await asyncio.sleep(BACKCHANNEL_DELAY_SECONDS)
+            await self._guard_ready.wait()
+            if self._final_ready.is_set() or not self._allow_backchannel or self.session.closed:
+                return
+            if not self._work_ready.is_set():
+                return
+            async with self._lock:
+                if self._final_ready.is_set() or self.session.closed:
+                    return
+                await _speak_raw(self.session, self.voice, text, audio_kind="backchannel")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Backchannel playback failed")
+
+    async def play_final(self, text: str) -> None:
+        self._final_ready.set()
+        await self.cancel_backchannel()
+        async with self._lock:
+            await _speak_raw(self.session, self.voice, text, audio_kind="final")
+
+    async def cancel_backchannel(self) -> None:
+        self._final_ready.set()
+        task = self._backchannel_task
+        self._backchannel_task = None
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
 
 async def _with_holding(generator, session: CallSession, voice):
-    from ..agent.phrases import HOLDING, pick
-
-    held = False
+    """Relay the stateful generator without blocking it on TTS."""
     queue = asyncio.Queue(maxsize=32)
     end = object()
 
@@ -45,16 +111,7 @@ async def _with_holding(generator, session: CallSession, voice):
     producer = asyncio.create_task(produce())
     try:
         while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=4)
-            except asyncio.TimeoutError:
-                if producer.done():
-                    producer.result()
-                    return
-                if not held:
-                    held = True
-                    await _speak(session, voice, pick(HOLDING))
-                continue
+            event = await queue.get()
             if event is end:
                 return
             if isinstance(event, Exception):
@@ -74,6 +131,13 @@ async def run_agent_turn(
     system_initiated: bool = False,
 ) -> None:
     voice = tts or PiperTTSProvider()
+    from ..agent.phrases import BACKCHANNEL, pick
+
+    session.voice_turn_started_at = time.monotonic()
+    session.voice_first_audio_ms = None
+    session.voice_useful_answer_ms = None
+    coordinator = AudioPlaybackCoordinator(session, voice)
+    session.playback_coordinator = coordinator
     if session.marks is None:
         session.marks = MarkTracker()
     customer_turn_offset_ms = next(
@@ -112,6 +176,7 @@ async def run_agent_turn(
     if "trace" in inspect.signature(agent).parameters:
         agent_kwargs["trace"] = recorder
     generator = agent(transcript, **agent_kwargs)
+    coordinator.schedule_backchannel(pick(BACKCHANNEL))
     proposal_id = None
     last_done: dict[str, Any] = {}
     trace_status = 'ok'
@@ -125,8 +190,11 @@ async def run_agent_turn(
             if kind == 'done':
                 last_done = payload
                 proposal_id = payload.get('proposal_id')
-            if (kind == 'tool.completed' and payload.get('tool') == 'create_booking'
-                    and payload.get('ok') is True):
+            if (
+                kind == 'tool.completed'
+                and payload.get('tool') == 'create_booking'
+                and payload.get('ok') is True
+            ):
                 reservation_confirmed = True
             await _publish_agent_event(
                 session,
@@ -135,6 +203,38 @@ async def run_agent_turn(
                 answer,
                 customer_turn_offset_ms=customer_turn_offset_ms,
             )
+        spoken = "".join(answer).strip()
+        session.history.append({"role": "user", "content": transcript})
+        if spoken:
+            session.history.append({"role": "assistant", "content": spoken})
+            if agent is stream_agent and session.conversation_id and session.organization_id:
+                from ..db.models import Message, MessageRole
+                from ..db.session import get_session_factory
+                async with get_session_factory()() as db:
+                    db.add_all([
+                        Message(conversation_id=session.conversation_id, role=MessageRole.USER, content=transcript, channel='voice'),
+                        Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT, content=spoken, channel='voice'),
+                    ])
+                    await db.commit()
+            await coordinator.play_final(spoken)
+            session.awaiting_agent_reply = False
+            marks = session.marks
+            if reservation_confirmed and session.websocket and marks is not None:
+                mark = marks.generated()
+                session.hangup_after_mark = mark
+                marks.sent(mark)
+                try:
+                    await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
+                except Exception:
+                    session.hangup_after_mark = None
+                    raise
+            if proposal_id and session.websocket and not session.closed:
+                mark = session.marks.generated()
+                session.presentation_mark = (mark, proposal_id)
+                session.marks.sent(mark)
+                await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
+        session.agent_state = "listening"
+        timeline.record(session, "agent.state", {"state": "listening"})
     except asyncio.CancelledError:
         trace_status = 'cancelled'
         await _cancel_playback(session)
@@ -145,6 +245,11 @@ async def run_agent_turn(
     finally:
         await waiting.aclose()
         await generator.aclose()
+        await coordinator.cancel_backchannel()
+        recorder.record_voice_timing(
+            first_audio_ms=session.voice_first_audio_ms,
+            useful_answer_ms=session.voice_useful_answer_ms,
+        )
         recorder.finish(
             answer=''.join(answer),
             provider=last_done.get('provider'),
@@ -152,38 +257,6 @@ async def run_agent_turn(
             status=trace_status,
         )
         await save_trace(recorder)
-    spoken = "".join(answer).strip()
-    session.history.append({"role": "user", "content": transcript})
-    if spoken:
-        session.history.append({"role": "assistant", "content": spoken})
-        if agent is stream_agent and session.conversation_id and session.organization_id:
-            from ..db.models import Message, MessageRole
-            from ..db.session import get_session_factory
-            async with get_session_factory()() as db:
-                db.add_all([
-                    Message(conversation_id=session.conversation_id, role=MessageRole.USER, content=transcript, channel='voice'),
-                    Message(conversation_id=session.conversation_id, role=MessageRole.ASSISTANT, content=spoken, channel='voice'),
-                ])
-                await db.commit()
-        await _speak(session, voice, spoken)
-        session.awaiting_agent_reply = False
-        marks = session.marks
-        if reservation_confirmed and session.websocket and marks is not None:
-            mark = marks.generated()
-            session.hangup_after_mark = mark
-            marks.sent(mark)
-            try:
-                await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
-            except Exception:
-                session.hangup_after_mark = None
-                raise
-        if proposal_id and session.websocket and not session.closed:
-            mark = session.marks.generated()
-            session.presentation_mark = (mark, proposal_id)
-            session.marks.sent(mark)
-            await session.websocket.send_json({'event': 'mark', 'mark': {'name': mark}})
-    session.agent_state = "listening"
-    timeline.record(session, "agent.state", {"state": "listening"})
 
 
 async def _publish_agent_event(
@@ -198,12 +271,24 @@ async def _publish_agent_event(
         answer.append(str(payload.get("text") or ""))
         return
     if kind == "tool.started":
+        coordinator = session.playback_coordinator
+        if coordinator is not None:
+            coordinator.mark_work_started()
         timeline.record(session, "tool.started", payload)
         return
     if kind == "tool.completed":
         timeline.record(session, "tool.completed", payload)
         return
     if kind in {"rag.started", "rag.completed"}:
+        coordinator = session.playback_coordinator
+        if coordinator is not None and kind == "rag.started":
+            coordinator.mark_work_started()
+        timeline.record(session, kind, payload)
+        return
+    if kind == "agent.guard":
+        coordinator = session.playback_coordinator
+        if coordinator is not None:
+            coordinator.set_agent_guard(payload)
         timeline.record(session, kind, payload)
         return
     if kind == "agent.signals":
@@ -216,43 +301,91 @@ async def _publish_agent_event(
         timeline.record(session, "agent.error", {"message": payload.get("message") or "error"})
 
 
-async def _speak(session: CallSession, voice: PiperTTSProvider, text: str) -> None:
-    source_rate = await asyncio.to_thread(voice.sample_rate)
-    loop = asyncio.get_running_loop()
-    chunks: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=8)
+async def _speak_raw(
+    session: CallSession,
+    voice: PiperTTSProvider,
+    text: str,
+    *,
+    audio_kind: str = "final",
+) -> None:
+    cached = voice.cached_audio(text) if audio_kind == "backchannel" and hasattr(voice, "cached_audio") else None
+    if audio_kind == "backchannel" and cached is None:
+        # Backchannels are intentionally best-effort. Never synthesize one on
+        # the call's critical path when the warm cache is unavailable.
+        return
+    if cached is not None:
+        source_rate, pcm = cached
+        cached_chunks = (pcm[index:index + PCM_CHUNK_BYTES] for index in range(0, len(pcm), PCM_CHUNK_BYTES))
+        producer = None
+    else:
+        source_rate = await asyncio.to_thread(voice.sample_rate)
+        loop = asyncio.get_running_loop()
+        chunks: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=8)
 
-    def produce() -> None:
-        try:
-            for chunk in voice.stream_audio(text):
-                asyncio.run_coroutine_threadsafe(chunks.put(chunk), loop).result()
-        except Exception:
-            logger.exception("Piper stream failed")
-        finally:
-            asyncio.run_coroutine_threadsafe(chunks.put(None), loop).result()
+        def produce() -> None:
+            try:
+                for chunk in voice.stream_audio(text):
+                    asyncio.run_coroutine_threadsafe(chunks.put(chunk), loop).result()
+            except Exception:
+                logger.exception("Piper stream failed")
+            finally:
+                asyncio.run_coroutine_threadsafe(chunks.put(None), loop).result()
 
-    producer = asyncio.create_task(asyncio.to_thread(produce))
+        producer = asyncio.create_task(asyncio.to_thread(produce))
+        cached_chunks = None
+
     announced = False
+
+    async def emit_chunk(chunk: bytes) -> None:
+        nonlocal announced
+        if not announced:
+            announced = True
+            at = _agent_heard_ms(session)
+            timeline.record(
+                session,
+                "transcript.final",
+                {"speaker": "agent", "text": text, "audio_kind": audio_kind},
+                at_offset_ms=at,
+            )
+            session.agent_state = "speaking"
+            timeline.record(session, "agent.state", {"state": "speaking"}, at_offset_ms=at)
+            if session.voice_turn_started_at:
+                elapsed_ms = int((time.monotonic() - session.voice_turn_started_at) * 1000)
+                if session.voice_first_audio_ms is None:
+                    session.voice_first_audio_ms = elapsed_ms
+                    timeline.record(session, "audio.first_audio", {"kind": audio_kind, "latency_ms": elapsed_ms})
+                if audio_kind == "final" and session.voice_useful_answer_ms is None:
+                    session.voice_useful_answer_ms = elapsed_ms
+                    timeline.record(session, "audio.useful_answer", {"latency_ms": elapsed_ms})
+        canonical = resample_pcm16le(chunk, source_rate, CANONICAL_RATE)
+        await emit_agent_audio(session, canonical, audio_kind=audio_kind)
+
     try:
-        while True:
-            chunk = await chunks.get()
-            if chunk is None or session.closed:
-                break
-            if not announced:
-                announced = True
-                at = _agent_heard_ms(session)
-                timeline.record(session, "transcript.final", {"speaker": "agent", "text": text}, at_offset_ms=at)
-                session.agent_state = "speaking"
-                timeline.record(session, "agent.state", {"state": "speaking"}, at_offset_ms=at)
-            canonical = resample_pcm16le(chunk, source_rate, CANONICAL_RATE)
-            await emit_agent_audio(session, canonical)
+        if cached_chunks is not None:
+            for chunk in cached_chunks:
+                if session.closed:
+                    break
+                await emit_chunk(chunk)
+        else:
+            while True:
+                chunk = await chunks.get()
+                if chunk is None or session.closed:
+                    break
+                await emit_chunk(chunk)
         if text.strip() and not announced and not session.closed:
-            timeline.record(session, "transcript.final", {"speaker": "agent", "text": text})
+            timeline.record(session, "transcript.final", {"speaker": "agent", "text": text, "audio_kind": audio_kind})
     except asyncio.CancelledError:
         await _cancel_playback(session)
         raise
     finally:
         session.agent_segment_open = False
-        producer.cancel()
+        if producer is not None:
+            producer.cancel()
+
+
+async def _speak(session: CallSession, voice: PiperTTSProvider, text: str) -> None:
+    """Compatibility wrapper for greetings and silence prompts."""
+    await _speak_raw(session, voice, text, audio_kind="final")
 
 
 def _agent_heard_ms(session: CallSession) -> int:
@@ -318,7 +451,7 @@ def mute_agent_from(session: CallSession, start: int) -> None:
     session.agent_segment_open = False
 
 
-async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:
+async def emit_agent_audio(session: CallSession, pcm: bytes, *, audio_kind: str = "final") -> None:
     if not pcm:
         return
     # A tentative barge holds the reply instead of discarding it: if the customer
@@ -356,10 +489,10 @@ async def emit_agent_audio(session: CallSession, pcm: bytes) -> None:
         return
     name = session.marks.generated()
     session.playback_spans.append((start, end, name))
-    timeline.record(session, "audio.generated", {"name": name})
+    timeline.record(session, "audio.generated", {"name": name, "audio_kind": audio_kind})
     await websocket.send_json({"event": "mark", "mark": {"name": name}})
     session.marks.sent(name)
-    timeline.record(session, "audio.sent", {"name": name})
+    timeline.record(session, "audio.sent", {"name": name, "audio_kind": audio_kind})
 
 
 async def _cancel_playback(session: CallSession) -> None:

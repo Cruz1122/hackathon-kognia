@@ -15,10 +15,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 _lock = Lock()
 _voice = None
 _synthesis_config = None
+_phrase_cache: dict[str, tuple[int, bytes]] = {}
 
 
 def _speech_text(text: str) -> str:
-    """Keep the written transcript intact while giving Piper a Spanish phonetic cue."""
+    """Keep the written transcript intact while giving Piper a Spanish cue."""
     return re.sub(r'(?i)\bwane\b', 'Güein', text)
 
 
@@ -71,6 +72,26 @@ def stream_tts_audio(text: str) -> Iterator[bytes]:
     with _lock:
         for chunk in voice.synthesize(_speech_text(text), syn_config=synthesis_config):
             yield chunk.audio_int16_bytes
+
+
+def preload_tts_phrases(texts: list[str] | tuple[str, ...]) -> None:
+    """Synthesize short fixed prompts once so backchannel audio is immediate."""
+    voice, synthesis_config = _get_tts()
+    sample_rate = int(voice.config.sample_rate)
+    with _lock:
+        for text in texts:
+            if text in _phrase_cache:
+                continue
+            _phrase_cache[text] = (
+                sample_rate,
+                b"".join(chunk.audio_int16_bytes for chunk in voice.synthesize(_speech_text(text), syn_config=synthesis_config)),
+            )
+
+
+def cached_tts_audio(text: str) -> tuple[int, bytes] | None:
+    """Return a preloaded phrase without invoking Piper during a call."""
+    with _lock:
+        return _phrase_cache.get(text)
 
 
 def synthesize_text(text: str) -> bytes:

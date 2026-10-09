@@ -1,6 +1,4 @@
-import re
 from collections.abc import AsyncIterator, Sequence
-from datetime import timedelta
 from functools import partial
 from typing import Any
 
@@ -54,50 +52,11 @@ _CAPABILITY_MARKERS = (
 _MIN_KNOWLEDGE_TERMS = 2
 
 
-def normalize_relative_booking_date(
-    tool: str,
-    arguments: dict[str, Any],
-    prompt: str,
-    history: Sequence[Message] | None = None,
-) -> dict[str, Any]:
-    """Anchor an explicit relative booking date to the configured demo timezone.
-
-    Models can use their provider's UTC date instead of the local operational
-    date even when the latter is in the system context. Only an unambiguous date
-    expression in the current message overrides the model argument. A bare
-    ``mañana`` answering an AM/PM question keeps its time-of-day meaning.
-    """
-    if tool not in {'check_availability', 'create_booking'} or 'date' not in arguments:
-        return arguments
-    folded = ' '.join(prompt.casefold().split())
-    previous = next((str(item.get('content') or '').casefold() for item in reversed(history or [])
-                     if item.get('role') == 'assistant'), '')
-    am_pm_answer = folded in {'mañana', 'de mañana', 'por la mañana'} and (
-        'de la mañana o de la noche' in previous or 'mañana o de la noche' in previous
-    )
-    days: int | None = None
-    if re.search(r'\bpasado\s+mañana\b', folded):
-        days = 2
-    elif not am_pm_answer and (
-        re.search(r'\bpara\s+(?:el\s+)?(?:d[ií]a\s+de\s+)?mañana\b', folded)
-        or re.search(r'\bmañana\s*(?:,|a\s+la|a\s+las)\b', folded)
-        or folded == 'mañana'
-    ):
-        days = 1
-    elif re.search(r'\bpara\s+(?:el\s+)?(?:d[ií]a\s+de\s+)?hoy\b', folded):
-        days = 0
-    if days is None:
-        return arguments
-    from ...agent.state import local_now
-    return {**arguments, 'date': (local_now().date() + timedelta(days=days)).isoformat()}
-
-
 def merge_consecutive_user_messages(messages: Sequence[Message]) -> list[Message]:
     """Fold consecutive ``user`` fragments into a single utterance.
 
     A slow speaker can be cut by the turn-taking logic and persisted as two
-    ``user`` messages in a row (for example "quiero cancelar..." then
-    "reserva."). Sent as separate messages the model reads the tail as a new
+    ``user`` messages in a row. Sent as separate messages the model reads the tail as a new
     request; joined as one it recovers the original intent. Only user messages
     are merged, so the agent's own replies keep their role boundaries.
     """
@@ -271,9 +230,7 @@ async def _generate(
                         call_id = call.get("id") or f"call_{index + 1}"
                         name = call.get("name") or "tool"
                         raw_arguments = call.get("arguments") or "{}"
-                        arguments = normalize_relative_booking_date(
-                            name, parse_arguments(raw_arguments), prompt, history
-                        )
+                        arguments = parse_arguments(raw_arguments)
                         title, status = describe_tool_start(name, arguments)
                         inputs = present_tool_inputs(name, arguments)
                         yield "tool.started", {"tool": name, "tool_call_id": call_id, "title": title, "status": status, "inputs": inputs}
@@ -443,8 +400,7 @@ async def _knowledge_message(prompt: str, messages: Sequence[Message] | None) ->
 def _contextual_query(prompt: str, recent: Sequence[Message]) -> str:
     """Merge recent turns into a standalone query so short follow-ups retrieve.
 
-    E.g. a follow-up "reservas y sumas" after "¿tienes acceso a ...?" must search
-    for both ideas, not the fragment in isolation.
+    Follow-up queries include recent user turns so short references retain context.
     """
     previous = " ".join(
         str(message.get("content") or "").strip()
@@ -462,7 +418,7 @@ async def _retrieve_knowledge(
 ) -> tuple[list[Message], bool, str | None, list[RetrievalHit]]:
     if TOOL_REGISTRY.resolve("search_ips") is not None:
         # The IPS runtime is grounded through versioned tools and its dedicated
-        # Chroma collection. Never expose a retained legacy rag_documents corpus.
+        # Chroma collection.
         return [], False, None, []
     recent = list(messages or [])[-4:]
     query = _contextual_query(prompt, recent)

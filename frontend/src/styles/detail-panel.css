@@ -7,11 +7,37 @@
   height: 100dvh;
   overflow: auto;
   overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
   background: var(--ui-paper);
   color: var(--ui-graphite);
   font-family: var(--font-ui);
   border-left: 1px solid rgba(65, 65, 65, .16);
   padding: 28px 28px 40px;
+}
+
+.detail-panel:hover,
+.detail-panel:focus-within {
+  scrollbar-color: rgba(65, 65, 65, .28) transparent;
+}
+
+.detail-panel::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.detail-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detail-panel::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-full);
+}
+
+.detail-panel:hover::-webkit-scrollbar-thumb,
+.detail-panel:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(65, 65, 65, .28);
 }
 
 .auth-panel .detail-panel {
@@ -106,6 +132,7 @@ body.detail-open .demo-switcher {
 }
 
 .detail-client-signals:empty { display: none; }
+.detail-client-signals:has(.agent-signals__categories[hidden]) { display: none; }
 
 .detail-client-signals .detail-fields { gap: 6px; }
 
@@ -250,6 +277,17 @@ body.detail-open .demo-switcher {
   line-height: 1.45;
 }
 
+.detail-field.is-json {
+  align-items: start;
+  gap: 8px;
+  padding: 14px 16px 16px;
+  border-radius: var(--radius-ui);
+}
+
+.detail-field.is-json dd {
+  min-width: 0;
+}
+
 .detail-field dd.is-pending {
   font-weight: 600;
   opacity: .58;
@@ -309,11 +347,56 @@ body.detail-open .demo-switcher {
   overflow-wrap: anywhere;
 }
 
-.detail-technical-section pre .json-key { color: color-mix(in srgb, var(--ui-accent) 82%, #2c4b78); }
-.detail-technical-section pre .json-string { color: #2f7d5b; }
-.detail-technical-section pre .json-number { color: #9a5f20; }
-.detail-technical-section pre .json-boolean { color: #7650a8; }
-.detail-technical-section pre .json-null { color: rgba(65, 65, 65, .56); }
+.detail-json {
+  max-height: 28rem;
+  margin: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  padding: 14px 16px;
+  border-radius: var(--radius-ui);
+  background: var(--ui-paper);
+  color: var(--ui-graphite);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.detail-json:hover,
+.detail-json:focus-within {
+  scrollbar-color: rgba(65, 65, 65, .28) transparent;
+}
+
+.detail-json::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.detail-json::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detail-json::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-full);
+}
+
+.detail-json:hover::-webkit-scrollbar-thumb,
+.detail-json:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(65, 65, 65, .28);
+}
+
+.detail-technical-section pre .json-key,
+.detail-json .json-key { color: color-mix(in srgb, var(--ui-accent) 82%, #2c4b78); }
+.detail-technical-section pre .json-string,
+.detail-json .json-string { color: #2f7d5b; }
+.detail-technical-section pre .json-number,
+.detail-json .json-number { color: #9a5f20; }
+.detail-technical-section pre .json-boolean,
+.detail-json .json-boolean { color: #7650a8; }
+.detail-technical-section pre .json-null,
+.detail-json .json-null { color: rgba(65, 65, 65, .56); }
 
 .detail-content > :first-child {
   margin-top: 0;

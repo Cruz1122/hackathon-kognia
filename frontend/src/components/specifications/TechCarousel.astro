@@ -1,0 +1,45 @@
+---
+interface Logo {
+  name: string;
+  src: string;
+  use: string;
+  wordmark?: boolean;
+}
+
+interface Props {
+  title: string;
+  logos: Logo[];
+  reverse?: boolean;
+  duration?: string;
+}
+
+const { title, logos, reverse = false, duration = '48s' } = Astro.props;
+const headingId = `spec-${title.toLowerCase().replace(/\s+/g, '-')}`;
+const sequence = Array.from({ length: Math.ceil(12 / logos.length) }, () => logos).flat();
+---
+
+<section class:list={['spec-row', reverse && 'is-reverse']} aria-labelledby={headingId} style={`--spec-duration: ${duration}`}>
+  <h2 class="spec-row__title" id={headingId}>{title}</h2>
+  <div class="spec-marquee">
+    <div class="spec-track">
+      <ul class="spec-group">
+        {sequence.map((logo) => (
+          <li class:list={['spec-logo', logo.wordmark && 'is-wordmark']}>
+            <img src={logo.src} alt="" width="64" height="64" decoding="async" />
+            <span class="spec-logo__name">{logo.name}</span>
+            <span class="spec-logo__use">{logo.use}</span>
+          </li>
+        ))}
+      </ul>
+      <ul class="spec-group" aria-hidden="true">
+        {sequence.map((logo) => (
+          <li class:list={['spec-logo', logo.wordmark && 'is-wordmark']}>
+            <img src={logo.src} alt="" width="64" height="64" decoding="async" />
+            <span class="spec-logo__name">{logo.name}</span>
+            <span class="spec-logo__use">{logo.use}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+</section>

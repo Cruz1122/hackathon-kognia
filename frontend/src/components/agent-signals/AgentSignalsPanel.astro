@@ -320,6 +320,7 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
         categorySnapshots.set(key, snapshot);
         const card = categoryScope.querySelector<HTMLElement>(`[data-category="${key}"]`);
         if (!card) return;
+        card.hidden = snapshot.value === 'unknown';
         const detail = card.querySelector<HTMLElement>('[data-category-detail]');
         if (detail) {
           detail.textContent = snapshot.detail ?? '';
@@ -381,9 +382,7 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
       const setSignals = (data: AgentSignalsEnvelope): void => {
         root.dataset.hasObservedData = 'true';
         const snapshot = projector.project(data);
-        const categoriesReady = Boolean(data.behavior)
-          || [data.signals.emotion?.value, data.signals.intent?.value]
-            .some((value) => typeof value === 'string' && value !== 'unknown');
+        const categoriesReady = Object.values(snapshot.categories).some((category) => category.value !== 'unknown');
         if (categoryBlock) categoryBlock.hidden = !categoriesReady;
         (Object.keys(snapshot.scales) as ScaleKey[]).forEach((key) => updateScale(key, snapshot.scales[key]));
         (Object.keys(snapshot.categories) as CategoryKey[]).forEach((key) => updateCategory(key, snapshot.categories[key]));
@@ -482,6 +481,8 @@ const hasInitialData = initialData !== EMPTY_AGENT_SIGNALS;
   }
 
   .agent-signals__categories { display: grid; gap: 14px; }
+  .agent-signals__categories[hidden],
+  .compact-category[hidden] { display: none !important; }
 
   .agent-signals--no-categories { grid-template-columns: minmax(0, 1fr); }
 

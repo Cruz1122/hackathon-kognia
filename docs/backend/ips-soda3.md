@@ -102,6 +102,5 @@ El runtime IPS registra cuatro tools de solo lectura:
 - `semantic_search_ips`: recuperación E5/Chroma seguida de hidratación exacta
   desde PostgreSQL.
 
-`AGENT_TOOL_MODULES` no incluye `app.domains.demo_booking.tools` en el runtime
 IPS. La colección histórica `rag_documents` tampoco se consulta desde ese
 runtime, incluso si un volumen Chroma antiguo todavía la conserva.

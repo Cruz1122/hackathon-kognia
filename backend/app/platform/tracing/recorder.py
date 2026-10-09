@@ -70,6 +70,7 @@ class TraceRecorder:
     completion_tokens: int = 0
     total_tokens: int = 0
     llm_calls: int = 0
+    voice: dict[str, Any] = field(default_factory=dict)
 
     _t0: float = field(default_factory=time.perf_counter)
     _turn: dict[str, Any] | None = None
@@ -234,6 +235,13 @@ class TraceRecorder:
         )
         self.close_span(span)
 
+    def record_voice_timing(self, *, first_audio_ms: int | None, useful_answer_ms: int | None) -> None:
+        """Keep perceived voice latency separate from model generation latency."""
+        self.voice = {
+            "time_to_first_audio_ms": first_audio_ms,
+            "time_to_useful_answer_ms": useful_answer_ms,
+        }
+
     def finish(self, *, answer: str, provider: str | None, model: str | None, status: str = "ok") -> None:
         if self._finished:
             return
@@ -266,6 +274,7 @@ class TraceRecorder:
             **({"history_limited": True, "history_total": self.history_total} if self.history_total > MAX_MESSAGES else {}),
             "tools_available": self.tools_available,
             "answer": self.answer,
+            "voice": self.voice,
             "spans": self.spans,
             "usage": {
                 "prompt_tokens": self.prompt_tokens,

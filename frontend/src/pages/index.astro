@@ -2036,11 +2036,11 @@ import '../styles/phone.css';
       if (status) status.classList.toggle('loading', !done);
 
       if (id === 'tool1') {
-        title.textContent = done ? 'Reserva encontrada' : 'Consultando la reserva de Sofía Martínez';
-        status.textContent = done ? 'Disponibilidad consultada · completado' : 'Cargando…';
+        title.textContent = done ? 'Instituciones encontradas' : 'Consultando instituciones';
+        status.textContent = done ? 'Consulta completada' : 'Cargando…';
       } else {
-        title.textContent = done ? 'Reserva actualizada a las 5:30 p. m.' : 'Actualizando hora de llegada';
-        status.textContent = done ? 'Cambio guardado · completado' : 'Cargando…';
+        title.textContent = done ? 'Detalles actualizados' : 'Consultando detalles';
+        status.textContent = done ? 'Consulta completada' : 'Cargando…';
       }
 
       const mark = tool.querySelector('.done-mark');

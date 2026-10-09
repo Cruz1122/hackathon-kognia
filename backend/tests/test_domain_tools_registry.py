@@ -10,29 +10,21 @@ from app.analytics.schemas import DashboardResponse
 from app.domains.business_analytics.tools import BusinessAnalyticsArgs, get_business_analytics
 
 
-def test_demo_tools_are_loaded_without_runtime_domain_imports() -> None:
-    registry = load_tool_registry("app.domains.demo_booking.tools")
-    assert {item.name for item in registry.list_definitions()} == {"check_availability", "create_booking"}
-    assert "organization_id" not in registry.schemas()[0]["parameters"].get("properties", {})
-
-
 def test_registry_normalizes_unknown_and_invalid_arguments() -> None:
     registry = load_tool_registry()
     context = ToolContext("req-1", organization_id="server-org")
-    unknown = asyncio.run(registry.execute("refund_booking", {}, context))
+    unknown = asyncio.run(registry.execute("unknown_tool", {}, context))
     invalid = asyncio.run(registry.execute("search_ips", {}, context))
     assert unknown.error_code == "TOOL_NOT_FOUND"
     assert invalid.error_code == "TOOL_ARGUMENT_VALIDATION_ERROR"
 
 
-def test_default_runtime_loads_ips_tools_without_restaurant_tools() -> None:
+def test_default_runtime_loads_only_ips_tools() -> None:
     registry = load_tool_registry()
     names = {item.name for item in registry.list_definitions()}
     assert {
         "search_ips", "get_ips_details", "get_ips_capacity", "semantic_search_ips", "compare_ips_capacity",
     } <= names
-    assert "check_availability" not in names
-    assert "create_booking" not in names
     assert "generate_lorem_ipsum" not in names
     assert "get_business_analytics" not in names
 

@@ -6,12 +6,12 @@ test('renders only a compact document topic when retrieval was used', () => {
   assert.deepEqual(normalizeRetrievalPayload({
     used_rag: true,
     message: 'Políticas de reembolso',
-    title: 'Políticas de reservas',
+    title: 'Políticas de atención',
     content: 'La política permite cambios.',
   }), {
     usedRag: true,
     message: 'Políticas de reembolso',
-    title: 'Políticas de reservas',
+    title: 'Políticas de atención',
     content: 'La política permite cambios.',
   });
   assert.equal(shouldRenderRetrieval({ used_rag: false }), false);
@@ -20,7 +20,7 @@ test('renders only a compact document topic when retrieval was used', () => {
   const markup = createRetrievalCardMarkup('rag-yes', {
     used_rag: true,
     message: 'Políticas de reembolso',
-    title: 'Políticas de reservas',
+    title: 'Políticas de atención',
     content: 'La política permite cambios.',
   });
   assert.match(markup, /class="tool-call"/);

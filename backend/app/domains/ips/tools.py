@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from ...config import AgentPromptVariant, get_agent_prompt_variant
 from ...agent.tools.contracts import ToolContext, ToolDefinition
 from ...agent.tools.registry import ToolRegistry
 from ...db.session import get_session_factory
@@ -14,16 +15,34 @@ from .repository import IPSRepository
 from .vector_store import IPSVectorStore
 
 
-CONTEXT_INSTRUCTIONS = (
+_BASELINE_CONTEXT_INSTRUCTIONS = (
     "Official Colombian IPS orientation domain. The tools read the active snapshot of dataset s2ru-bqt6. "
-    "Use search_ips for exact names and location filters, get_ips_details for contact and address data, "
-    "get_ips_capacity for installed-capacity categories, semantic_search_ips for approximate natural-language discovery, "
+    "If the user supplies an exact institution/provider name or a concrete location, ALWAYS call search_ips first, even "
+    "when the name is long. Use semantic_search_ips only for approximate, descriptive, misspelled, or STT wording, or "
+    "as a recovery after an exact search returns no rows. Use search_ips for exact names, location filters, or an exact registered capacity category. Put institution/provider "
+    "names in query and capacity descriptions in capacity; never put a requested service or capacity in query. "
+    "Use get_ips_details for contact and address data, get_ips_capacity for installed-capacity categories, "
+    "semantic_search_ips when the user says the name is approximate, describes a similar site, or the wording has likely STT errors, "
     "and compare_ips_capacity to read one category across the sites already found. "
     "Say how many were found using total, then the main sites with name, municipality, phone, nature and level, "
     "warn that capacity is registered rather than currently available, and ask one follow-up question. "
     "Never invent an institution, service, address, phone, schedule, appointment, clinical recommendation, bed availability, "
     "or real-time availability. Installed capacity is a historical registered quantity at the dataset cutoff, never proof that "
     "a bed, room, ambulance, appointment, or service is currently available. If a tool returns no results, say so clearly."
+)
+
+_COMPACT_CONTEXT_INSTRUCTIONS = (
+    "Official Colombian IPS registry, active snapshot only. Use search_ips for exact name, location, nature, type, "
+    "or registered capacity; put names in query and capacity in capacity. Use semantic_search_ips for approximate, "
+    "descriptive, misspelled, or STT wording; use details/capacity by site_code and compare for known sites. "
+    "Report only tool evidence, state that installed capacity is registered rather than current availability, and say when there are no results. "
+    "Never invent services, addresses, phones, schedules, appointments, clinical advice, or availability."
+)
+
+CONTEXT_INSTRUCTIONS = (
+    _COMPACT_CONTEXT_INSTRUCTIONS
+    if get_agent_prompt_variant() is AgentPromptVariant.COMPACT
+    else _BASELINE_CONTEXT_INSTRUCTIONS
 )
 
 repository = IPSRepository(get_session_factory())
@@ -149,11 +168,16 @@ async def semantic_search_ips(
     snapshot = await repository.active_snapshot()
     if snapshot is None:
         return _envelope([]) | {"status": "no_active_snapshot"}
+    department, municipality = await repository.canonical_location(
+        snapshot.id,
+        department=args.department,
+        municipality=args.municipality,
+    )
     hits = await vector_store.search(
         args.query,
         snapshot_id=snapshot.id,
-        department=args.department,
-        municipality=args.municipality,
+        department=department,
+        municipality=municipality,
         limit=args.limit,
     )
     sites = await repository.sites_by_ids([hit.site_id for hit in hits])
@@ -184,7 +208,7 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolDefinition(
             "search_ips",
-            "Search the active official IPS snapshot by exact name, location, or registered capacity category.",
+            "Search by exact institution/provider name in query, location filters, or an exact registered category in capacity. Never put a service/capacity phrase in query.",
             SearchIPSArgs,
             search_ips,
             "read",
@@ -214,7 +238,7 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolDefinition(
             "semantic_search_ips",
-            "Find likely IPS sites by natural-language meaning and return exact site records from PostgreSQL.",
+            "Find likely IPS sites only when the name or wording is approximate, descriptive, misspelled, or affected by STT; do not use it for an exact name or concrete location supplied by the user; return exact PostgreSQL records.",
             SemanticSearchIPSArgs,
             semantic_search_ips,
             "read",

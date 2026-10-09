@@ -115,8 +115,6 @@ def scenario_from_oracle(text: str) -> str:
         return "nightclub"
     if "distorsi" in folded:
         return "distortion"
-    if "restaurante" in folded:
-        return "restaurant"
     if "rápido" in folded or "rapido" in folded:
         return "fast_speech"
     if "muletillas" in folded:

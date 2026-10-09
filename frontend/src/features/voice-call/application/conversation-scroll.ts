@@ -18,10 +18,6 @@ type LucideWindow = Window & {
   lucide?: { createIcons: (options?: object) => void };
 };
 
-function reducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-}
-
 function refreshIcons(): void {
   (window as LucideWindow).lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
 }
@@ -54,9 +50,9 @@ function ensureJumpButton(
 }
 
 /**
- * Keeps a call transcript pinned to its latest row until a person scrolls away.
- * The same controller is used by live calls and both replay renderers so the
- * pause/resume behavior stays identical across routes.
+ * Pins the transcript to the latest row until the person scrolls upward.
+ * Follow updates assign scrollTop directly so token growth does not restart
+ * a smooth scroll that never settles.
  */
 export function mountConversationScroll(options: ConversationScrollOptions = {}): ConversationScrollController {
   const conversation = options.conversation ?? document.querySelector<HTMLElement>('#conversation');
@@ -72,88 +68,85 @@ export function mountConversationScroll(options: ConversationScrollOptions = {})
     };
   }
 
-  const threshold = Math.max(24, options.threshold ?? 112);
+  const threshold = Math.max(24, options.threshold ?? 80);
   const { button, owned } = ensureJumpButton(scroller, options.jumpButton);
   let pausedByUser = false;
-  let userGesturePending = false;
-  let programmaticUntil = 0;
-  let scrollRest = 0;
-  let followFrame = 0;
+  let pinning = false;
+  let touchStartY = 0;
   let disposed = false;
 
   const atBottom = (): boolean => distanceFromBottom(scroller) <= threshold;
 
   const syncButton = (): void => {
     if (!button) return;
-    const away = !atBottom();
+    const away = pausedByUser && !atBottom();
     button.hidden = !away;
     button.setAttribute('aria-hidden', String(!away));
     button.classList.toggle('is-active', away);
   };
 
-  const markUserIntent = (): void => {
-    // A wheel/touch gesture is an explicit user action. It must be allowed to
-    // interrupt a smooth programmatic scroll immediately.
-    programmaticUntil = 0;
-    userGesturePending = true;
+  const pin = (): void => {
+    pinning = true;
+    scroller.scrollTop = scroller.scrollHeight;
+    window.requestAnimationFrame(() => {
+      if (disposed) return;
+      scroller.scrollTop = scroller.scrollHeight;
+      pinning = false;
+      syncButton();
+    });
   };
 
   const onScroll = (): void => {
-    if (disposed) return;
-    scroller.classList.add('is-scrolling');
-    window.clearTimeout(scrollRest);
-    scrollRest = window.setTimeout(() => scroller.classList.remove('is-scrolling'), 780);
-    if (userGesturePending) {
-      pausedByUser = !atBottom();
-      userGesturePending = false;
-    } else if (performance.now() >= programmaticUntil) {
-      if (atBottom()) pausedByUser = false;
-      else if (scroller.scrollHeight > scroller.clientHeight) pausedByUser = true;
-    }
+    if (disposed || pinning) return;
+    if (atBottom()) pausedByUser = false;
+    syncButton();
+  };
+
+  const onWheel = (event: WheelEvent): void => {
+    if (event.deltaY < -1) pausedByUser = true;
+    else if (event.deltaY > 1 && atBottom()) pausedByUser = false;
+    syncButton();
+  };
+
+  const onTouchStart = (event: TouchEvent): void => {
+    touchStartY = event.touches[0]?.clientY ?? 0;
+  };
+
+  const onTouchMove = (event: TouchEvent): void => {
+    const next = event.touches[0]?.clientY ?? touchStartY;
+    if (next - touchStartY > 8) pausedByUser = true;
+    else if (touchStartY - next > 8 && atBottom()) pausedByUser = false;
+    touchStartY = next;
+    syncButton();
+  };
+
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home') pausedByUser = true;
+    if ((event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === 'End') && atBottom()) pausedByUser = false;
     syncButton();
   };
 
   const scrollToLatest = (): void => {
     if (disposed) return;
     pausedByUser = false;
-    userGesturePending = false;
-    programmaticUntil = performance.now() + (reducedMotion() ? 80 : 1100);
-    scroller.scrollTo({
-      top: scroller.scrollHeight,
-      behavior: reducedMotion() ? 'auto' : 'smooth',
-    });
-    window.setTimeout(() => {
-      if (disposed) return;
-      if (atBottom()) pausedByUser = false;
-      syncButton();
-    }, reducedMotion() ? 90 : 1120);
-  };
-
-  const onJump = (): void => scrollToLatest();
-  const onUserGesture = (): void => markUserIntent();
-  const onKeyGesture = (event: KeyboardEvent): void => {
-    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) markUserIntent();
+    pin();
   };
 
   scroller.addEventListener('scroll', onScroll, { passive: true });
-  scroller.addEventListener('wheel', onUserGesture, { passive: true });
-  scroller.addEventListener('touchstart', onUserGesture, { passive: true });
-  scroller.addEventListener('pointerdown', onUserGesture, { passive: true });
-  scroller.addEventListener('keydown', onKeyGesture);
-  button?.addEventListener('click', onJump);
+  scroller.addEventListener('wheel', onWheel, { passive: true });
+  scroller.addEventListener('touchstart', onTouchStart, { passive: true });
+  scroller.addEventListener('touchmove', onTouchMove, { passive: true });
+  scroller.addEventListener('keydown', onKey);
+  button?.addEventListener('click', scrollToLatest);
   syncButton();
 
   return {
     follow: () => {
-      if (pausedByUser) {
+      if (disposed || pausedByUser) {
         syncButton();
         return;
       }
-      if (followFrame) return;
-      followFrame = window.requestAnimationFrame(() => {
-        followFrame = 0;
-        if (!pausedByUser) scrollToLatest();
-      });
+      pin();
     },
     scrollToLatest,
     isFollowing: () => !pausedByUser,
@@ -161,14 +154,11 @@ export function mountConversationScroll(options: ConversationScrollOptions = {})
       if (disposed) return;
       disposed = true;
       scroller.removeEventListener('scroll', onScroll);
-      scroller.removeEventListener('wheel', onUserGesture);
-      scroller.removeEventListener('touchstart', onUserGesture);
-      scroller.removeEventListener('pointerdown', onUserGesture);
-      scroller.removeEventListener('keydown', onKeyGesture);
-      button?.removeEventListener('click', onJump);
-      window.clearTimeout(scrollRest);
-      if (followFrame) window.cancelAnimationFrame(followFrame);
-      scroller.classList.remove('is-scrolling');
+      scroller.removeEventListener('wheel', onWheel);
+      scroller.removeEventListener('touchstart', onTouchStart);
+      scroller.removeEventListener('touchmove', onTouchMove);
+      scroller.removeEventListener('keydown', onKey);
+      button?.removeEventListener('click', scrollToLatest);
       if (owned) button?.remove();
     },
   };

@@ -1,10 +1,75 @@
 ---
 import AppLayout from '../layouts/AppLayout.astro';
-import EmptyState from '../components/ui/EmptyState.astro';
+import ContentLoader from '../components/ui/ContentLoader.astro';
+import TechCarousel from '../components/specifications/TechCarousel.astro';
+import '../styles/specifications.css';
+
+const interfaz = [
+  { name: 'Astro', src: '/brand-logos/astro.svg', use: 'UI' },
+  { name: 'TypeScript', src: '/brand-logos/typescript.svg', use: 'Tipos' },
+  { name: 'Node.js', src: '/brand-logos/nodedotjs.svg', use: 'Runtime' },
+  { name: 'ECharts', src: '/brand-logos/apacheecharts.svg', use: 'Gráficas' },
+  { name: 'Lucide', src: '/brand-logos/lucide.svg', use: 'Iconos' },
+];
+
+const local = [
+  { name: 'Python', src: '/brand-logos/python.svg', use: 'Lenguaje' },
+  { name: 'FastAPI', src: '/brand-logos/fastapi.svg', use: 'API' },
+  { name: 'PostgreSQL', src: '/brand-logos/postgresql.svg', use: 'Datos' },
+  { name: 'Redis', src: '/brand-logos/redis.svg', use: 'Caché' },
+  { name: 'Chroma', src: '/brand-logos/chroma.svg', use: 'Vectores' },
+  { name: 'Docker', src: '/brand-logos/docker.svg', use: 'Contenedores' },
+  { name: 'Hugging Face', src: '/brand-logos/huggingface.svg', use: 'Embeddings' },
+  { name: 'ElevenLabs', src: '/brand-logos/elevenlabs.svg', use: 'TTS' },
+];
+
+const integrations = [
+  { name: 'OpenAI', src: '/brand-logos/openai.svg', use: 'LLM' },
+  { name: 'Gemini', src: '/brand-logos/gemini.svg', use: 'LLM' },
+  { name: 'Telnyx', src: '/brand-logos/telnyx.svg', use: 'Llamadas', wordmark: true },
+  { name: 'Azure', src: '/brand-logos/azure.svg', use: 'Nube' },
+];
 ---
 
 <AppLayout title="Kognia — Especificaciones técnicas">
-  <section class="section-view section-view--empty" aria-label="Especificaciones técnicas">
-    <EmptyState icon="cpu" title="Aún no hay especificaciones técnicas." />
+  <section class="section-view specs-view" aria-label="Especificaciones técnicas">
+    <div class="specs-page">
+      <ContentLoader id="specsLoading" copy="Cargando especificaciones…" />
+      <div id="specsContent" hidden inert aria-hidden="true">
+        <header class="specs-heading">
+          <h1>Especificaciones técnicas</h1>
+          <p>La interfaz, lo que corre en local y los servicios externos.</p>
+        </header>
+        <div class="specs-stage">
+          <TechCarousel title="Interfaz" logos={interfaz} duration="42s" />
+          <TechCarousel title="Local" logos={local} reverse duration="56s" />
+          <TechCarousel title="Integraciones" logos={integrations} duration="62s" />
+        </div>
+      </div>
+    </div>
   </section>
 </AppLayout>
+
+<script>
+  import { revealLoadedContent, showContentLoader, waitForRouteSettle } from '../features/ui/loading-reveal';
+
+  function isSpecificationsRoute(): boolean {
+    const path = window.location.pathname;
+    return path === '/specifications' || path === '/specifications/';
+  }
+
+  async function revealSpecifications(): Promise<void> {
+    if (!isSpecificationsRoute()) return;
+    const loader = document.getElementById('specsLoading');
+    const content = document.getElementById('specsContent');
+    if (!loader || !content || content.dataset.revealed === 'true') return;
+    showContentLoader(loader, content);
+    await waitForRouteSettle();
+    if (!content.isConnected || !isSpecificationsRoute()) return;
+    await revealLoadedContent(loader, content);
+    content.dataset.revealed = 'true';
+  }
+
+  document.addEventListener('astro:page-load', () => { void revealSpecifications(); });
+  void revealSpecifications();
+</script>

@@ -1,1 +1,0 @@
-"""Deterministic demo booking domain."""

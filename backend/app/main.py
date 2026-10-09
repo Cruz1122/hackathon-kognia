@@ -80,6 +80,8 @@ from .commercial.router import router as commercial_router
 from .features.dev.router import router as dev_router
 from .telephony.audio import CANONICAL_RATE, resample_pcm16le, timeline_ms
 from .telephony.bridge import (
+    BACKCHANNEL_DELAY_SECONDS,
+    PCM_CHUNK_BYTES,
     agent_heard_ms,
     catch_up_customer_clock,
     mute_agent_from,
@@ -87,7 +89,10 @@ from .telephony.bridge import (
     remember_agent_pcm,
 )
 from .telephony.router import router as telnyx_router
-from .telephony.runtime import runtime as telephony_runtime
+from .telephony.runtime import (
+    runtime as telephony_runtime,
+    utterance_ready,
+)
 from .telephony.sessions import CallSession
 from .telephony.timeline import timeline
 from .whatsapp.router import router as whatsapp_router
@@ -130,8 +135,6 @@ CALL_BARGE_STRONG_RMS = 0.08
 CALL_BARGE_ARM_SECONDS = 0.2
 CALL_BARGE_HITS = 2
 CALL_BARGE_GRACE_SECONDS = 3.0
-CALL_SILENCE_SECONDS = 0.8
-CALL_MAX_UTTERANCE_SECONDS = 8.0
 CALL_TURN_GUARD_SECONDS = 2.5
 _recording_origin_tasks: set[asyncio.Task[None]] = set()
 @asynccontextmanager
@@ -169,6 +172,13 @@ async def lifespan(_app: FastAPI):
     logger.info("Loading Piper TTS before accepting requests")
     try:
         await asyncio.to_thread(tts_provider.preload)
+        from .agent.phrases import BACKCHANNEL
+        preload_phrases = getattr(tts_provider, "preload_phrases", None)
+        if callable(preload_phrases):
+            try:
+                await asyncio.to_thread(preload_phrases, BACKCHANNEL)
+            except Exception:
+                logger.exception("Piper backchannel warmup failed")
         tts_status = "ready"
         logger.info("Piper TTS is ready")
     except Exception:
@@ -264,7 +274,7 @@ async def health_ready() -> Response:
 
 @app.get("/health", deprecated=True, summary="Alias de compatibilidad para health/live")
 def health() -> dict[str, str]:
-    """Keep the legacy path as a liveness check; readiness is /health/ready."""
+    """Keep the compatibility path as a liveness check; readiness is /health/ready."""
     return health_live()
 
 
@@ -809,10 +819,15 @@ async def _send_call_event(
         logger.exception("Realtime event publish failed: %s", event_type)
 
 
-def _announce_agent_phrase(heard: CallSession, text: str) -> None:
+def _announce_agent_phrase(heard: CallSession, text: str, *, audio_kind: str = "final") -> None:
     catch_up_customer_clock(heard)
     at = agent_heard_ms(heard)
-    timeline.record(heard, "transcript.final", {"speaker": "agent", "text": text}, at_offset_ms=at)
+    timeline.record(
+        heard,
+        "transcript.final",
+        {"speaker": "agent", "text": text, "audio_kind": audio_kind},
+        at_offset_ms=at,
+    )
     heard.agent_state = "speaking"
     timeline.record(heard, "agent.state", {"state": "speaking"}, at_offset_ms=at)
 
@@ -846,6 +861,18 @@ def _customer_mark(heard: CallSession | None) -> int | None:
     return timeline_ms(heard.recording_offset_ms, len(heard.customer_pcm) // 2)
 
 
+def _record_voice_audio_timing(heard: CallSession | None, audio_kind: str) -> None:
+    if heard is None or not heard.voice_turn_started_at:
+        return
+    elapsed_ms = int((time.monotonic() - heard.voice_turn_started_at) * 1000)
+    if heard.voice_first_audio_ms is None:
+        heard.voice_first_audio_ms = elapsed_ms
+        timeline.record(heard, "audio.first_audio", {"kind": audio_kind, "latency_ms": elapsed_ms})
+    if audio_kind == "final" and heard.voice_useful_answer_ms is None:
+        heard.voice_useful_answer_ms = elapsed_ms
+        timeline.record(heard, "audio.useful_answer", {"latency_ms": elapsed_ms})
+
+
 async def _persist_recording_origin(call_id: uuid.UUID) -> None:
     from sqlalchemy import update
 
@@ -866,22 +893,43 @@ async def _speak_chunk(
     organization_id: uuid.UUID,
     conversation_id: uuid.UUID,
     heard: CallSession | None = None,
+    audio_kind: str = "final",
+    cached_audio: tuple[int, bytes] | None = None,
 ) -> None:
     if heard is not None and text.strip() and not heard.closed:
-        _announce_agent_phrase(heard, text)
+        _announce_agent_phrase(heard, text, audio_kind=audio_kind)
     if tts_status != "ready" or not text.strip():
         return
     await _send_call_event(
         websocket,
         "tts.started",
-        {"text": text},
+        {"text": text, "audio_kind": audio_kind},
         organization_id=organization_id,
         conversation_id=conversation_id,
     )
-    sample_rate = await asyncio.to_thread(tts_provider.sample_rate)
+    if cached_audio is None:
+        sample_rate = await asyncio.to_thread(tts_provider.sample_rate)
+        audio_stream = _stream_tts_chunk(text)
+    else:
+        sample_rate, pcm = cached_audio
+
+        async def cached_stream():
+            for index in range(0, len(pcm), PCM_CHUNK_BYTES):
+                yield pcm[index:index + PCM_CHUNK_BYTES]
+
+        audio_stream = cached_stream()
+    if audio_kind == "backchannel":
+        await _send_call_event(
+            websocket,
+            "agent.waiting",
+            {"text": text, "audio_kind": audio_kind},
+            organization_id=organization_id,
+            conversation_id=conversation_id,
+        )
     await websocket.send_json({"type": "tts.format", "sample_rate": sample_rate})
     try:
-        async for audio_chunk in _stream_tts_chunk(text):
+        async for audio_chunk in audio_stream:
+            _record_voice_audio_timing(heard, audio_kind)
             if heard is not None and not heard.closed:
                 _append_agent_pcm(heard, audio_chunk, sample_rate)
             await websocket.send_bytes(audio_chunk)
@@ -891,7 +939,7 @@ async def _speak_chunk(
     await _send_call_event(
         websocket,
         "tts.completed",
-        {},
+        {"audio_kind": audio_kind},
         organization_id=organization_id,
         conversation_id=conversation_id,
     )
@@ -900,6 +948,98 @@ async def _speak_chunk(
 def _call_demo_greeting() -> str:
     from .agent.phrases import IPS_GREETING
     return IPS_GREETING
+
+
+class BrowserAudioPlaybackCoordinator:
+    """Serialize browser voice output and gate one best-effort backchannel."""
+
+    def __init__(
+        self,
+        websocket: WebSocket,
+        *,
+        organization_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        heard: CallSession | None,
+    ) -> None:
+        self.websocket = websocket
+        self.organization_id = organization_id
+        self.conversation_id = conversation_id
+        self.heard = heard
+        self._lock = asyncio.Lock()
+        self._guard_ready = asyncio.Event()
+        self._work_ready = asyncio.Event()
+        self._final_ready = asyncio.Event()
+        self._allow_backchannel = True
+        self._backchannel_task: asyncio.Task[None] | None = None
+
+    def set_agent_guard(self, payload: dict[str, Any]) -> None:
+        self._allow_backchannel = bool(payload.get("allow_backchannel", True))
+        if payload.get("stage") in {None, "buscando"}:
+            self._work_ready.set()
+        self._guard_ready.set()
+
+    def mark_work_started(self) -> None:
+        self._work_ready.set()
+
+    def schedule_backchannel(self, text: str) -> None:
+        self._backchannel_task = asyncio.create_task(self._play_backchannel(text))
+        if self.heard is not None:
+            timeline.record(
+                self.heard,
+                "audio.backchannel.scheduled",
+                {"delay_ms": int(BACKCHANNEL_DELAY_SECONDS * 1000)},
+            )
+
+    async def _play_backchannel(self, text: str) -> None:
+        try:
+            await asyncio.sleep(BACKCHANNEL_DELAY_SECONDS)
+            await self._guard_ready.wait()
+            if self._final_ready.is_set() or not self._allow_backchannel:
+                return
+            if self.heard is not None and self.heard.closed:
+                return
+            if not self._work_ready.is_set():
+                return
+            cached_getter = getattr(tts_provider, "cached_audio", None)
+            cached_audio = cached_getter(text) if callable(cached_getter) else None
+            if cached_audio is None:
+                return
+            async with self._lock:
+                if self._final_ready.is_set() or (self.heard is not None and self.heard.closed):
+                    return
+                await _speak_chunk(
+                    self.websocket,
+                    text,
+                    organization_id=self.organization_id,
+                    conversation_id=self.conversation_id,
+                    heard=self.heard,
+                    audio_kind="backchannel",
+                    cached_audio=cached_audio,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Browser backchannel playback failed")
+
+    async def cancel_backchannel(self) -> None:
+        self._final_ready.set()
+        task = self._backchannel_task
+        self._backchannel_task = None
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def play_final(self, text: str) -> None:
+        await self.cancel_backchannel()
+        async with self._lock:
+            await _speak_chunk(
+                self.websocket,
+                text,
+                organization_id=self.organization_id,
+                conversation_id=self.conversation_id,
+                heard=self.heard,
+                audio_kind="final",
+            )
 
 
 async def _run_call_turn(
@@ -915,6 +1055,8 @@ async def _run_call_turn(
     heard: CallSession | None = None,
     customer_offset_ms: int | None = None,
 ) -> bool:
+    from .agent.phrases import BACKCHANNEL, pick
+
     try:
         await _persist_message(
             session,
@@ -953,24 +1095,28 @@ async def _run_call_turn(
     failed = False
     proposal_id = None
     last_done: dict[str, Any] = {}
-    reservation_confirmed = False
     trace_saved = False
     pending: asyncio.Queue[str | None] = asyncio.Queue()
+    coordinator = BrowserAudioPlaybackCoordinator(
+        websocket,
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+        heard=heard,
+    )
+    if heard is not None:
+        heard.voice_turn_started_at = time.monotonic()
+        heard.voice_first_audio_ms = None
+        heard.voice_useful_answer_ms = None
 
     async def speak_worker() -> None:
         while True:
             text = await pending.get()
             if text is None:
                 return
-            await _speak_chunk(
-                websocket,
-                text,
-                organization_id=organization_id,
-                conversation_id=conversation_id,
-                heard=heard,
-            )
+            await coordinator.play_final(text)
 
     speaker = asyncio.create_task(speak_worker())
+    coordinator.schedule_backchannel(pick(BACKCHANNEL))
 
     async def finalize_trace() -> None:
         nonlocal trace_saved
@@ -1009,15 +1155,16 @@ async def _run_call_turn(
             if name == 'done':
                 last_done = payload
                 proposal_id = payload.get('proposal_id')
-            if name in {"tool.started", "tool.completed", "rag.started", "rag.completed", "agent.signals"}:
-                if (name == "tool.completed" and payload.get("tool") == "create_booking"
-                        and payload.get("ok") is True):
-                    reservation_confirmed = True
+            if name in {"agent.guard", "tool.started", "tool.completed", "rag.started", "rag.completed", "agent.signals"}:
                 if heard is not None:
                     if name == "agent.signals":
                         timeline.record(heard, name, payload, at_offset_ms=customer_offset_ms)
                     else:
                         timeline.record(heard, name, payload)
+                if name == "agent.guard":
+                    coordinator.set_agent_guard(payload)
+                elif name in {"tool.started", "rag.started"}:
+                    coordinator.mark_work_started()
                 await _send_call_event(
                     websocket,
                     name,
@@ -1077,11 +1224,11 @@ async def _run_call_turn(
         await _send_call_event(
             websocket,
             "turn.completed",
-            {"text": answer, "end_call": reservation_confirmed and not failed},
+            {"text": answer, "end_call": False},
             organization_id=organization_id,
             conversation_id=conversation_id,
         )
-        return reservation_confirmed and not failed
+        return False
     except asyncio.CancelledError:
         failed = True
         speaker.cancel()
@@ -1120,6 +1267,12 @@ async def _run_call_turn(
             pass
         return False
     finally:
+        await coordinator.cancel_backchannel()
+        if heard is not None:
+            recorder.record_voice_timing(
+                first_audio_ms=heard.voice_first_audio_ms,
+                useful_answer_ms=heard.voice_useful_answer_ms,
+            )
         await finalize_trace()
 
 
@@ -1654,12 +1807,12 @@ async def call_socket(
                                 conversation_id=conversation_id,
                             )
                     prompt = last_partial.strip()
-                    silent = last_voice_at > 0 and now - last_voice_at >= CALL_SILENCE_SECONDS
-                    too_long = (
-                        first_voice_at > 0
-                        and now - first_voice_at >= CALL_MAX_UTTERANCE_SECONDS
-                    )
-                    if silent or ended or too_long:
+                    if utterance_ready(
+                        last_voice_at=last_voice_at,
+                        first_voice_at=first_voice_at,
+                        now=now,
+                        endpoint=ended,
+                    ):
                         await _start_turn(prompt)
                     continue
                 if ending_call:

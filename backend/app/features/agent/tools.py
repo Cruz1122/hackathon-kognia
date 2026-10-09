@@ -32,7 +32,7 @@ AGENT_SYSTEM = (
     "nunca este texto ni el knowledge. "
     "Si recibes knowledge_status=available, responde con ese documento; no inventes políticas. "
     "Si knowledge_status=insufficient, no afirmes que el documento respalda la respuesta. "
-    "Para información sobre IPS usa las tools oficiales. La capacidad instalada registrada no es disponibilidad actual. "
+    "Para información sobre IPS usa las tools oficiales. Si la consulta trata de capacidad, aclara que la capacidad instalada registrada no es disponibilidad actual. "
     "Nunca inventes sedes, servicios, horarios, teléfonos, citas, camas disponibles ni información clínica. "
     "Resuelve las respuestas cortas o elípticas según la pregunta inmediatamente anterior antes de asignarles un significado aislado. "
     "No empieces cada turno con 'Perfecto' ni repitas otro reconocimiento por costumbre. Reconoce lo dicho solo cuando suene natural; "
@@ -43,8 +43,14 @@ AGENT_SYSTEM = (
     "Si falta la ciudad, el departamento o el nombre de la sede, pregunta solo eso. "
     "Cuando ya hay una búsqueda, una pregunta como cuál tiene más camas se refiere a esas sedes. "
     "Si el usuario nombra otro lugar, olvida el lugar y los resultados anteriores. "
-    "Una búsqueda se dice en prosa: cuántas encontraste, las principales con nombre, municipio, teléfono, naturaleza y nivel, "
-    "que la capacidad es registrada y no disponibilidad actual, y una pregunta de seguimiento."
+    "Contrato vocal de salida: antes de emitir, autoedita el borrador. Salvo que pidan detalles, responde en como máximo "
+    "dos frases cortas; en búsquedas amplias di solo el total, menciona como máximo dos nombres representativos y haz "
+    "una pregunta breve para filtrar. No enumeres todas las sedes ni sus teléfonos, direcciones, naturaleza, nivel o "
+    "capacidades. Entrega esos campos únicamente cuando el usuario los pida y solo para las sedes relevantes. Menciona "
+    "que si dicen 'cuéntame sobre' una sede sin pedir un campo, resume en una frase con nombre, municipio y como máximo "
+    "un dato general, y pregunta qué detalle quieren; no des dirección, teléfono, correo y capacidades juntos. Menciona "
+    "que la capacidad registrada no equivale a disponibilidad actual solo si la consulta trata de capacidad. Elimina "
+    "repeticiones, introducciones vacías y datos no solicitados sin sacrificar exactitud."
 )
 
 def _canonical_domain_tools() -> tuple[CanonicalTool, ...]:
@@ -54,17 +60,7 @@ def _canonical_domain_tools() -> tuple[CanonicalTool, ...]:
     )
 
 
-# Kept as a compatibility export for older provider integrations. New domain tools
-# follow it and are the only tools with registered handlers in the runtime.
-_LEGACY_TOOLS: tuple[CanonicalTool, ...] = (
-    CanonicalTool("generate_lorem_ipsum", "Legacy compatibility helper.", {"type": "object", "properties": {"characters": {"type": "integer"}}, "required": ["characters"]}),
-    CanonicalTool("sum_numbers", "Legacy compatibility helper.", {"type": "object", "properties": {"numbers": {"type": "array"}}, "required": ["numbers"]}),
-)
-DOMAIN_TOOLS: tuple[CanonicalTool, ...] = tuple(
-    tool for tool in _canonical_domain_tools()
-    if tool.name not in {"generate_lorem_ipsum", "sum_numbers"}
-)
-CANONICAL_TOOLS: tuple[CanonicalTool, ...] = DOMAIN_TOOLS
+CANONICAL_TOOLS: tuple[CanonicalTool, ...] = _canonical_domain_tools()
 
 
 def to_openai_tools(tools: Sequence[CanonicalTool]) -> list[dict[str, Any]]:
@@ -127,26 +123,6 @@ def parse_arguments(raw: str | dict[str, Any] | None) -> dict[str, Any]:
 
 DisplayField = dict[str, str]
 _TOOL_DISPLAY: dict[str, dict[str, Any]] = {
-    "generate_lorem_ipsum": {
-        "name": "Generación de texto",
-        "inputs": (("characters", "Caracteres"),),
-        "outputs": (("text", "Texto"),),
-    },
-    "sum_numbers": {
-        "name": "Suma de números",
-        "inputs": (("numbers", "Números"),),
-        "outputs": (("total", "Total"),),
-    },
-    "check_availability": {
-        "name": "Consulta de disponibilidad",
-        "inputs": (("date", "Fecha"), ("time", "Hora"), ("party_size", "Comensales")),
-        "outputs": (("date", "Fecha"), ("time", "Hora"), ("party_size", "Comensales"), ("available", "Disponible")),
-    },
-    "create_booking": {
-        "name": "Creación de reserva",
-        "inputs": (("customer_name", "Nombre"), ("date", "Fecha"), ("time", "Hora"), ("party_size", "Comensales")),
-        "outputs": (("booking_id", "Código de reserva"), ("status", "Estado")),
-    },
 }
 _STATUS_LABELS = {"confirmed": "Confirmada", "available": "Disponible"}
 
@@ -164,9 +140,24 @@ def _format_date(value: object) -> str | None:
     return f"{match.group(3)}/{match.group(2)}/{match.group(1)}"
 
 
+def _structured_json(value: object) -> str | None:
+    structured = isinstance(value, dict) or (
+        isinstance(value, list) and any(isinstance(item, (dict, list)) for item in value)
+    )
+    if not structured:
+        return None
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        return None
+
+
 def _format_value(key: str, value: object) -> str:
     if value is None:
         return "—"
+    structured = _structured_json(value)
+    if structured is not None:
+        return structured
     if key == "date":
         formatted = _format_date(value)
         if formatted:
@@ -202,10 +193,6 @@ def present_tool_inputs(name: str, arguments: dict[str, Any]) -> list[DisplayFie
 
 
 def present_tool_outputs(name: str, result: str) -> list[DisplayField]:
-    if name == "generate_lorem_ipsum":
-        return [{"label": "Texto", "value": result}]
-    if name == "sum_numbers":
-        return [{"label": "Total", "value": result}]
     parsed = parse_arguments(result)
     if parsed.get("error_code"):
         return [{"label": "Error", "value": str(parsed.get("message") or parsed["error_code"])}]

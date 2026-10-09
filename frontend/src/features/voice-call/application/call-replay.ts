@@ -12,6 +12,8 @@ import { eventMarkIcon, paintCallWave, resizeWave, type WaveMark } from './wave-
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 import { mountConversationScroll } from './conversation-scroll';
 
+const ASSISTANT_NAME = 'Wane';
+
 type TimelineEvent = {
   type?: string;
   offset_ms: number;
@@ -698,8 +700,8 @@ export function bootCallReplay(
           : '';
         addItem(
           atMs,
-          `message-row ${customer ? 'customer' : 'agent'}${channel}`,
-          `<div class="message-wrap"><div class="message-meta">${customer ? '<span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i>' : '<i data-lucide="headset" aria-hidden="true"></i><span>Wane</span>'}</div><div class="message complete">${escapeHtml(displayText)}<span class="message-time">${clock(playbackMs)}</span>${reactions}</div>${technical}</div>`,
+          `message-row ${customer ? 'customer' : 'agent'}${!customer && eventPayload.audio_kind === 'backchannel' ? ' agent-waiting' : ''}${channel}`,
+          `<div class="message-wrap"><div class="message-meta">${customer ? '<span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i>' : `<i data-lucide="headset" aria-hidden="true"></i><span>${ASSISTANT_NAME}${eventPayload.audio_kind === 'backchannel' ? ' · esperando' : ''}</span>`}</div><div class="message complete">${escapeHtml(displayText)}<span class="message-time">${clock(playbackMs)}</span>${reactions}</div>${technical}</div>`,
         );
         return;
       }
@@ -726,7 +728,7 @@ export function bootCallReplay(
         addItem(
           atMs,
           `message-row ${customer ? 'customer' : 'agent'} channel-whatsapp`,
-          `<div class="message-wrap"><div class="message-meta">${customer ? '<span>Cliente · WhatsApp</span><i data-lucide="message-circle" aria-hidden="true"></i>' : '<i data-lucide="message-circle" aria-hidden="true"></i><span>Wane · WhatsApp</span>'}</div><div class="message complete">${escapeHtml(text)}<span class="message-time">${escapeHtml(new Date(String(event.occurred_at ?? '')).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }))}</span>${reactions}</div></div>`,
+          `<div class="message-wrap"><div class="message-meta">${customer ? '<span>Cliente · WhatsApp</span><i data-lucide="message-circle" aria-hidden="true"></i>' : `<i data-lucide="message-circle" aria-hidden="true"></i><span>${ASSISTANT_NAME} · WhatsApp</span>`}</div><div class="message complete">${escapeHtml(text)}<span class="message-time">${escapeHtml(new Date(String(event.occurred_at ?? '')).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }))}</span>${reactions}</div></div>`,
         );
         return;
       }
@@ -773,8 +775,8 @@ export function bootCallReplay(
         const time = clock(event.offset_ms);
         addItem(
           event.offset_ms,
-          'message-row agent',
-          `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message complete">${escapeHtml(String(payload.text ?? ''))}<span class="message-time">${time}</span></div></div>`,
+          `message-row agent${payload.audio_kind === 'backchannel' ? ' agent-waiting' : ''}`,
+          `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>${ASSISTANT_NAME}${payload.audio_kind === 'backchannel' ? ' · esperando' : ''}</span></div><div class="message complete">${escapeHtml(String(payload.text ?? ''))}<span class="message-time">${time}</span></div></div>`,
         );
       }
       if (event.type === 'tool.started') {

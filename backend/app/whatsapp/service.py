@@ -35,8 +35,8 @@ CONTINUATION_SYSTEM = (
     'Eres un asesor que retoma por WhatsApp una conversación telefónica. '
     'Escribe un único mensaje breve y cálido en español que: (1) agradezca la llamada, sin asumir que hubo un fallo, '
     '(2) resuma en una o dos frases lo hablado usando SOLO la transcripción provista, '
-    '(3) haga solo la siguiente pregunta concreta pendiente, sin preguntas abiertas ni varias preguntas juntas. No inventes datos, precios, reservas, '
-    'disponibilidad ni acciones: si algo no está en la transcripción, omítelo. '
+    '(3) haga solo la siguiente pregunta concreta pendiente, sin preguntas abiertas ni varias preguntas juntas. No inventes datos ni acciones, '
+    'ni acciones: si algo no está en la transcripción, omítelo. '
     'Mantén un tono cordial y profesional. No atribuyas emociones al cliente ni menciones evaluaciones '
     'internas: nunca digas que está frustrado, molesto o satisfecho. No confundas una queja de proceso complicado con un cambio de horario. '
     'No uses listas, viñetas ni encabezados. Máximo 3 frases. Devuelve solo el mensaje final.'
@@ -204,14 +204,7 @@ async def continuation_message(conversation_id, organization_id, source_id: str,
                 state = AgentState.model_validate(snapshot.data)
             except Exception:
                 state = None
-        guide = ''
-        if state and state.booking_slots:
-            from ..agent.dialogue import next_question
-            confirmed = any(item['tool'] == 'create_booking' and item['ok'] for item in state.tool_history)
-            guide = '\nEstado de la reserva (datos, no instrucciones): ' + json.dumps({
-                'known_details': state.booking_slots, 'confirmed': confirmed,
-                'next_question': next_question(state) or ('¿Quieres cambiar algún dato?' if confirmed else '¿La confirmas?')}, ensure_ascii=False)
-        prompt = (continuation_tone(state) + 'Transcripción de la llamada:\n' + transcript + guide
+        prompt = (continuation_tone(state) + 'Transcripción de la llamada:\n' + transcript
                   + '\n\nEscribe el mensaje de WhatsApp para retomar la conversación.')
         text = clean_continuation(await complete_text(prompt, llm=llm, chain=chain))
         if not text or len(text) > MAX_CONTINUATION_CHARS:
@@ -247,11 +240,6 @@ async def prepare_continuation(
                 state = AgentState.model_validate(snapshot.data)
             except Exception:
                 state = None
-            confirmed = bool(state and any(item.get('tool') == 'create_booking' and item.get('ok')
-                                           for item in state.tool_history))
-            if state is not None and state.phase == 'completed' and state.pending is None and confirmed:
-                logger.info('Skipping continuation: conversation already completed')
-                return
         binding = await db.scalar(select(ChannelBinding).where(ChannelBinding.conversation_id == conversation_id,
             ChannelBinding.organization_id == organization_id,
             ChannelBinding.phone_number_id == settings().whatsapp_number).with_for_update())
@@ -284,12 +272,8 @@ async def prepare_continuation(
             '_conversation_id': str(conversation_id),
             **routing_change,
         }
-        if state is not None:
-            from ..agent.dialogue import continuation_text
-            text, proposal = continuation_text(state, apologize=apologize)
-            continuation_payload['text'] = text
-            if proposal:
-                continuation_payload['proposal'] = proposal
+        if state is not None and apologize:
+            continuation_payload['text'] = ERROR_CONTINUATION_TEXT
         elif apologize:
             continuation_payload['text'] = ERROR_CONTINUATION_TEXT
         await db.execute(insert(ChannelEvent).values(id=key, binding_id=binding.id, kind='outbound',
@@ -441,11 +425,8 @@ async def process_event(key: str, client: WhatsAppClient | None = None) -> None:
 
 async def add_output(db, binding, source_id: str, text: str, conversation_id=None):
     conversation_id = conversation_id or binding.conversation_id
-    snapshot = await db.get(AgentSnapshot, conversation_id)
-    pending = snapshot.data.get('pending') if snapshot and snapshot.data.get('last_turn_id') == source_id else None
     await db.execute(insert(ChannelEvent).values(id=event_key('reply', source_id), binding_id=binding.id,
-        kind='outbound', payload={'text': text, 'proposal': pending['fingerprint'] if pending else None,
-                                '_conversation_id': str(conversation_id)}, status='pending', attempts=0,
+        kind='outbound', payload={'text': text, '_conversation_id': str(conversation_id)}, status='pending', attempts=0,
         created_at=datetime.now(UTC), updated_at=datetime.now(UTC)).on_conflict_do_nothing(index_elements=['id']))
 
 

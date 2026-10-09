@@ -74,7 +74,7 @@ INTEGRITY = (
     {'supported': 'Every claim and named item appears in the evidence. Greetings, questions, clarification requests, honest '
                   "statements that something is unavailable or failed, and referrals to 123 or the user's EPS are supported.",
      'unsupported': 'Any claim, number or named item absent from or contradicting the evidence, even inside a greeting, question '
-                    'or offer; any claimed action or outcome (booking, call, transfer, sent message) without a successful tool '
+                    'or offer; any claimed action or outcome (call, transfer, sent message) without a successful tool '
                     'result; registered capacity presented as real-time availability.',
      'uncertain': 'A concrete claim the evidence is genuinely ambiguous about; never just because the reply is short.'})
 

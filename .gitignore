@@ -5,6 +5,7 @@ backend/models/
 backend/.venv/
 backend/__pycache__/
 backend/**/*.pyc
+**/__pycache__/
 
 # Node
 frontend/node_modules/
@@ -24,6 +25,7 @@ frontend/.env
 
 artifacts/stt-eval/
 var/recordings/
+var/evals/
 
 # Astro
 .astro/

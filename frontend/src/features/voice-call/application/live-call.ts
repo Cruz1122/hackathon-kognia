@@ -6,7 +6,6 @@ import {
   toolDetailFromEvent,
 } from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
-import { showToast } from '../infrastructure/toast';
 import { accessTokenKey, redirectToLogin } from '../../auth/session-guard';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 import { mountConversationScroll } from './conversation-scroll';
@@ -30,6 +29,7 @@ type MonitorEvent = {
 const SAMPLE_RATE = 16000;
 const FRAME_HEADER = 11;
 const CHANNEL_AGENT = 2;
+const ASSISTANT_NAME = 'Wane';
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
@@ -184,10 +184,11 @@ export function bootLiveCall(
     return row;
   }
 
-  function messageHtml(speaker: 'customer' | 'agent', text: string, atMs: number): string {
+  function messageHtml(speaker: 'customer' | 'agent', text: string, atMs: number, waiting = false): string {
     const time = formatTime(atMs / 1000);
     if (speaker === 'agent') {
-      return `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message complete">${escapeHtml(text)}<span class="message-time">${time}</span></div></div>`;
+      const label = waiting ? `${ASSISTANT_NAME} · esperando` : ASSISTANT_NAME;
+      return `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>${label}</span></div><div class="message complete">${escapeHtml(text)}<span class="message-time">${time}</span></div></div>`;
     }
     return `<div class="message-wrap"><div class="message-meta"><span>Cliente</span><i data-lucide="user-round" aria-hidden="true"></i></div><div class="message complete">${escapeHtml(text)}<span class="message-time">${time}</span></div></div>`;
   }
@@ -201,7 +202,6 @@ export function bootLiveCall(
       atMs,
     );
     if (statusText) statusText.textContent = 'Conversación abierta';
-    showToast('Terminó el tramo de voz. La conversación sigue abierta.', 'info');
   }
 
   function handleEvent(event: MonitorEvent): void {
@@ -225,7 +225,6 @@ export function bootLiveCall(
         resetCallAgentSignals();
         connectAudio(activeCallId);
         if (statusText) statusText.textContent = 'En vivo';
-        showToast('Llamada retomada en la misma conversación', 'success');
       }
       return;
     }
@@ -240,7 +239,6 @@ export function bootLiveCall(
       const text = String(payload.text ?? '');
       appendRow('system-event', `<span class="call-ended-label">${escapeHtml(text)}</span>`, atMs);
       if (statusText) statusText.textContent = 'Conversación abierta · WhatsApp';
-      showToast(text, 'info');
       return;
     }
     if (type === 'agent.signals') {
@@ -274,7 +272,8 @@ export function bootLiveCall(
     }
     if (type === 'transcript.final' && payload.speaker === 'agent') {
       customerBubble = null;
-      appendRow(`message-row agent${payload.channel === 'whatsapp' ? ' channel-whatsapp' : ''}`, messageHtml('agent', String(payload.text ?? ''), atMs), atMs);
+      const waiting = payload.audio_kind === 'backchannel';
+      appendRow(`message-row agent${waiting ? ' agent-waiting' : ''}${payload.channel === 'whatsapp' ? ' channel-whatsapp' : ''}`, messageHtml('agent', String(payload.text ?? ''), atMs, waiting), atMs);
       return;
     }
     if (type === 'tool.started') {

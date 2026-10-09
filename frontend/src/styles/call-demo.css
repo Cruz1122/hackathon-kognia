@@ -65,7 +65,7 @@
   transform: none;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 .call-demo-page .app-content.is-scrolling { scrollbar-color: rgba(65,65,65,.28) transparent; }
 .call-demo-page .app-content::-webkit-scrollbar { width: 8px; }
@@ -86,6 +86,15 @@
 .player.is-live-listen .timecode,
 .player.is-live-listen .control-stack:not(:last-child) { display: none; }
 .monitor { position: relative; z-index: 3; min-width: 0; height: 72px; overflow: visible; cursor: pointer; user-select: none; touch-action: none; outline: none; --progress: 100%; }
+.call-stage-monitor { display: grid; align-content: center; gap: 8px; height: auto; min-height: 72px; cursor: default; touch-action: auto; user-select: auto; }
+.call-stage-kicker { margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: rgba(65, 65, 65, .55); }
+.call-stages { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.call-stages li { padding: 7px 12px; border-radius: var(--radius-full); background: rgba(65, 65, 65, .08); color: rgba(65, 65, 65, .45); font-size: 12px; font-weight: 700; line-height: 1; }
+.call-stages li.is-done { background: var(--ui-cream); color: var(--ui-graphite); }
+.call-stages li.is-active { background: var(--ui-accent); color: var(--ui-graphite); font-weight: 800; }
+.call-stages li.is-dim { opacity: .35; }
+.call-stages li[data-special].is-active { background: var(--ui-graphite); color: var(--ui-paper); opacity: 1; }
+.call-stages li[data-special].is-emergency { background: var(--ui-accent); color: var(--ui-graphite); }
 .monitor:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 58%, transparent); border-radius: var(--radius-ui); }
 .wave-window { position: absolute; inset: 0; z-index: 1; overflow: visible; pointer-events: none; }
 .wave-canvas { position: absolute; top: 0; left: -10px; display: block; width: calc(100% + 20px); height: 100%; max-width: none; }

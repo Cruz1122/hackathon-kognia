@@ -103,7 +103,7 @@ def test_call_summary_aggregates_token_usage() -> None:
             model="gpt-4o-mini",
             data={
                 "usage": {"prompt_tokens": 20, "completion_tokens": 6, "total_tokens": 26, "llm_calls": 2},
-                "spans": [{"name": "tool.create_booking"}],
+                "spans": [{"name": "tool.search_ips"}],
             },
         ),
     ]

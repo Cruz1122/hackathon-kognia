@@ -5,6 +5,8 @@ import { bindDetailClicks, mountSessionPanel, patchSessionFromAgentState, readDe
 import { applyCallAgentSignals } from './agent-signals';
 import { mountConversationScroll } from './conversation-scroll';
 
+const ASSISTANT_NAME = 'Wane';
+
 function lucideRefresh(): void {
   const lucide = (window as Window & { lucide?: { createIcons: (opts?: object) => void } }).lucide;
   lucide?.createIcons({ attrs: { 'stroke-width': 2.5 } });
@@ -140,10 +142,23 @@ export function bootEventsMonitor(apiUrl: string): () => void {
     if (agentBubble) return agentBubble;
     const row = appendRow(
       'message-row agent',
-      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>Wane</span></div><div class="message"></div></div>`,
+      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>${ASSISTANT_NAME}</span></div><div class="message"></div></div>`,
     );
     agentBubble = row.querySelector('.message');
     return agentBubble as HTMLElement;
+  }
+
+  function addWaiting(text: string): void {
+    const message = text.trim();
+    if (!message) return;
+    if (agentBubble) {
+      agentBubble.classList.add('complete');
+      agentBubble = null;
+    }
+    appendRow(
+      'message-row agent agent-waiting',
+      `<div class="message-wrap"><div class="message-meta"><i data-lucide="headset" aria-hidden="true"></i><span>${ASSISTANT_NAME} · esperando</span></div><div class="message complete">${escapeHtml(message)}</div></div>`,
+    );
   }
 
   function handleEnvelope(envelope: RealtimeEnvelope): void {
@@ -163,6 +178,9 @@ export function bootEventsMonitor(apiUrl: string): () => void {
     } else if (type === 'customer.transcript') {
       enterLiveFeed();
       finishCustomer(String(payload.text ?? ''));
+    } else if (type === 'agent.waiting') {
+      enterLiveFeed();
+      addWaiting(String(payload.text ?? ''));
     } else if (type === 'agent.token') {
       enterLiveFeed();
       const node = document.createElement('span');

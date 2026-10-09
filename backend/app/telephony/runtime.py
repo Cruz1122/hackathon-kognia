@@ -35,8 +35,21 @@ BARGE_ARM_SECONDS = 0.2
 BARGE_HITS = 2
 BARGE_GRACE_SECONDS = 3.0
 SPEECH_RMS = 0.008
-SILENCE_SECONDS = 0.8
-MAX_UTTERANCE_SECONDS = 8.0
+
+
+def _duration_setting(name: str, default: float, minimum: float) -> float:
+    """Read a bounded voice timing setting without making startup fragile."""
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, value)
+
+
+# Endpoint detection from the recognizer is useful, but it can fire on a short
+# pause or a competing voice. A real silence gap is the authoritative boundary.
+SILENCE_SECONDS = _duration_setting("VOICE_SILENCE_SECONDS", 1.15, 0.5)
+MAX_UTTERANCE_SECONDS = _duration_setting("VOICE_MAX_UTTERANCE_SECONDS", 12.0, 4.0)
 
 
 def utterance_ready(
@@ -46,8 +59,14 @@ def utterance_ready(
     now: float,
     endpoint: bool,
 ) -> bool:
-    if endpoint:
-        return True
+    """Return whether the turn can be closed without cutting a slow speaker.
+
+    Sherpa endpointing is advisory only. It may be raised while a speaker is
+    pausing or while another voice is present, so both transports wait for the
+    same silence window before finalizing. The duration cap remains the safety
+    valve for a continuously noisy or very long input.
+    """
+    del endpoint
     if last_voice_at > 0 and now - last_voice_at >= SILENCE_SECONDS:
         return True
     return first_voice_at > 0 and now - first_voice_at >= MAX_UTTERANCE_SECONDS
@@ -498,7 +517,7 @@ class TelephonyRuntime:
                         )
                     except Exception:
                         session.hangup_requested = False
-                        logger.exception("Post-booking Telnyx hangup failed")
+                        logger.exception("Post-call Telnyx hangup failed")
                 if session.presentation_mark and session.presentation_mark[0] == name:
                     from ..agent.store import mark_presented
                     await mark_presented(str(session.organization_id), str(session.conversation_id), session.presentation_mark[1])
@@ -846,6 +865,7 @@ def warm_voice_pipeline() -> None:
     """Run one Sherpa pass and one Piper phrase so the first call does not pay that cost."""
     from ..features.synthesis import service as piper
     from ..features.transcription import service as sherpa
+    from ..agent.phrases import BACKCHANNEL
 
     started = time.perf_counter()
     sherpa.preload_model()
@@ -855,6 +875,7 @@ def warm_voice_pipeline() -> None:
     piper.preload_tts()
     for _chunk in piper.stream_tts_audio("Hola."):
         pass
+    piper.preload_tts_phrases(BACKCHANNEL)
     from ..platform.rag.runtime import embeddings as rag_embeddings
 
     rag_embeddings.preload()

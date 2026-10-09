@@ -4,7 +4,6 @@ import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
 import { accessTokenKey, conversationIdKey, redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromAgentState, readDetail, refreshOpenDetail, resetSession, toolDetailFromEvent, writeDetail } from './detail-panel';
-import { showToast } from '../infrastructure/toast';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 import { mountConversationScroll, type ConversationScrollController } from './conversation-scroll';
 
@@ -34,16 +33,6 @@ function formatTime(seconds: number): string {
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
-}
-
-async function waitForMonitor(timeoutMs = 4000): Promise<CallMonitorAudio> {
-  const started = performance.now();
-  while (performance.now() - started < timeoutMs) {
-    const api = monitor();
-    if (api) return api;
-    await new Promise((resolve) => window.setTimeout(resolve, 20));
-  }
-  throw new Error('El espectrograma del monitor no está listo.');
 }
 
 function stealButton(id: string): HTMLButtonElement | null {
@@ -165,11 +154,12 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   }
 
   function syncControls(): void {
-    callBtn.disabled = live && !paused;
-    pauseBtn.disabled = !live || paused;
+    callBtn.disabled = live;
+    pauseBtn.disabled = !live;
     hangupBtn.disabled = !live;
     restartBtn.disabled = false;
-    setControl(callBtn, 'phone', paused ? 'Reanudar' : 'Llamar', paused ? 'Reanudar llamada' : live ? 'Llamada en curso' : 'Empezar llamada');
+    setControl(callBtn, 'phone', 'Llamar', live ? 'Llamada en curso' : 'Empezar llamada');
+    setControl(pauseBtn, paused ? 'play' : 'pause', paused ? 'Reanudar' : 'Pausa', paused ? 'Reanudar llamada' : 'Pausar llamada');
     lucideRefresh();
   }
 
@@ -222,7 +212,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   function announceListening(): void {
     if (listeningAnnounced) return;
     listeningAnnounced = true;
-    showToast('Te escucho…', 'info');
   }
 
   function holdPlayback(): void {
@@ -432,7 +421,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       connected = true;
       // A fresh socket has no held barge, so make sure playback is not stuck paused.
       bargePending = false;
-      pcm.resume();
+      if (!paused) pcm.resume();
       reconnectAttempts = 0;
       setConnectionStatus('connected', 'Llamada conectada');
       connectionHideTimer = window.setTimeout(() => setConnectionStatus('hidden'), 1400);
@@ -476,8 +465,10 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     } else if (type === 'tts.resume') {
       bargePending = false;
       listeningAnnounced = false;
-      pcm.resume();
-      hookTtsWave();
+      if (!paused) {
+        pcm.resume();
+        hookTtsWave();
+      }
     } else if (type === 'tts.cancel' || type === 'turn.cancelled') {
       bargePending = false;
       cancelPendingRetrieval();
@@ -532,8 +523,8 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     });
     current.addEventListener('message', (event) => {
       if (socket !== current || !live) return;
-      if (typeof event.data !== 'string') {
-        if (paused || ignoreTts) return;
+        if (typeof event.data !== 'string') {
+        if (ignoreTts) return;
         const bytes = new Uint8Array(event.data as ArrayBuffer);
         if (!pcmReady) {
           pcm.start(ttsRate);
@@ -634,13 +625,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     patchSession({ status: 'En vivo' });
     syncControls();
     bindSocket();
-    if (!waveApi) {
-      try {
-        waveApi = await waitForMonitor(1500);
-      } catch {
-        waveApi = monitor() ?? null;
-      }
-    }
+    waveApi = monitor() ?? waveApi;
     waveApi?.resetLiveWave?.();
     waveApi?.setPlaying?.(true);
   }
@@ -648,30 +633,22 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   async function resumeCall(): Promise<void> {
     if (!live || !paused) return;
     capture.primeContext();
-    pcm.prime();
     paused = false;
-    processing = false;
-    pcmReady = false;
-    bargePending = false;
-    listeningAnnounced = false;
+    pcm.resume();
+    pcm.prime();
     waveApi?.setPlaying?.(true);
+    setConnectionStatus('hidden');
     syncControls();
-    if (connected && sendSocketCommand({ type: 'pcm.start', sample_rate: 16000 })) void listen();
+    if (connected) void listen();
   }
 
   function pauseCall(): void {
     if (!live || paused) return;
     paused = true;
-    processing = false;
-    pcmReady = false;
-    bargePending = false;
     capture.stopPcmStream();
-    capture.cancelRecording();
-    sendSocketCommand({ type: 'pcm.stop' });
-    pcm.cancel();
-    unhookTtsWave();
+    pcm.pause();
     waveApi?.setPlaying?.(false);
-    setConnectionStatus('hidden');
+    setConnectionStatus('connected', 'Llamada en pausa');
     syncControls();
   }
 
@@ -700,7 +677,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     if (notify) setConnectionStatus('hidden');
     if (notify) {
       patchSession({ status: 'Finalizada' });
-      showToast('Llamada finalizada', 'success');
       appendRow(
         'system-event call-ended',
         `<span class="call-ended-label"><i data-lucide="phone-off"></i><span>Llamada finalizada · ${stamp()}</span></span>`,
@@ -721,34 +697,29 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
-      showToast(message, 'error');
     });
   });
   pauseBtn.addEventListener('click', () => {
-    pauseCall();
+    if (paused) void resumeCall();
+    else pauseCall();
   });
   hangupBtn.addEventListener('click', () => {
-    void hangup();
+    void hangup().then(() => {
+      window.location.assign('/calls');
+    });
   });
   restartBtn.addEventListener('click', () => {
     void restartCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo reiniciar la llamada.');
       note(message, 'phone-off');
-      showToast(message, 'error');
     });
   });
   syncControls();
-
-  void waitForMonitor().then((api) => {
-    waveApi = api;
-    if (live && !paused) api.setPlaying?.(true);
-  }).catch(() => undefined);
 
   if (autoStart) {
     void startCall().catch((error) => {
       const message = errorMessage(error, 'No se pudo iniciar la llamada.');
       note(message, 'phone-off');
-      showToast(message, 'error');
     });
   }
 

@@ -172,7 +172,7 @@ de despliegue: el runtime los escribe por tenant.
 
 El **backend** y el **worker** reciben `TELNYX_ENABLED`, `TELNYX_API_KEY`,
 `TELNYX_CONNECTION_ID` y `TELNYX_PHONE_NUMBER`. El worker no solo guarda
-grabaciones: los turnos de WhatsApp se procesan allí y `call_customer` marca la
+grabaciones: los turnos de WhatsApp se procesan allí y el canal marca la
 llamada de vuelta por Telnyx, así que sin esas variables el callback falla con
 `Telnyx is not configured`. `TELNYX_PUBLIC_KEY` y `TELNYX_WEBHOOK_HOST` solo los
 necesita el backend, que recibe los webhooks.
@@ -206,7 +206,7 @@ Callback URL a registrar en Meta: `https://<FQDN backend>/webhooks/whatsapp`.
 
 El workflow lo inyecta en el **backend** y en el **worker**. Sin él Jev queda no
 disponible (degradación segura): el turno sigue, sin señales nuevas, y la
-confirmación de una reserva pendiente la interpreta el modelo de respuesta.
+confirmación de una acción pendiente la interpreta el modelo de respuesta.
 Los turnos de WhatsApp corren en el worker, por eso también lo necesita.
 
 ## Primer despliegue

@@ -1,11 +1,16 @@
 """Bounded conversational prompts; never claim an external action succeeded."""
 import random
 
-HOLDING = (
-    'Dame un momento, por favor.',
-    'Permíteme revisar lo que tenemos pendiente.',
-    'Un instante, estoy revisando la información.',
+BACKCHANNEL = (
+    'Dame un segundo.',
+    'Claro, ya reviso.',
+    'Un momento, por favor.',
+    'Déjame comprobarlo.',
+    'Voy a revisar esa información.',
+    'Ya te cuento.',
 )
+# Compatibility name for the existing silence/holding callers.
+HOLDING = BACKCHANNEL
 RECOVERY = (
     'Para seguir, ¿qué necesitas gestionar?',
     '¿Qué te gustaría que revisemos primero?',

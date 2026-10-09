@@ -21,12 +21,10 @@ def expand_query(query: str) -> str:
         "cancelar": "cancelación",
         "cancele": "cancelación",
         "echar para atrás": "cancelar",
-        "correr la reserva": "cambiar reserva",
         "plata": "reembolso",
         "devuelven": "reembolso",
         "maleta": "equipaje",
         "me esperan": "tolerancia",
-        "guardan la mesa": "tolerancia reserva",
         "finde": "horario atención",
     }
     for source, replacement in aliases.items():

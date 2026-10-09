@@ -128,7 +128,10 @@ export class AudioCaptureAdapter {
     return {
       audio: {
         echoCancellation: true,
-        noiseSuppression: false,
+        // Let the browser's voice processor attenuate nearby conversations
+        // before the mono stream reaches Sherpa. The server still applies its
+        // own high-pass/gate because this constraint is only a best effort.
+        noiseSuppression: { ideal: true },
         autoGainControl: true,
         channelCount: 1,
       },

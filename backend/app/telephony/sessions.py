@@ -69,6 +69,10 @@ class CallSession:
     idle_since: float = field(default_factory=time.monotonic)
     last_silence_prompt: str | None = None
     awaiting_agent_reply: bool = False
+    playback_coordinator: Any = None
+    voice_turn_started_at: float = 0.0
+    voice_first_audio_ms: int | None = None
+    voice_useful_answer_ms: int | None = None
 
     def offset_ms(self) -> int:
         offset = int((time.monotonic() - self.monotonic_zero) * 1000)

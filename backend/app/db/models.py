@@ -39,7 +39,7 @@ class AgentSnapshot(Base):
 
 
 class AgentOperation(Base):
-    """Durable effect intent/result; also the demo booking ledger."""
+    """Durable effect intent/result ledger."""
     __tablename__ = 'agent_operations'
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)

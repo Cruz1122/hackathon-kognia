@@ -5,9 +5,10 @@ import EmptyState from '../ui/EmptyState.astro';
 interface Props {
   mode?: 'call' | 'dev';
   hangup?: boolean;
+  monitor?: 'wave' | 'stages';
 }
 
-const { mode = 'call', hangup = false } = Astro.props;
+const { mode = 'call', hangup = false, monitor = 'wave' } = Astro.props;
 ---
 
 <svg width="0" height="0" aria-hidden="true" style="position:absolute">
@@ -39,11 +40,18 @@ const { mode = 'call', hangup = false } = Astro.props;
         <span id="callConnectionStatusText">{mode === 'dev' ? 'Cargando replay técnico…' : 'Conectando…'}</span>
       </div>
       <section class="player" aria-label="Reproductor de llamada">
-        <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
-          <div class="wave-window" aria-hidden="true">
-            <canvas class="wave-canvas" id="waveCanvas"></canvas>
+        {monitor === 'stages' ? (
+          <div class="monitor call-stage-monitor" id="callStageMonitor">
+            <p class="call-stage-kicker" id="callStageKicker">Estado de la llamada</p>
+            <ol class="call-stages" id="callStages" aria-label="Estado del agente"></ol>
           </div>
-        </div>
+        ) : (
+          <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+            <div class="wave-window" aria-hidden="true">
+              <canvas class="wave-canvas" id="waveCanvas"></canvas>
+            </div>
+          </div>
+        )}
         <div class="transport">
           <div class="timecode"><span id="currentTime">00:00</span> <span style="opacity:.34">/</span> <span id="duration">00:00</span></div>
           <div class="controls" aria-label="Controles de llamada">
