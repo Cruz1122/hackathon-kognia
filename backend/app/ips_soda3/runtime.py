@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import httpx
 
-from ..platform.redis import get_redis_client
-from .cache import RedisCache
+from .cache import InMemoryCache
 from .client import Soda3Client
 from .config import IPSSettings
 from .service import IPSService
@@ -33,7 +32,7 @@ class IPSRuntime:
             )
             service = IPSService(
                 client,
-                RedisCache(get_redis_client()),
+                InMemoryCache(),
                 ttl=settings.cache_ttl,
                 empty_ttl=settings.empty_ttl,
                 stale_ttl=settings.stale_ttl,

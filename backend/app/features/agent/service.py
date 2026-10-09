@@ -124,7 +124,7 @@ async def stream_agent(
     if tool_context and tool_context.conversation_id and tool_context.organization_id:
         from ...agent.runtime import stateful_stream
         async for event in stateful_stream(prompt, messages=messages, llm=llm,
-                                          tool_context=tool_context, generate=generate):
+                                          tool_context=tool_context, generate=generate, trace=trace):
             yield event
         return
     # Compatibility path is read-only: ToolRegistry rejects every write.
@@ -135,7 +135,7 @@ async def stream_agent(
 async def _generate(
     prompt: str, *, messages=None, llm=None, tool_context=None, system_context: str = '', tools_enabled: bool = True,
     knowledge_sink: list[str] | None = None, trace: TraceRecorder | None = None,
-    use_document_rag: bool = True, history_limit: int | None = None,
+    use_document_rag: bool = False, history_limit: int | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Retry/fallback over the model chain using an explicit LLM contract."""
     provider = llm or default_llm

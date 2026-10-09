@@ -3,8 +3,8 @@
 Resolution order for each model:
 
 1. OpenRouter's public catalogue (`GET /api/v1/models`, no key needed), whose
-   `pricing.prompt` / `pricing.completion` are USD per token. Cached in Redis so
-   the demo stays fast and survives a flaky connection.
+   `pricing.prompt` / `pricing.completion` are USD per token. Kept in process
+   memory so the demo has no Redis dependency.
 2. The hardcoded list rates below (USD per million tokens, captured 2026-10-04)
    as an offline fallback.
 
@@ -15,15 +15,13 @@ models return ``None`` so callers can show "no price".
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-from ..config import get_pricing_cache_ttl_seconds, get_pricing_source_url
-from .redis import redis_get, redis_set
+from ..config import get_pricing_source_url
 
 logger = logging.getLogger("hackathon.pricing")
 
@@ -117,7 +115,7 @@ def fallback_price_for(model: str | None) -> ModelPrice | None:
 
 
 class _RemoteCache:
-    """In-memory mirror of the Redis-backed OpenRouter catalogue."""
+    """In-memory mirror of the OpenRouter catalogue."""
 
     def __init__(self) -> None:
         self.prices: dict[str, ModelPrice] = {}
@@ -170,15 +168,10 @@ def _cached_snapshot() -> _RemoteCache | None:
 
 
 async def refresh_prices(force: bool = False) -> _RemoteCache:
-    """Load the catalogue from Redis (then OpenRouter) into the in-memory cache."""
+    """Load the catalogue from OpenRouter into the in-memory cache."""
     global _remote_cache
     if _remote_cache is not None and _remote_cache.loaded and not force:
         return _remote_cache
-
-    cached = await _read_redis_cache()
-    if cached is not None and cached.loaded and not force:
-        _remote_cache = cached
-        return cached
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_SECONDS)) as client:
@@ -194,7 +187,6 @@ async def refresh_prices(force: bool = False) -> _RemoteCache:
         remote.prices = prices
         remote.loaded = True
         _remote_cache = remote
-        await _write_redis_cache(prices)
         return remote
 
     # Nothing fetched: keep any stale in-memory copy, else mark fallback-only.
@@ -203,48 +195,8 @@ async def refresh_prices(force: bool = False) -> _RemoteCache:
     return _remote_cache
 
 
-async def _read_redis_cache() -> _RemoteCache | None:
-    try:
-        raw = await redis_get(CACHE_KEY)
-    except Exception:
-        return None
-    if not raw:
-        return None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    prices = _parse_catalogue({"data": payload.get("data") if isinstance(payload, dict) else None})
-    if not prices:
-        return None
-    remote = _RemoteCache()
-    remote.prices = prices
-    remote.loaded = True
-    return remote
-
-
-async def _write_redis_cache(prices: dict[str, ModelPrice]) -> None:
-    serializable = {
-        "data": [
-            {
-                "id": model_id,
-                "pricing": {
-                    "prompt": price.input_per_million / 1_000_000,
-                    "completion": price.output_per_million / 1_000_000,
-                    **({"input_cache_read": price.cached_input_per_million / 1_000_000} if price.cached_input_per_million else {}),
-                },
-            }
-            for model_id, price in prices.items()
-        ]
-    }
-    try:
-        await redis_set(CACHE_KEY, json.dumps(serializable), ttl=get_pricing_cache_ttl_seconds())
-    except Exception:
-        logger.warning("Pricing Redis cache write failed")
-
-
 def price_for(model: str | None) -> ModelPrice | None:
-    """Synchronous lookup: in-memory/Redis catalogue first, then hardcoded fallback."""
+    """Synchronous lookup: in-memory catalogue first, then hardcoded fallback."""
     if _remote_cache is not None and _remote_cache.loaded:
         price = _remote_cache.lookup(model) if model else None
         if price is not None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
 from typing import Any
@@ -8,8 +7,10 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import get_analytics_cache_ttl_seconds
 from ..db.models import Organization
+# Kept as module attributes for compatibility with older tests/integrations.
+# Production analytics deliberately uses PostgreSQL as its source of truth and
+# does not perform Redis cache I/O.
 from ..platform.redis import redis_get, redis_incr, redis_set
 
 
@@ -29,28 +30,17 @@ class AnalyticsCache:
         return int(value or 0)
 
     async def get(self, key: str) -> dict[str, Any] | None:
-        try:
-            value = await redis_get(key)
-            if value is None:
-                return None
-            payload = json.loads(value)
-            return payload if isinstance(payload, dict) else None
-        except Exception:
-            return None
+        del key
+        return None
 
     async def set(self, key: str, payload: dict[str, Any]) -> bool:
-        try:
-            return await redis_set(key, json.dumps(payload, default=str, separators=(",", ":")), ttl=get_analytics_cache_ttl_seconds())
-        except Exception:
-            return False
+        del key, payload
+        return False
 
     async def invalidate(self, organization_id: uuid.UUID) -> bool:
-        """Keep the pre-revision Redis invalidation API for older integrations."""
-        try:
-            await redis_incr(version_key(organization_id))
-            return True
-        except Exception:
-            return False
+        """Keep the invalidation API without introducing a Redis dependency."""
+        del organization_id
+        return True
 
 
 async def bump_version(session: AsyncSession, organization_id: uuid.UUID) -> None:

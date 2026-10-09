@@ -12,11 +12,10 @@ import httpx
 from dotenv import load_dotenv
 
 from ...db.session import dispose_engine, get_session_factory
-from ...ips_soda3.cache import RedisCache
+from ...ips_soda3.cache import InMemoryCache
 from ...ips_soda3.client import Soda3Client
 from ...ips_soda3.config import IPSSettings
 from ...ips_soda3.service import IPSService
-from ...platform.redis import close_redis, get_redis_client
 from .ingestion import IPSIngestionService
 from .repository import IPSRepository
 from .vector_store import IPSVectorStore
@@ -39,7 +38,7 @@ async def run(*, page_size: int, max_pages: int) -> dict:
                 timeout=settings.http_timeout,
                 max_attempts=settings.max_attempts,
             ),
-            RedisCache(get_redis_client()),
+            InMemoryCache(),
             ttl=settings.cache_ttl,
             empty_ttl=settings.empty_ttl,
             stale_ttl=settings.stale_ttl,
@@ -64,12 +63,11 @@ async def _main(page_size: int, max_pages: int) -> int:
         print(f"IPS ingestion failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     finally:
-        await close_redis()
         await dispose_engine()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ingest official IPS data into PostgreSQL and Chroma")
+    parser = argparse.ArgumentParser(description="Ingest official IPS data from SODA3 into PostgreSQL")
     parser.add_argument("--page-size", type=int, default=1000)
     parser.add_argument("--max-pages", type=int, default=1000)
     args = parser.parse_args()

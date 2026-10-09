@@ -18,6 +18,11 @@ MAX_JOB_ATTEMPTS = 3
 logger = logging.getLogger("hackathon.queue")
 
 
+def _redis_enabled() -> bool:
+    """Redis is opt-in for legacy background jobs; production runs without it."""
+    return os.getenv("REDIS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Job:
     type: str
@@ -66,6 +71,8 @@ def parse_job(raw: str | bytes) -> Job:
 
 
 async def enqueue_enrichment(organization_id: uuid.UUID, conversation_id: uuid.UUID) -> bool:
+    if not _redis_enabled():
+        return False
     try:
         await redis_push(
             JOB_QUEUE_KEY,
@@ -77,6 +84,8 @@ async def enqueue_enrichment(organization_id: uuid.UUID, conversation_id: uuid.U
 
 
 async def enqueue_channel_work() -> bool:
+    if not _redis_enabled():
+        return False
     try:
         await redis_push(JOB_QUEUE_KEY, Job('channel_work', uuid.UUID(int=0), uuid.UUID(int=0)).to_json())
         return True
@@ -89,6 +98,8 @@ async def enqueue_recording(
     conversation_id: uuid.UUID,
     recording_id: uuid.UUID,
 ) -> bool:
+    if not _redis_enabled():
+        return False
     try:
         await redis_push(
             JOB_QUEUE_KEY,

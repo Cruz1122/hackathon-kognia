@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ...ips_soda3.schema import NormalizedDataset, normalize_dataset
-from ...platform.redis import redis_incr
 from .repository import IPSRepository
 from .vector_store import IPSVectorStore
 
@@ -133,10 +132,9 @@ class IPSIngestionService:
 
     @staticmethod
     async def _invalidate_version_cache() -> None:
-        try:
-            await redis_incr("ips:dataset:version")
-        except Exception:
-            logger.warning("IPS cache version invalidation failed", exc_info=True)
+        # SODA3 is queried live and its cache is process-local; no Redis
+        # invalidation is needed in the production voice path.
+        return None
 
 
 __all__ = ["IPSIngestionService"]

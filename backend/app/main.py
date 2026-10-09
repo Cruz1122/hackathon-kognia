@@ -74,7 +74,6 @@ from .providers import (
 from .providers.contracts import LLMProvider, SpeechToTextProvider, TextToSpeechProvider
 from .realtime.events import RealtimeEvent
 from .realtime.hub import RealtimeHub
-from .platform.rag.runtime import embeddings as rag_embeddings
 from .analytics.router import router as analytics_router
 from .platform.queue import enqueue_enrichment
 from .commercial.router import router as commercial_router
@@ -185,11 +184,6 @@ async def lifespan(_app: FastAPI):
     except Exception:
         tts_status = "error"
         logger.exception("ElevenLabs TTS is not configured")
-    try:
-        await asyncio.to_thread(rag_embeddings.preload)
-        logger.info("E5 embeddings are ready")
-    except Exception:
-        logger.exception("E5 embeddings failed to load during backend startup")
     from .telephony.runtime import start_telephony, stop_telephony
 
     await start_telephony()

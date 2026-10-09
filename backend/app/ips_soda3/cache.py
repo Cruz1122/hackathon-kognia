@@ -5,9 +5,45 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class InMemoryCache:
+    """Process-local cache for the live SODA3 adapter.
+
+    Production deliberately does not use Redis: SODA3 remains the only
+    external source for IPS data, and a restart simply repopulates this cache.
+    """
+
+    def __init__(self, *, namespace: str = "ips:soda3:v1") -> None:
+        self._namespace = namespace
+        self._values: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def key_for(self, payload: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {"dataset": "s2ru-bqt6", "payload": payload},
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return f"{self._namespace}:{digest}"
+
+    async def get(self, key: str) -> dict[str, Any] | None:
+        item = self._values.get(key)
+        if item is None:
+            return None
+        expires_at, value = item
+        if expires_at <= time.monotonic():
+            self._values.pop(key, None)
+            return None
+        return value
+
+    async def set(self, key: str, value: dict[str, Any], *, ttl: int) -> None:
+        self._values[key] = (time.monotonic() + ttl, value)
 
 
 class RedisCache:

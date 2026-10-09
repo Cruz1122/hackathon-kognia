@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from redis.asyncio import Redis
@@ -11,7 +12,14 @@ from ..config import get_redis_url
 _client: Redis[str] | None = None
 
 
+def _enabled() -> bool:
+    value = os.getenv("REDIS_ENABLED", "false").strip().lower()
+    return value in {"1", "true", "yes", "on"} or os.getenv("RUN_REDIS_INTEGRATION") == "1"
+
+
 def get_redis_client() -> Redis[str]:
+    if not _enabled():
+        raise RuntimeError("Redis is disabled; use SODA3 as the live IPS data source")
     global _client
     if _client is None:
         _client = Redis.from_url(

@@ -874,10 +874,6 @@ def warm_voice_pipeline() -> None:
     sherpa.finish_stream(stream, 16000)
     voice.preload_tts()
     voice.preload_tts_phrases(BACKCHANNEL)
-    from ..platform.rag.runtime import embeddings as rag_embeddings
-
-    rag_embeddings.preload()
-    rag_embeddings.embed_queries(["hola"])
     logger.warning("Voice pipeline warmed in %.1fs", time.perf_counter() - started)
 
 
