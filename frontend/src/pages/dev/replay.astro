@@ -57,10 +57,16 @@ import '../../styles/dev-replay.css';
         redirectToLogin();
         return;
       }
+      const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+      if (!freshToken) {
+        pendingId = '';
+        redirectToLogin();
+        return;
+      }
       cleanup?.();
       cleanup = bootCallReplay(
         apiUrl,
-        token,
+        freshToken,
         callId,
         () => { void revealReplay(); },
         (reason) => { void revealError(reason); },

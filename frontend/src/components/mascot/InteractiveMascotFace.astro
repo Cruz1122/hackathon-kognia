@@ -71,7 +71,7 @@ const id = `interactive-mascot-${crypto.randomUUID()}`;
 <style>
   .interactive-mascot {
     display: grid;
-    width: 100%;
+    width: var(--interactive-mascot-width, 100%);
     aspect-ratio: 1;
     place-items: center;
     padding: 0;

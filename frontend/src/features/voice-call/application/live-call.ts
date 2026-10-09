@@ -7,6 +7,7 @@ import {
 } from './detail-panel';
 import { completeRetrievalCard, createRetrievalCardMarkup } from './retrieval-card';
 import { showToast } from '../infrastructure/toast';
+import { accessTokenKey, redirectToLogin } from '../../auth/session-guard';
 import { applyCallAgentSignals, resetCallAgentSignals } from './agent-signals';
 import { mountConversationScroll } from './conversation-scroll';
 
@@ -55,6 +56,7 @@ export function bootLiveCall(
   onReady?: () => void,
   onError?: (reason: string) => void,
 ): () => Promise<void> {
+  const currentToken = (): string => sessionStorage.getItem(accessTokenKey)?.trim() || token.trim();
   const conversation = document.querySelector('#conversation');
   const conversationEmpty = document.querySelector<HTMLElement>('#conversationEmpty');
   const status = document.querySelector<HTMLElement>('#callConnectionStatus');
@@ -120,7 +122,7 @@ export function bootLiveCall(
   function loadAgentState(conversationId: string): void {
     if (!conversationId) return;
     void fetch(`${apiUrl}/conversations/${conversationId}/agent-state`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${currentToken()}` },
     }).then(async (response) => {
       if (!response.ok || disposed) return;
       patchSessionFromAgentState(await response.json());
@@ -345,14 +347,17 @@ export function bootLiveCall(
     const socket = new WebSocket(socketUrl(apiUrl, `/ws/calls/${id}/audio`));
     audioSocket = socket;
     socket.binaryType = 'arraybuffer';
-    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'auth', token })));
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'auth', token: currentToken() })));
     socket.addEventListener('message', (event) => {
       if (socket === audioSocket && event.data instanceof ArrayBuffer) playFrame(event.data);
+    });
+    socket.addEventListener('close', (event) => {
+      if (socket === audioSocket && event.code === 4401) redirectToLogin();
     });
   }
   connectAudio(callId);
 
-  void fetch(`${apiUrl}/calls/${callId}`, { headers: { Authorization: `Bearer ${token}` } })
+  void fetch(`${apiUrl}/calls/${callId}`, { headers: { Authorization: `Bearer ${currentToken()}` } })
     .then(async (response) => {
       if (!response.ok || disposed) return;
       const call = await response.json() as {
@@ -368,7 +373,7 @@ export function bootLiveCall(
 
   const monitorSocket = new WebSocket(socketUrl(apiUrl, '/ws/calls/monitor'));
   monitorSocket.addEventListener('open', () => {
-    monitorSocket.send(JSON.stringify({ type: 'auth', token }));
+    monitorSocket.send(JSON.stringify({ type: 'auth', token: currentToken() }));
     monitorSocket.send(JSON.stringify({ type: 'subscribe.call', call_id: callId }));
   });
   monitorSocket.addEventListener('message', (event) => {
@@ -398,6 +403,7 @@ export function bootLiveCall(
       if (statusText) statusText.textContent = reason;
       notifyError(reason);
     }
+    if (event.code === 4401) redirectToLogin();
   });
   monitorSocket.addEventListener('error', () => {
     const reason = 'No se pudo conectar con el monitor de esta llamada.';
@@ -408,7 +414,7 @@ export function bootLiveCall(
 
   const endWatch = window.setInterval(() => {
     if (ended || disposed) return;
-    void fetch(`${apiUrl}/calls`, { headers: { Authorization: `Bearer ${token}` } })
+    void fetch(`${apiUrl}/calls`, { headers: { Authorization: `Bearer ${currentToken()}` } })
       .then(async (response) => {
         if (!response.ok || ended || disposed) return;
         const body = await response.json() as { calls?: Array<{ id: string }> };

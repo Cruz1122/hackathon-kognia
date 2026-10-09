@@ -241,10 +241,15 @@ import '../styles/phone.css';
 
     .auth-panel.is-app .login-brand {
       flex-direction: row;
+      width: auto;
       justify-content: flex-start;
       text-align: left;
-      gap: 12px;
+      gap: 14px;
       color: var(--ui-paper);
+    }
+
+    .auth-panel.is-app .login-topbar {
+      justify-content: center;
     }
 
     .login-face-wrap {
@@ -259,6 +264,39 @@ import '../styles/phone.css';
       transition: width 1.55s cubic-bezier(.32, .04, .18, 1);
     }
 
+    /* During the login wipe the real lockup keeps participating in layout so
+       the sidebar can animate normally. Its visual copy is rendered in a
+       viewport layer with explicit start/end boxes instead of following the
+       intermediate flex/grid geometry. */
+    .auth-panel.is-wipe-proxy .login-face-wrap,
+    .auth-panel.is-wipe-proxy .login-name {
+      visibility: hidden !important;
+    }
+
+    .login-wipe-proxy {
+      position: fixed !important;
+      z-index: 100 !important;
+      display: block !important;
+      box-sizing: border-box !important;
+      margin: 0 !important;
+      pointer-events: none !important;
+      transform-origin: top left !important;
+      transition: none !important;
+      animation: none !important;
+      visibility: visible !important;
+    }
+
+    .login-wipe-proxy.login-face-wrap {
+      display: grid !important;
+      place-items: center;
+      aspect-ratio: auto !important;
+    }
+
+    .login-wipe-proxy.login-name {
+      text-align: center;
+      white-space: nowrap;
+    }
+
     .login-face {
       display: block;
       width: 100%;
@@ -270,6 +308,7 @@ import '../styles/phone.css';
     }
 
     .auth-panel.is-app .login-face-wrap {
+      --interactive-mascot-width: var(--ui-brand-face-size);
       width: var(--ui-brand-face-size);
       /* Keep width (not flex-basis) as the animated main size so the face
          shrinks together with the label during the login wipe. */
@@ -302,6 +341,7 @@ import '../styles/phone.css';
       margin-top: 0;
       font-size: 1.65rem;
       font-weight: 800;
+      letter-spacing: normal;
     }
 
     .app-nav {
@@ -312,6 +352,7 @@ import '../styles/phone.css';
       overflow: hidden;
       display: flex;
       flex-direction: column;
+      align-items: center;
       gap: 6px;
       opacity: 0;
       visibility: hidden;
@@ -344,10 +385,11 @@ import '../styles/phone.css';
     .app-nav__item,
     .app-nav__label {
       display: grid;
-      grid-template-columns: 28px minmax(0, 1fr);
+      grid-template-columns: 28px max-content;
       align-items: center;
       gap: 16px;
-      width: min(100%, 320px);
+      width: fit-content;
+      max-width: 100%;
       min-width: 0;
       margin: 0 auto;
       border: 0;
@@ -432,7 +474,8 @@ import '../styles/phone.css';
     .app-nav__children {
       display: grid;
       grid-template-rows: 0fr;
-      width: min(100%, 320px);
+      width: fit-content;
+      max-width: 100%;
       margin-inline: auto;
       padding-left: 44px;
       min-width: 0;
@@ -670,6 +713,16 @@ import '../styles/phone.css';
     .auth-panel.no-wipe .detail-title,
     .auth-panel.no-wipe .detail-field {
       transition: none !important;
+    }
+
+    /* This class is only applied to an off-screen measuring copy used to get
+       the stable app-layout destination before the live wipe starts. */
+    .auth-panel.is-wipe-measuring,
+    .auth-panel.is-wipe-measuring *,
+    .auth-panel.is-wipe-measuring *::before,
+    .auth-panel.is-wipe-measuring *::after {
+      transition: none !important;
+      animation: none !important;
     }
 
     .auth-copy { display: grid; gap: 5px; margin-bottom: 42px; }
@@ -1352,7 +1405,10 @@ import '../styles/phone.css';
 
     @media (max-width: 1100px) {
       .auth-panel:not(.is-app) { --left-rail: 36%; }
-      .auth-panel:not(.is-app) .login-face-wrap { width: clamp(72px, 22vw, 112px); }
+      .auth-panel:not(.is-app) .login-face-wrap {
+        --interactive-mascot-width: clamp(72px, 22vw, 112px);
+        width: var(--interactive-mascot-width);
+      }
       .auth-panel:not(.is-app) .login-name { font-size: clamp(1.7rem, 3.2vw, 2.8rem); }
       .page { width: 100%; padding: 0; }
       .topline { justify-content: flex-start; }
@@ -1418,7 +1474,11 @@ import '../styles/phone.css';
           opacity .7s cubic-bezier(.32, .04, .18, 1),
           transform 1.05s cubic-bezier(.32, .04, .18, 1);
       }
-      .auth-panel:not(.is-app) .login-face-wrap { width: clamp(72px, 22vw, 112px); flex: 0 0 auto; }
+      .auth-panel:not(.is-app) .login-face-wrap {
+        --interactive-mascot-width: clamp(72px, 22vw, 112px);
+        width: var(--interactive-mascot-width);
+        flex: 0 0 auto;
+      }
       .auth-panel:not(.is-app) .login-name { width: auto; margin-top: 0; font-size: clamp(2rem, 9vw, 2.5rem); }
       .auth-panel:not(.is-app) .login-right { display: flex; width: 100%; height: auto; min-height: calc(100svh - var(--mobile-login-top-height)); align-items: center; justify-content: center; padding: 64px 20px; overflow: visible; transition: min-height 1.05s cubic-bezier(.32, .04, .18, 1); }
       .auth-panel:not(.is-app) .login-form-content { position: relative; inset: auto; width: min(100%, 430px); transform: none; }
@@ -1442,20 +1502,22 @@ import '../styles/phone.css';
       }
       .auth-panel.is-app .login-topbar { justify-content: space-between; }
       .auth-panel.is-app .login-brand { width: auto; justify-content: flex-start; }
-      .auth-panel.is-app .login-face-wrap { display: none; }
       .auth-panel.is-app.is-nav-ready .mobile-nav-toggle { display: grid; width: 32px; height: 32px; place-items: center; align-self: center; margin-top: 0; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ui-amber); cursor: pointer; padding: 4px; }
       .auth-panel.is-app .mobile-nav-toggle svg { width: 20px; height: 20px; transition: transform .3s ease; }
       .auth-panel.is-app:not(.is-rail-collapsed) .mobile-nav-toggle svg { transform: rotate(180deg); }
       .auth-panel.is-app .app-content { padding: 0 16px max(150px, 20vh); }
       .player-wrap { margin: 0 -16px; padding: 14px 16px 12px; }
-      .auth-panel.is-app .login-face-wrap { width: 40px; }
-      .auth-panel.is-app .login-name { font-size: 1.35rem; margin-top: 0; }
+      .auth-panel.is-app .login-face-wrap {
+        --interactive-mascot-width: var(--ui-brand-face-size);
+        width: var(--interactive-mascot-width);
+      }
+      .auth-panel.is-app .login-name { font-size: 1.65rem; margin-top: 0; letter-spacing: normal; }
       .auth-panel.is-app .login-right { min-height: 58dvh; }
       .call-scroll-jump { position: fixed; right: 18px; bottom: max(18px, env(safe-area-inset-bottom)); }
       .auth-panel.is-app.is-nav-ready .app-nav { height: 0; margin-top: 0; opacity: 0; overflow: hidden; pointer-events: none; visibility: hidden; transform: translateY(-8px); }
       .auth-panel.is-app.is-nav-ready:not(.is-rail-collapsed) .app-nav { height: auto; margin-top: 14px; opacity: 1; overflow-x: hidden; overflow-y: auto; pointer-events: auto; visibility: visible; transform: none; }
       .auth-panel.is-app .app-nav { align-items: stretch; }
-      .auth-panel.is-app .app-nav__item, .auth-panel.is-app .app-nav__label { width: 100%; margin-inline: 0; }
+      .auth-panel.is-app .app-nav__item, .auth-panel.is-app .app-nav__label { grid-template-columns: 28px minmax(0, 1fr); width: 100%; margin-inline: 0; }
       .auth-panel.is-app .app-nav__children { width: 100%; margin-inline: 0; }
       .auth-panel.is-app.is-rail-collapsed .login-left {
         padding-bottom: 12px;
@@ -1472,6 +1534,10 @@ import '../styles/phone.css';
       .auth-panel.is-app.is-rail-collapsed .login-right {
         min-height: 86dvh;
       }
+    }
+
+    @media (max-width: 767px) {
+      .auth-panel.is-app .login-face-wrap { display: none; }
     }
 
     @media (max-width: 900px) {
@@ -2469,9 +2535,10 @@ import '../styles/phone.css';
         import { backendErrorFromResponse, errorMessage } from '../features/voice-call/infrastructure/backend-error';
         import { fillCallNav } from '../features/voice-call/application/fill-call-nav';
         import { showToast } from '../features/voice-call/infrastructure/toast';
-        import { checkSession, installSessionGuard } from '../features/auth/session-guard';
+        import { checkSession, installAuthFetch, installSessionGuard } from '../features/auth/session-guard';
 
       const apiUrl = document.body.dataset.apiUrl ?? '';
+      installAuthFetch(apiUrl);
       const authPanel = document.getElementById('authPanel');
       const authForm = document.getElementById('authForm');
          const authEmail = document.getElementById('authEmail');
@@ -2719,13 +2786,17 @@ import '../styles/phone.css';
          detailPanel?.removeAttribute('inert');
        }
 
-         function resetAppShell(): void {
+        let wipeProxyCleanup: (() => void) | null = null;
+
+        function resetAppShell(): void {
+          wipeProxyCleanup?.();
+          wipeProxyCleanup = null;
            clearNavReadyWait();
            stopSessionGuard?.();
            stopSessionGuard = null;
            dashboardStartPending = false;
            dashboardPendingToken = '';
-           authPanel?.classList.remove('is-app', 'no-wipe', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
+           authPanel?.classList.remove('is-app', 'no-wipe', 'is-wipe-proxy', 'is-nav-ready', 'is-empty-view', 'is-rail-collapsed');
           mobileNavToggle?.setAttribute('hidden', '');
           mobileNavToggle?.setAttribute('aria-expanded', 'false');
           mobileNavToggle?.setAttribute('aria-label', 'Expandir navegación');
@@ -2743,34 +2814,204 @@ import '../styles/phone.css';
          detailPanel?.removeAttribute('inert');
        }
 
-        function wipeTargets(): Array<{ el: HTMLElement; rect: DOMRect }> {
-          if (matchMedia('(prefers-reduced-motion: reduce)').matches) return [];
-          return [document.querySelector<HTMLElement>('.login-face-wrap'), document.querySelector<HTMLElement>('.login-name')]
-            .filter((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0)
-            .map((el) => ({ el, rect: el.getBoundingClientRect() }));
+        type WipeSnapshot = {
+          rect: {
+            left: number;
+            top: number;
+            width: number;
+            height: number;
+          };
+          styles: {
+            color: string;
+            fontFamily: string;
+            fontSize: string;
+            fontWeight: string;
+            letterSpacing: string;
+            lineHeight: string;
+          };
+        };
+
+        type WipeLayout = {
+          face: WipeSnapshot | null;
+          name: WipeSnapshot | null;
+        };
+
+        function snapshotWipeElement(element: Element | null): WipeSnapshot | null {
+          if (!(element instanceof HTMLElement)) return null;
+          const rect = element.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          const styles = getComputedStyle(element);
+          return {
+            rect: {
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+              height: rect.height,
+            },
+            styles: {
+              color: styles.color,
+              fontFamily: styles.fontFamily,
+              fontSize: styles.fontSize,
+              fontWeight: styles.fontWeight,
+              letterSpacing: styles.letterSpacing,
+              lineHeight: styles.lineHeight,
+            },
+          };
         }
 
-        function playWipeFlip(targets: Array<{ el: HTMLElement; rect: DOMRect }>): void {
-          targets.forEach(({ el, rect }) => {
-            const last = el.getBoundingClientRect();
-            const dx = rect.left - last.left;
-            const dy = rect.top - last.top;
-            if (!dx && !dy) return;
-            // Animate position with WAAPI so the CSS width/size transitions keep running.
-            el.animate(
-              [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
-              { duration: 1550, easing: 'cubic-bezier(.32, .04, .18, 1)' },
-            );
+        function snapshotWipeLayout(root: ParentNode = document): WipeLayout {
+          return {
+            face: snapshotWipeElement(root.querySelector('.login-face-wrap')),
+            name: snapshotWipeElement(root.querySelector('.login-name')),
+          };
+        }
+
+        function measureWipeDestination(): WipeLayout {
+          if (!authPanel) return { face: null, name: null };
+          const copy = authPanel.cloneNode(true) as HTMLElement;
+          copy.removeAttribute('id');
+          copy.querySelectorAll<Element>('[id]').forEach((element) => element.removeAttribute('id'));
+          copy.classList.remove('no-wipe', 'is-wipe-proxy', 'is-nav-ready', 'is-resizing');
+          copy.classList.add('is-app', 'is-empty-view', 'is-wipe-measuring');
+          copy.classList.toggle('is-rail-collapsed', isCompactShell());
+          Object.assign(copy.style, {
+            position: 'fixed',
+            inset: '0',
+            width: '100vw',
+            height: '100dvh',
+            minHeight: '100dvh',
+            margin: '0',
+            visibility: 'hidden',
+            pointerEvents: 'none',
+            zIndex: '-1',
           });
+          document.body.append(copy);
+          const destination = snapshotWipeLayout(copy);
+          copy.remove();
+          return destination;
+        }
+
+        function createWipeProxy(source: HTMLElement, snapshot: WipeSnapshot, name: boolean): HTMLElement {
+          const proxy = source.cloneNode(true) as HTMLElement;
+          proxy.removeAttribute('data-mascot-trigger');
+          proxy.removeAttribute('data-mascot-id');
+          proxy.removeAttribute('data-password-input-id');
+          proxy.setAttribute('aria-hidden', 'true');
+          proxy.classList.add('login-wipe-proxy');
+          Object.assign(proxy.style, {
+            left: `${snapshot.rect.left}px`,
+            top: `${snapshot.rect.top}px`,
+            width: `${snapshot.rect.width}px`,
+            height: `${snapshot.rect.height}px`,
+            boxSizing: 'border-box',
+            color: snapshot.styles.color,
+            fontFamily: snapshot.styles.fontFamily,
+            fontSize: snapshot.styles.fontSize,
+            fontWeight: snapshot.styles.fontWeight,
+            letterSpacing: snapshot.styles.letterSpacing,
+            lineHeight: snapshot.styles.lineHeight,
+            textAlign: name ? 'center' : '',
+            opacity: '1',
+            transform: 'translate(0px, 0px) scale(1, 1)',
+            transformOrigin: 'top left',
+          });
+          if (!name) proxy.style.setProperty('--interactive-mascot-width', `${snapshot.rect.width}px`);
+          document.body.append(proxy);
+          return proxy;
+        }
+
+        function createWipeProxies(layout: WipeLayout): { face: HTMLElement | null; name: HTMLElement | null; nodes: HTMLElement[] } {
+          const faceSource = document.querySelector<HTMLElement>('.login-face-wrap');
+          const nameSource = document.querySelector<HTMLElement>('.login-name');
+          const face = layout.face && faceSource ? createWipeProxy(faceSource, layout.face, false) : null;
+          const name = layout.name && nameSource ? createWipeProxy(nameSource, layout.name, true) : null;
+          return { face, name, nodes: [face, name].filter((node): node is HTMLElement => node instanceof HTMLElement) };
+        }
+
+        function playWipeProxies(initial: WipeLayout, destination: WipeLayout, proxies: { face: HTMLElement | null; name: HTMLElement | null; nodes: HTMLElement[] }): void {
+          const duration = 1550;
+          const easing = 'cubic-bezier(.32, .04, .18, 1)';
+          const animations: Animation[] = [];
+          const animateBox = (proxy: HTMLElement, from: WipeSnapshot, to: WipeSnapshot | null, fadeOut = false): void => {
+            const target = to ?? from;
+            const deltaX = target.rect.left - from.rect.left;
+            const deltaY = target.rect.top - from.rect.top;
+            const isFace = proxy.classList.contains('login-face-wrap');
+            if (isFace) {
+              animations.push(proxy.animate([
+                { transform: 'translate(0px, 0px) scale(1, 1)', opacity: 1 },
+                {
+                  transform: `translate(${deltaX}px, ${deltaY}px) scale(${target.rect.width / from.rect.width}, ${target.rect.height / from.rect.height})`,
+                  opacity: fadeOut ? 0 : 1,
+                },
+              ], { duration, easing, fill: 'both' }));
+              return;
+            }
+            animations.push(proxy.animate([
+              {
+                transform: 'translate(0px, 0px)',
+                width: `${from.rect.width}px`,
+                height: `${from.rect.height}px`,
+                fontSize: from.styles.fontSize,
+                letterSpacing: from.styles.letterSpacing,
+                lineHeight: from.styles.lineHeight,
+                color: from.styles.color,
+                opacity: 1,
+              },
+              {
+                transform: `translate(${deltaX}px, ${deltaY}px)`,
+                width: `${target.rect.width}px`,
+                height: `${target.rect.height}px`,
+                fontSize: target.styles.fontSize,
+                letterSpacing: target.styles.letterSpacing,
+                lineHeight: target.styles.lineHeight,
+                color: target.styles.color,
+                opacity: fadeOut ? 0 : 1,
+              },
+            ], { duration, easing, fill: 'both' }));
+          };
+
+          if (proxies.face && initial.face) animateBox(proxies.face, initial.face, destination.face, !destination.face);
+          if (proxies.name && initial.name) animateBox(proxies.name, initial.name, destination.name, !destination.name);
+          if (!animations.length) {
+            proxies.nodes.forEach((node) => node.remove());
+            authPanel?.classList.remove('is-wipe-proxy');
+            return;
+          }
+
+          let cleaned = false;
+          let fallback = 0;
+          const cleanup = (cancel: boolean): void => {
+            if (cleaned) return;
+            cleaned = true;
+            window.clearTimeout(fallback);
+            if (cancel) animations.forEach((animation) => animation.cancel());
+            proxies.nodes.forEach((node) => node.remove());
+            authPanel?.classList.remove('is-wipe-proxy');
+            wipeProxyCleanup = null;
+          };
+          wipeProxyCleanup = () => cleanup(true);
+          // Keep the visual copies alive for the full wipe even if the
+          // browser reports a premature WAAPI finish while the layout is
+          // still settling. The real lockup is revealed only once this timer
+          // expires, so it cannot flash hidden between the two layers.
+          fallback = window.setTimeout(() => cleanup(false), duration + 40);
         }
 
         function revealApp(animate: boolean): void {
          if (!authPanel) return;
-          const flip = animate ? wipeTargets() : [];
+          wipeProxyCleanup?.();
+          wipeProxyCleanup = null;
+          if (animate && window.scrollY !== 0) window.scrollTo(0, 0);
+          const initial = animate && !matchMedia('(prefers-reduced-motion: reduce)').matches
+            ? snapshotWipeLayout()
+            : { face: null, name: null };
+          const destination = initial.face || initial.name ? measureWipeDestination() : { face: null, name: null };
+          const proxies = initial.face || initial.name ? createWipeProxies(initial) : { face: null, name: null, nodes: [] };
+          if (proxies.nodes.length) authPanel.classList.add('is-wipe-proxy');
           if (!animate) authPanel.classList.add('no-wipe');
           authPanel.classList.add('is-app');
           authPanel.classList.toggle('is-rail-collapsed', isCompactShell());
-          if (flip.length) playWipeFlip(flip);
           authPanel.setAttribute('aria-labelledby', 'screenTitle');
          setFormInert(true);
          setAppView('dashboard');
@@ -2778,6 +3019,7 @@ import '../styles/phone.css';
          scheduleNavReady(!animate);
          lucideRefresh();
          notifyLayoutChange();
+         if (proxies.nodes.length) playWipeProxies(initial, destination, proxies);
          if (!animate) {
            requestAnimationFrame(() => {
              requestAnimationFrame(() => authPanel.classList.remove('no-wipe'));

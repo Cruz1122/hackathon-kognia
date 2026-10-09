@@ -44,11 +44,16 @@ import '../../styles/call-demo.css';
         redirectToLogin();
         return;
       }
+      const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+      if (!freshToken) {
+        redirectToLogin();
+        return;
+      }
       cleanup?.();
       waveCleanup?.();
       waveCleanup = mountCallDemoWave();
       const autoStart = new URLSearchParams(window.location.search).get('autostart') === '1';
-      cleanup = bootLiveMonitor(apiUrl, token, conversationId, autoStart);
+      cleanup = bootLiveMonitor(apiUrl, freshToken, conversationId, autoStart);
       if (autoStart) {
         const url = new URL(window.location.href);
         url.searchParams.delete('autostart');

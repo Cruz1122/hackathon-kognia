@@ -59,7 +59,13 @@ import '../../styles/call-demo.css';
         redirectToLogin();
         return;
       }
-      const headers = { Authorization: `Bearer ${token}` };
+      const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+      if (!freshToken) {
+        pendingId = '';
+        redirectToLogin();
+        return;
+      }
+      const headers = { Authorization: `Bearer ${freshToken}` };
       const listResponse = await fetch(`${apiUrl}/calls`, { headers });
       const list = listResponse.ok
         ? await listResponse.json() as { calls?: Array<{ id: string }> }
@@ -69,7 +75,7 @@ import '../../styles/call-demo.css';
       if (live) {
         cleanup = bootLiveCall(
           apiUrl,
-          token,
+          freshToken,
           callId,
           () => { void revealCall(); },
           (reason) => { void revealCallError(reason); },
@@ -77,7 +83,7 @@ import '../../styles/call-demo.css';
       } else {
         cleanup = bootCallReplay(
           apiUrl,
-          token,
+          freshToken,
           callId,
           () => { void revealCall(); },
           (reason) => { void revealCallError(reason); },

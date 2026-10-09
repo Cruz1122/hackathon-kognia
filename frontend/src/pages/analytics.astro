@@ -45,9 +45,14 @@ import AnalyticsContent from '../components/dashboard/AnalyticsContent.astro';
       redirectToLogin();
       return;
     }
+    const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+    if (!freshToken) {
+      redirectToLogin();
+      return;
+    }
     if (generation !== mountGeneration || !root.isConnected) return;
     cleanup?.();
-    cleanup = bootDashboard(apiUrl, token);
+    cleanup = bootDashboard(apiUrl, freshToken);
     mountedRoot = root;
     pendingRoot = null;
     root.setAttribute('aria-hidden', 'false');

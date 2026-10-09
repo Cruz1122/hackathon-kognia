@@ -1,4 +1,5 @@
 import { backendMessage } from '../infrastructure/backend-error';
+import { accessTokenKey, conversationIdKey, redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { applyCallAgentSignals } from './agent-signals';
@@ -26,8 +27,9 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   bindDetailClicks(conversation);
   mountSessionPanel();
 
-  const token = sessionStorage.getItem('kognia.auth.access-token')?.trim() ?? '';
-  if (!token) {
+  const currentToken = (): string => sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
+  const conversationId = sessionStorage.getItem(conversationIdKey)?.trim() ?? '';
+  if (!currentToken()) {
     if (hubChip) hubChip.textContent = 'Demo local';
     return () => undefined;
   }
@@ -37,7 +39,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
   });
   if (conversationId) {
     void fetch(`${apiUrl}/conversations/${conversationId}/agent-state`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${currentToken()}` },
     }).then(async (response) => {
       if (response.ok) patchSessionFromAgentState(await response.json());
     }).catch(() => undefined);
@@ -235,6 +237,12 @@ export function bootEventsMonitor(apiUrl: string): () => void {
       socket.close();
       return;
     }
+    const token = currentToken();
+    if (!token) {
+      redirectToLogin();
+      socket.close();
+      return;
+    }
     socket.send(JSON.stringify({ type: 'auth', token }));
     enterLiveFeed();
     if (hubChip) hubChip.textContent = 'Esperando eventos';
@@ -256,6 +264,7 @@ export function bootEventsMonitor(apiUrl: string): () => void {
     if (disposed) return;
     if (event.code === 4401) {
       if (hubChip) hubChip.textContent = 'Sesión inválida';
+      redirectToLogin();
       return;
     }
     if (hubChip) hubChip.textContent = 'Hub desconectado';

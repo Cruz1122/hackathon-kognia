@@ -1,7 +1,7 @@
 import { AudioCaptureAdapter } from '../infrastructure/audio-capture-adapter';
 import { backendErrorFromResponse, backendMessage, errorMessage } from '../infrastructure/backend-error';
 import { PcmAudioQueue } from '../infrastructure/pcm-audio-queue';
-import { conversationIdKey, redirectToLogin } from '../../auth/session-guard';
+import { accessTokenKey, conversationIdKey, redirectToLogin } from '../../auth/session-guard';
 import { completeRetrievalCard, createRetrievalCardMarkup, shouldRenderRetrieval, toolCallBusyMarkup } from './retrieval-card';
 import { bindDetailClicks, mountSessionPanel, patchSession, patchSessionFromAgentState, readDetail, refreshOpenDetail, toolDetailFromEvent, writeDetail } from './detail-panel';
 import { showToast } from '../infrastructure/toast';
@@ -98,11 +98,12 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   const capture = new AudioCaptureAdapter(`${apiUrl}/transcribe`);
   const pcm = new PcmAudioQueue();
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/call`;
-  const authToken = typeof token === 'string' ? token.trim() : '';
+  const initialAuthToken = typeof token === 'string' ? token.trim() : '';
+  const currentAuthToken = (): string => sessionStorage.getItem(accessTokenKey)?.trim() || initialAuthToken;
   let attachedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
-  if (authToken && attachedConversationId) {
+  if (currentAuthToken() && attachedConversationId) {
     void fetch(`${apiUrl}/conversations/${attachedConversationId}/agent-state`, {
-      headers: { Authorization: `Bearer ${authToken}` },
+      headers: { Authorization: `Bearer ${currentAuthToken()}` },
     }).then(async (response) => {
       if (response.ok) patchSessionFromAgentState(await response.json());
     }).catch(() => undefined);
@@ -521,6 +522,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         current.close();
         return;
       }
+      const authToken = currentAuthToken();
       if (!authToken || !attachedConversationId) {
         showTransportError('No se puede autenticar la llamada: faltan credenciales.');
         current.close();
@@ -587,7 +589,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
+        Authorization: `Bearer ${currentAuthToken()}`,
       },
       body: JSON.stringify({ channel: 'voice-demo' }),
     });
@@ -605,7 +607,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
 
   async function startCall(): Promise<void> {
     if (live && !paused) return;
-    if (!authToken) {
+    if (!currentAuthToken()) {
       showTransportError('No se puede iniciar la llamada: faltan credenciales.');
       return;
     }

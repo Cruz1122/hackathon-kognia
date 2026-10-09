@@ -94,8 +94,13 @@ const statusOptions = [
       redirectToLogin();
       return;
     }
+    const freshToken = sessionStorage.getItem(accessTokenKey)?.trim();
+    if (!freshToken) {
+      redirectToLogin();
+      return;
+    }
     cleanup?.();
-    cleanup = bootDev(apiUrl, token);
+    cleanup = bootDev(apiUrl, freshToken);
     mounted = true;
   }
 

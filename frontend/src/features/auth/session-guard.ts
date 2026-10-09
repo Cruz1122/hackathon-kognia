@@ -2,13 +2,24 @@ export const accessTokenKey = 'kognia.auth.access-token';
 export const conversationIdKey = 'kognia.auth.conversation-id';
 
 export type SessionCheck = 'valid' | 'invalid' | 'unavailable';
+type RefreshStatus = 'refreshed' | 'invalid' | 'unavailable';
 
 /** Refresh the access token when this many seconds (or fewer) remain. */
 const refreshThresholdSeconds = 300;
 
+let refreshInFlight: Promise<RefreshStatus> | null = null;
+type SessionGuardRuntime = {
+  apiUrl: string;
+  stop: () => void;
+};
+
 export function clearSession(): void {
   sessionStorage.removeItem(accessTokenKey);
   sessionStorage.removeItem(conversationIdKey);
+}
+
+function storedAccessToken(): string {
+  return sessionStorage.getItem(accessTokenKey)?.trim() ?? '';
 }
 
 function decodeJwtExpiry(token: string): number | null {
@@ -31,43 +42,60 @@ export function tokenNeedsRefresh(token: string, nowMs: number = Date.now()): bo
   return expiresAt - nowMs / 1000 <= refreshThresholdSeconds;
 }
 
-/**
- * Exchange the current access token for a fresh one.
- *
- * Returns false only when the backend rejects the token (session is gone).
- * Network or unexpected errors return true so a transient problem never
- * logs the user out.
- */
-export async function refreshAccessToken(apiUrl: string): Promise<boolean> {
-  const token = sessionStorage.getItem(accessTokenKey)?.trim();
-  if (!token) return false;
+async function requestTokenRefresh(apiUrl: string, fetchImpl: typeof fetch): Promise<RefreshStatus> {
+  const token = storedAccessToken();
+  if (!token) return 'invalid';
   try {
-    const response = await fetch(`${apiUrl}/auth/refresh`, {
+    const response = await fetchImpl(`${apiUrl}/auth/refresh`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
     });
-    if (response.status === 401 || response.status === 403) return false;
-    if (!response.ok) return true;
+    if (response.status === 401 || response.status === 403) return 'invalid';
+    if (!response.ok) return 'unavailable';
     const data = (await response.json()) as { access_token?: unknown };
     const refreshed = typeof data.access_token === 'string' ? data.access_token.trim() : '';
-    if (refreshed) sessionStorage.setItem(accessTokenKey, refreshed);
-    return true;
+    if (!refreshed) return 'unavailable';
+    sessionStorage.setItem(accessTokenKey, refreshed);
+    return 'refreshed';
   } catch {
-    return true;
+    return 'unavailable';
   }
 }
 
+async function refreshSession(apiUrl: string, fetchImpl: typeof fetch = fetch): Promise<RefreshStatus> {
+  if (refreshInFlight) return refreshInFlight;
+  const request = requestTokenRefresh(apiUrl, fetchImpl);
+  let tracked: Promise<RefreshStatus>;
+  tracked = request.finally(() => {
+    if (refreshInFlight === tracked) refreshInFlight = null;
+  });
+  refreshInFlight = tracked;
+  return tracked;
+}
+
+/**
+ * Exchange the current access token for a fresh one.
+ *
+ * The boolean API is kept for existing callers: a rejected token is false,
+ * while a temporary transport/backend failure remains true so the passive
+ * session guard does not log the user out on a network blip.
+ */
+export async function refreshAccessToken(apiUrl: string): Promise<boolean> {
+  return (await refreshSession(apiUrl)) !== 'invalid';
+}
+
 /** Refresh proactively when the stored token is close to expiring. */
-export async function ensureFreshToken(apiUrl: string): Promise<void> {
-  const token = sessionStorage.getItem(accessTokenKey)?.trim();
-  if (!token || !tokenNeedsRefresh(token)) return;
-  await refreshAccessToken(apiUrl);
+export async function ensureFreshToken(apiUrl: string): Promise<RefreshStatus | 'not-needed'> {
+  const token = storedAccessToken();
+  if (!token || !tokenNeedsRefresh(token)) return 'not-needed';
+  return refreshSession(apiUrl);
 }
 
 export async function checkSession(apiUrl: string): Promise<SessionCheck> {
-  await ensureFreshToken(apiUrl);
-  const token = sessionStorage.getItem(accessTokenKey)?.trim();
+  const refreshStatus = await ensureFreshToken(apiUrl);
+  if (refreshStatus === 'invalid') return 'invalid';
+  const token = storedAccessToken();
   const conversationId = sessionStorage.getItem(conversationIdKey)?.trim();
   if (!token || !conversationId) return 'invalid';
 
@@ -78,19 +106,93 @@ export async function checkSession(apiUrl: string): Promise<SessionCheck> {
       fetch(`${apiUrl}/conversations/${encodeURIComponent(conversationId)}`, { headers, cache: 'no-store' }),
     ]);
     if (me.ok && conversation.ok) return 'valid';
-    if ([me, conversation].some((response) => response.status === 401 || response.status === 403)) return 'invalid';
+    if ([me, conversation].some((response) => response.status === 401)) return 'invalid';
     return 'unavailable';
   } catch {
     return 'unavailable';
   }
 }
 
+function apiBase(apiUrl: string): string {
+  return apiUrl.replace(/\/+$/, '');
+}
+
+function isApiRequest(requestUrl: string, apiUrl: string): boolean {
+  const base = apiBase(apiUrl);
+  return !base || requestUrl === base || requestUrl.startsWith(`${base}/`);
+}
+
+function isRefreshRequest(requestUrl: string, apiUrl: string): boolean {
+  return requestUrl === `${apiBase(apiUrl)}/auth/refresh`;
+}
+
+function hasBearerAuthorization(request: Request): boolean {
+  return /^bearer\s+/i.test(request.headers.get('Authorization') ?? '');
+}
+
+function requestWithToken(request: Request, token: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  return new Request(request, { headers });
+}
+
+/**
+ * Add the auth recovery boundary to fetch calls made by the app.
+ *
+ * Only API requests that already carry a Bearer header are retried. The
+ * refresh endpoint is explicitly excluded to avoid a refresh loop. A request
+ * body remains replayable because the first attempt uses a cloned Request.
+ */
+export function createAuthenticatedFetch(
+  apiUrl: string,
+  fetchImpl: typeof fetch = fetch,
+  onSessionInvalid: () => void = redirectToLogin,
+): typeof fetch {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init);
+    const response = await fetchImpl(request.clone());
+    if (
+      response.status !== 401
+      || !isApiRequest(request.url, apiUrl)
+      || isRefreshRequest(request.url, apiUrl)
+      || !hasBearerAuthorization(request)
+    ) {
+      return response;
+    }
+
+    const refreshStatus = await refreshSession(apiUrl, fetchImpl);
+    const refreshedToken = storedAccessToken();
+    if (refreshStatus === 'invalid' || (refreshStatus === 'refreshed' && !refreshedToken)) {
+      onSessionInvalid();
+      return response;
+    }
+    if (refreshStatus !== 'refreshed') return response;
+
+    const retry = await fetchImpl(requestWithToken(request, refreshedToken));
+    if (retry.status === 401) onSessionInvalid();
+    return retry;
+  };
+}
+
+/** Install the recovery boundary once for the current browser document. */
+export function installAuthFetch(apiUrl: string): void {
+  const runtime = window as Window & { __kogniaAuthFetchInstalled?: boolean };
+  if (runtime.__kogniaAuthFetchInstalled) return;
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = createAuthenticatedFetch(apiUrl, originalFetch);
+  runtime.__kogniaAuthFetchInstalled = true;
+}
+
 export function redirectToLogin(): void {
   clearSession();
-  if (window.location.pathname !== '/') window.location.replace('/');
+  window.location.replace('/');
 }
 
 export function installSessionGuard(apiUrl: string, intervalMs = 15000): () => void {
+  const runtime = window as Window & { __kogniaSessionGuard?: SessionGuardRuntime };
+  if (runtime.__kogniaSessionGuard?.apiUrl === apiUrl) return runtime.__kogniaSessionGuard.stop;
+  runtime.__kogniaSessionGuard?.stop();
+
   let disposed = false;
   let checking = false;
 
@@ -109,9 +211,12 @@ export function installSessionGuard(apiUrl: string, intervalMs = 15000): () => v
   const timer = window.setInterval(() => { void check(); }, intervalMs);
   document.addEventListener('visibilitychange', onVisibilityChange);
   void check();
-  return () => {
+  const stop = (): void => {
     disposed = true;
     window.clearInterval(timer);
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    if (runtime.__kogniaSessionGuard?.stop === stop) delete runtime.__kogniaSessionGuard;
   };
+  runtime.__kogniaSessionGuard = { apiUrl, stop };
+  return stop;
 }
