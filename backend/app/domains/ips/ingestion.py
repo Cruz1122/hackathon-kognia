@@ -44,6 +44,7 @@ class IPSIngestionService:
             rows.extend(values)
             last_page = int(page.get("page") or 0)
             last_size = len(values)
+            print(f"ips source page {last_page} rows {len(rows)}", flush=True)
         if last_page == max_pages and last_size == page_size:
             raise RuntimeError("IPS_PAGINATION_LIMIT_REACHED")
         return rows

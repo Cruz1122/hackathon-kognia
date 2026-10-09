@@ -56,6 +56,59 @@ def where_clause(
     return (" WHERE " + " AND ".join(predicates)) if predicates else ""
 
 
+def _like(field: str, value: str) -> str:
+    cleaned = " ".join(value.strip().split())[:100]
+    if not cleaned or any(character in cleaned for character in ("%", "_", "\\")):
+        raise ValueError("Texto de filtro inválido")
+    folded = "".join("_" if character.casefold() in "aeiouáéíóúü" else character for character in cleaned)
+    return f"upper({field}) like upper({literal(f'%{folded}%')})"
+
+
+def agent_where(
+    *,
+    query: str | None = None,
+    department: str | None = None,
+    municipality: str | None = None,
+    nature: str | None = None,
+    kind: str | None = None,
+    capacity: str | None = None,
+    site_code: str | None = None,
+    site_codes: list[str] | None = None,
+) -> str:
+    """SoQL for the voice tools. Identifiers are fixed; values only enter as literals."""
+    predicates: list[str] = []
+    if query:
+        predicates.append(f"({_like('nombre_prestador', query)} OR {_like('nom_sede_ips', query)})")
+    if department:
+        predicates.append(_like("departamento", department))
+    if municipality:
+        predicates.append(_like("municipio", municipality))
+    if nature == "publica":
+        predicates.append("(upper(naturaleza) like '%PUBLIC%' OR upper(naturaleza) like '%P_BLIC%')")
+    elif nature == "privada":
+        predicates.append("(upper(naturaleza) like '%PRIVAD%' OR upper(naturaleza) like '%PR_VAD%')")
+    elif nature is not None:
+        raise ValueError("naturaleza inválida")
+    if kind == "hospital":
+        predicates.append("upper(nom_sede_ips) like '%HOSPITAL%'")
+    elif kind == "clinica":
+        predicates.append("(upper(nom_sede_ips) like '%CLINIC%' OR upper(nom_sede_ips) like '%CL_NIC%')")
+    elif kind is not None:
+        raise ValueError("tipo de sede inválido")
+    if capacity:
+        predicates.append(
+            f"({_like('nom_descripcion_capacidad', capacity)} OR {_like('nom_grupo_capacidad', capacity)})"
+        )
+    if site_code:
+        predicates.append(f"c_digo_sede = {literal(site_code)}")
+    if site_codes:
+        codes = [literal(code) for code in site_codes[:10]]
+        predicates.append(f"c_digo_sede IN ({', '.join(codes)})")
+    if not predicates:
+        raise ValueError("La consulta SODA3 requiere al menos un filtro")
+    return " WHERE " + " AND ".join(predicates)
+
+
 class IPSService:
     """Application service for the fixed IPS dataset."""
 
@@ -226,6 +279,35 @@ class IPSService:
             "warning": "Las cantidades no deben sumarse entre descripciones de capacidad diferentes.",
         }
 
+    async def agent_rows(
+        self,
+        *,
+        query: str | None = None,
+        department: str | None = None,
+        municipality: str | None = None,
+        nature: str | None = None,
+        kind: str | None = None,
+        capacity: str | None = None,
+        site_code: str | None = None,
+        site_codes: list[str] | None = None,
+        page_size: int = 200,
+    ) -> list[dict[str, Any]]:
+        if not 1 <= page_size <= 500:
+            raise ValueError("page_size debe estar entre 1 y 500")
+        statement = "SELECT *" + agent_where(
+            query=query,
+            department=department,
+            municipality=municipality,
+            nature=nature,
+            kind=kind,
+            capacity=capacity,
+            site_code=site_code,
+            site_codes=site_codes,
+        )
+        result = await self._query(statement, page=1, page_size=page_size)
+        rows = result["data"]
+        return rows if isinstance(rows, list) else []
+
     async def list_all_pages(
         self,
         *,
@@ -244,4 +326,4 @@ class IPSService:
                 break
 
 
-__all__ = ["IPSService", "literal", "where_clause"]
+__all__ = ["IPSService", "agent_where", "literal", "where_clause"]

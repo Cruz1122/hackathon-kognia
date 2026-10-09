@@ -104,9 +104,9 @@ def test_voice_prompt_contract_summarizes_broad_searches(monkeypatch: pytest.Mon
     state = AgentState(conversation_id="conversation-test", organization_id="organization-test")
     monkeypatch.setenv("AGENT_PROMPT_VARIANT", "compact")
     context = state.context()
-    assert "como máximo dos nombres" in context
-    assert "Nunca enumeres todas las sedes" in context
-    assert "solo cuando la consulta trate de capacidad" in context
+    assert "oraciones corridas" in context
+    assert "No narres la herramienta" in context
+    assert "Si no hay resultados" in context
 
 
 def test_turn_result_records_recovered_retry() -> None:

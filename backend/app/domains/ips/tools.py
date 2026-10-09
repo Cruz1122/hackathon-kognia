@@ -1,4 +1,4 @@
-"""Read-only agent tools grounded in the active official IPS snapshot."""
+"""Read-only agent tools. Their only evidence source is the live SODA3 IPS API."""
 
 from __future__ import annotations
 
@@ -9,14 +9,12 @@ from pydantic import BaseModel, Field, model_validator
 from ...config import AgentPromptVariant, get_agent_prompt_variant
 from ...agent.tools.contracts import ToolContext, ToolDefinition
 from ...agent.tools.registry import ToolRegistry
-from ...db.session import get_session_factory
-from ...platform.rag.runtime import embeddings as shared_embeddings
-from .repository import IPSRepository
-from .vector_store import IPSVectorStore
+from ...ips_soda3.client import Soda3Error
+from ...ips_soda3.runtime import IPSConfigurationError, get_ips_service
 
 
 _BASELINE_CONTEXT_INSTRUCTIONS = (
-    "Official Colombian IPS orientation domain. The tools read the active snapshot of dataset s2ru-bqt6. "
+    "Official Colombian IPS orientation domain. The tools read dataset s2ru-bqt6 live from the SODA3 API. "
     "If the user supplies an exact institution/provider name or a concrete location, ALWAYS call search_ips first, even "
     "when the name is long. Use semantic_search_ips only for approximate, descriptive, misspelled, or STT wording, or "
     "as a recovery after an exact search returns no rows. Use search_ips for exact names, location filters, or an exact registered capacity category. Put institution/provider "
@@ -32,7 +30,7 @@ _BASELINE_CONTEXT_INSTRUCTIONS = (
 )
 
 _COMPACT_CONTEXT_INSTRUCTIONS = (
-    "Official Colombian IPS registry, active snapshot only. Use search_ips for exact name, location, nature, type, "
+    "Official Colombian IPS registry from the live SODA3 API. Use search_ips for exact name, location, nature, type, "
     "or registered capacity; put names in query and capacity in capacity. Use semantic_search_ips for approximate, "
     "descriptive, misspelled, or STT wording; use details/capacity by site_code and compare for known sites. "
     "Report only tool evidence, state that installed capacity is registered rather than current availability, and say when there are no results. "
@@ -45,8 +43,8 @@ CONTEXT_INSTRUCTIONS = (
     else _BASELINE_CONTEXT_INSTRUCTIONS
 )
 
-repository = IPSRepository(get_session_factory())
-vector_store = IPSVectorStore(embeddings=shared_embeddings)
+async def _fetch_rows(**kwargs: Any) -> list[dict[str, Any]]:
+    return await get_ips_service().agent_rows(**kwargs)
 
 
 class SearchIPSArgs(BaseModel):
@@ -107,57 +105,115 @@ def _envelope(results: list[dict[str, Any]], *, total: int | None = None, status
     }
 
 
-def _missing_snapshot() -> dict[str, Any]:
-    return _envelope([], total=0, status="no_active_snapshot")
+def _unavailable() -> dict[str, Any]:
+    return _envelope([], total=0, status="soda_unavailable")
+
+
+def _text(row: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _sites(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        code = _text(row, "c_digo_sede", "site_code")
+        if not code:
+            continue
+        site = grouped.get(code)
+        if site is None:
+            site = {
+                "site_code": code,
+                "site_name": _text(row, "nom_sede_ips", "site_name"),
+                "provider_name": _text(row, "nombre_prestador", "provider_name"),
+                "municipality": _text(row, "municipio", "municipality"),
+                "department": _text(row, "departamento", "department"),
+                "phone": _text(row, "tel_fono", "phone"),
+                "address": _text(row, "direcci_n", "address"),
+                "email": _text(row, "email"),
+                "nature": _text(row, "naturaleza", "nature"),
+                "level": _text(row, "num_nivel_atencion", "care_level", "level"),
+                "cutoff": _text(row, "fecha_corte", "cutoff"),
+                "source": _text(row, "fuente", "source"),
+                "capacities": [],
+            }
+            grouped[code] = site
+        description = _text(row, "nom_descripcion_capacidad", "description")
+        group = _text(row, "nom_grupo_capacidad", "group")
+        quantity = row.get("num_cantidad_capacidad_instalada", row.get("registered_quantity"))
+        if description or group or quantity is not None:
+            site["capacities"].append(
+                {"group": group, "description": description, "registered_quantity": quantity}
+            )
+    return list(grouped.values())
+
+
+async def _rows(**kwargs: Any) -> tuple[list[dict[str, Any]] | None, str | None]:
+    try:
+        return await _fetch_rows(**kwargs), None
+    except (IPSConfigurationError, Soda3Error):
+        return None, "soda_unavailable"
 
 
 async def search_ips(args: SearchIPSArgs, _context: ToolContext) -> dict[str, Any]:
-    if await repository.active_snapshot() is None:
-        return _missing_snapshot()
-    found = await repository.search(
+    rows, failure = await _rows(
         query=args.query,
         department=args.department,
         municipality=args.municipality,
         nature=args.nature,
         kind=args.kind,
         capacity=args.capacity,
-        limit=args.limit,
+        page_size=min(500, max(args.limit * 20, 50)),
     )
-    if found is None:
-        return _missing_snapshot()
-    rows, total = found if isinstance(found, tuple) else (found, len(found))
-    return _envelope([_card(row) for row in rows], total=total)
+    if failure or rows is None:
+        return _unavailable()
+    sites = _sites(rows)
+    return _envelope([_card(site) for site in sites[: args.limit]], total=len(sites))
 
 
 async def get_ips_details(args: IPSDetailsArgs, _context: ToolContext) -> dict[str, Any]:
-    if await repository.active_snapshot() is None:
-        return {"dataset_id": "s2ru-bqt6", "source": "datos.gov.co", "status": "no_active_snapshot", "site": None}
-    details = await repository.details(args.site_code)
+    rows, failure = await _rows(site_code=args.site_code, page_size=200)
+    if failure:
+        return {"dataset_id": "s2ru-bqt6", "source": "datos.gov.co", "status": "soda_unavailable", "site": None}
+    sites = _sites(rows or [])
     return {
         "dataset_id": "s2ru-bqt6",
         "source": "datos.gov.co",
-        "status": "ok" if details else "not_found",
-        "site": details,
+        "status": "ok" if sites else "not_found",
+        "site": sites[0] if sites else None,
     }
 
 
 async def get_ips_capacity(args: IPSDetailsArgs, _context: ToolContext) -> dict[str, Any]:
-    if await repository.active_snapshot() is None:
+    rows, failure = await _rows(site_code=args.site_code, page_size=200)
+    if failure:
         return {
             "dataset_id": "s2ru-bqt6", "source": "datos.gov.co",
-            "status": "no_active_snapshot", "site_capacity": None, "warning": None,
+            "status": "soda_unavailable", "site_capacity": None, "warning": None,
         }
-    capacity = await repository.capacities(args.site_code)
+    sites = _sites(rows or [])
+    if not sites:
+        return {
+            "dataset_id": "s2ru-bqt6", "source": "datos.gov.co",
+            "status": "not_found", "site_capacity": None, "warning": None,
+        }
+    site = sites[0]
+    capacity = {
+        "site_code": site["site_code"],
+        "site_name": site["site_name"],
+        "cutoff": site["cutoff"],
+        "source": site["source"],
+        "capacities": site["capacities"],
+    }
     return {
         "dataset_id": "s2ru-bqt6",
         "source": "datos.gov.co",
-        "status": "ok" if capacity else "not_found",
+        "status": "ok",
         "site_capacity": capacity,
-        "warning": (
-            "La capacidad instalada registrada no equivale a disponibilidad actual."
-            if capacity
-            else None
-        ),
+        "warning": "La capacidad instalada registrada no equivale a disponibilidad actual.",
     }
 
 
@@ -165,34 +221,35 @@ async def semantic_search_ips(
     args: SemanticSearchIPSArgs,
     _context: ToolContext,
 ) -> dict[str, Any]:
-    snapshot = await repository.active_snapshot()
-    if snapshot is None:
-        return _envelope([]) | {"status": "no_active_snapshot"}
-    department, municipality = await repository.canonical_location(
-        snapshot.id,
+    rows, failure = await _rows(
+        query=args.query,
         department=args.department,
         municipality=args.municipality,
+        page_size=min(500, max(args.limit * 20, 50)),
     )
-    hits = await vector_store.search(
-        args.query,
-        snapshot_id=snapshot.id,
-        department=department,
-        municipality=municipality,
-        limit=args.limit,
-    )
-    sites = await repository.sites_by_ids([hit.site_id for hit in hits])
-    score_by_id = {hit.site_id: hit.score for hit in hits}
-    for site in sites:
-        site["semantic_score"] = score_by_id.get(site["site_id"], 0.0)
-    return _envelope([_card(site) for site in sites])
+    if failure or rows is None:
+        return _unavailable()
+    sites = _sites(rows)
+    return _envelope([_card(site) for site in sites[: args.limit]], total=len(sites))
 
 
 async def compare_ips_capacity(args: CompareCapacityArgs, _context: ToolContext) -> dict[str, Any]:
-    if await repository.active_snapshot() is None:
-        return {**_missing_snapshot(), "capacity": args.capacity, "sites": []}
-    sites = await repository.compare_capacity(args.site_codes, args.capacity)
-    if sites is None:
-        return {**_missing_snapshot(), "capacity": args.capacity, "sites": []}
+    rows, failure = await _rows(
+        site_codes=args.site_codes,
+        capacity=args.capacity,
+        page_size=200,
+    )
+    if failure or rows is None:
+        return {**_unavailable(), "capacity": args.capacity, "sites": []}
+    sites = [
+        {
+            "site_code": site["site_code"],
+            "site_name": site["site_name"],
+            "municipality": site["municipality"],
+            "quantities": site["capacities"],
+        }
+        for site in _sites(rows)
+    ]
     return {
         "dataset_id": "s2ru-bqt6",
         "source": "datos.gov.co",
@@ -208,37 +265,37 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolDefinition(
             "search_ips",
-            "Search by exact institution/provider name in query, location filters, or an exact registered category in capacity. Never put a service/capacity phrase in query.",
+            "Build a SODA3 query from what the person said. Put the institution or site name in query, the city in municipality, the department in department, hospital or clinica in kind, publica or privada in nature, and the capacity name in capacity.",
             SearchIPSArgs,
             search_ips,
             "read",
-            timeout_s=10.0,
+            timeout_s=20.0,
         )
     )
     registry.register(
         ToolDefinition(
             "get_ips_details",
-            "Get exact official contact and location details for one IPS site code.",
+            "Get official SODA3 contact and location details for one IPS site code.",
             IPSDetailsArgs,
             get_ips_details,
             "read",
-            timeout_s=10.0,
+            timeout_s=20.0,
         )
     )
     registry.register(
         ToolDefinition(
             "get_ips_capacity",
-            "Get registered installed-capacity categories for one IPS site; this is not real-time availability.",
+            "Get SODA3 registered installed-capacity categories for one IPS site; this is not real-time availability.",
             IPSDetailsArgs,
             get_ips_capacity,
             "read",
-            timeout_s=10.0,
+            timeout_s=20.0,
         )
     )
     registry.register(
         ToolDefinition(
             "semantic_search_ips",
-            "Find likely IPS sites only when the name or wording is approximate, descriptive, misspelled, or affected by STT; do not use it for an exact name or concrete location supplied by the user; return exact PostgreSQL records.",
+            "Search SODA3 by an approximate, descriptive, misspelled, or STT site or provider name. Do not use it for an exact name or a concrete location.",
             SemanticSearchIPSArgs,
             semantic_search_ips,
             "read",
@@ -248,11 +305,11 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolDefinition(
             "compare_ips_capacity",
-            "Compare one registered capacity category across specific site codes. Does not choose a winner.",
+            "Compare one SODA3 registered capacity category across specific site codes. Does not choose a winner.",
             CompareCapacityArgs,
             compare_ips_capacity,
             "read",
-            timeout_s=10.0,
+            timeout_s=20.0,
         )
     )
 

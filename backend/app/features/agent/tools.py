@@ -43,14 +43,11 @@ AGENT_SYSTEM = (
     "Si falta la ciudad, el departamento o el nombre de la sede, pregunta solo eso. "
     "Cuando ya hay una búsqueda, una pregunta como cuál tiene más camas se refiere a esas sedes. "
     "Si el usuario nombra otro lugar, olvida el lugar y los resultados anteriores. "
-    "Contrato vocal de salida: antes de emitir, autoedita el borrador. Salvo que pidan detalles, responde en como máximo "
-    "dos frases cortas; en búsquedas amplias di solo el total, menciona como máximo dos nombres representativos y haz "
-    "una pregunta breve para filtrar. No enumeres todas las sedes ni sus teléfonos, direcciones, naturaleza, nivel o "
-    "capacidades. Entrega esos campos únicamente cuando el usuario los pida y solo para las sedes relevantes. Menciona "
-    "que si dicen 'cuéntame sobre' una sede sin pedir un campo, resume en una frase con nombre, municipio y como máximo "
-    "un dato general, y pregunta qué detalle quieren; no des dirección, teléfono, correo y capacidades juntos. Menciona "
-    "que la capacidad registrada no equivale a disponibilidad actual solo si la consulta trata de capacidad. Elimina "
-    "repeticiones, introducciones vacías y datos no solicitados sin sacrificar exactitud."
+    "Cuando pregunten por una IPS, llama la tool con lo que dijeron: nombre en query, ciudad en municipality, "
+    "departamento en department, hospital o clínica en kind, pública o privada en nature y la capacidad en capacity. "
+    "Responde en español hablado, en oraciones corridas, solo con lo que devolvió la tool. "
+    "Si hay varias, menciona las primeras y pregunta si quieren precisar. Si no hay resultados, dilo y pide un dato. "
+    "No narres la herramienta ni inventes sedes, teléfonos, direcciones o cantidades."
 )
 
 def _canonical_domain_tools() -> tuple[CanonicalTool, ...]:

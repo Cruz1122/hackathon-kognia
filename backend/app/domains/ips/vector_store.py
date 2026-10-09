@@ -92,10 +92,15 @@ class IPSVectorStore:
     ) -> int:
         collection = await self._get_collection()
         total = 0
-        for start in range(0, len(dataset.sites), self.batch_size):
+        site_total = len(dataset.sites)
+        # E5 truncates to 512 tokens. Shorter inputs avoid tokenizing the full capacity list.
+        embed_chars = int(os.getenv("IPS_EMBED_MAX_CHARS", "1200") or "1200")
+        for start in range(0, site_total, self.batch_size):
             sites = dataset.sites[start : start + self.batch_size]
             documents = [semantic_document(site) for site in sites]
-            vectors = await asyncio.to_thread(self.embeddings.embed_passages, documents)
+            embed_inputs = [document[:embed_chars] for document in documents]
+            vectors = await asyncio.to_thread(self.embeddings.embed_passages, embed_inputs)
+            print(f"ips chroma {start + len(sites)}/{site_total}", flush=True)
             ids = [str(uuid.uuid5(snapshot_id, site.site_code)) for site in sites]
             metadatas = [
                 {

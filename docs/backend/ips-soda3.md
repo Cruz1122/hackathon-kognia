@@ -71,7 +71,10 @@ cd backend
 .venv/bin/python -m app.domains.ips.bootstrap
 ```
 
-Con Compose:
+La llamada de voz no usa esa ingesta. Las tools consultan SODA3 en vivo con
+`API_KEY_SODA3` de `backend/.env`.
+
+Para repetir la ingesta a mano:
 
 ```bash
 docker compose run --rm -w /app/backend backend \

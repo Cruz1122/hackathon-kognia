@@ -156,17 +156,21 @@ class RuntimeInstrumentation:
     def install(self) -> "RuntimeInstrumentation":
         from app.domains.ips import tools as ips_tools
 
-        for name in (
-            "active_snapshot",
-            "search",
-            "canonical_location",
-            "details",
-            "capacities",
-            "compare_capacity",
-            "sites_by_ids",
-        ):
-            self._wrap_repository(ips_tools.repository, name)
-        self._wrap_vector_store(ips_tools.vector_store)
+        repository = getattr(ips_tools, "repository", None)
+        if repository is not None:
+            for name in (
+                "active_snapshot",
+                "search",
+                "canonical_location",
+                "details",
+                "capacities",
+                "compare_capacity",
+                "sites_by_ids",
+            ):
+                self._wrap_repository(repository, name)
+        vector_store = getattr(ips_tools, "vector_store", None)
+        if vector_store is not None:
+            self._wrap_vector_store(vector_store)
         return self
 
     def close(self) -> None:

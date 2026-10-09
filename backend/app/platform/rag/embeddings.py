@@ -27,8 +27,13 @@ class E5EmbeddingProvider:
 
     def _encode(self, texts: list[str], prefix: str) -> list[list[float]]:
         if self._model is None:
+            import torch
             from sentence_transformers import SentenceTransformer
 
+            threads = int(os.getenv("TORCH_NUM_THREADS", "0") or "0")
+            if threads < 1:
+                threads = os.cpu_count() or 4
+            torch.set_num_threads(threads)
             default_path = Path(__file__).resolve().parents[3] / "models" / "multilingual-e5-small"
             configured_path = os.getenv("E5_MODEL_DIR")
             model_source = Path(configured_path) if configured_path else default_path
@@ -38,8 +43,10 @@ class E5EmbeddingProvider:
                 device="cpu",
                 local_files_only=is_local_model,
             )
+        batch_size = int(os.getenv("E5_ENCODE_BATCH_SIZE", "64") or "64")
         values = self._model.encode(
             [f"{prefix}: {text}" for text in texts],
+            batch_size=max(1, batch_size),
             normalize_embeddings=True,
             convert_to_numpy=True,
         )

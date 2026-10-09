@@ -341,45 +341,30 @@ async def test_semantic_index_uses_separate_collection_and_snapshot_filters() ->
     assert "no representan disponibilidad actual" in semantic_document(dataset.sites[0])
 
 
-class FakeToolRepository:
-    def __init__(self, results, *, snapshot=None):
-        self.results = results
-        self.snapshot = bool(results) if snapshot is None else snapshot
+def _patch_soda(monkeypatch, rows, *, fail: bool = False):
+    calls: list[dict] = []
 
-    async def search(self, **kwargs):
-        return self.results, len(self.results)
+    async def fetch_rows(**kwargs):
+        calls.append(kwargs)
+        if fail:
+            from app.ips_soda3.runtime import IPSConfigurationError
 
-    async def details(self, site_code):
-        return self.results[0] if self.results else None
+            raise IPSConfigurationError("SODA3 no configurado")
+        return rows
 
-    async def capacities(self, site_code):
-        return self.results[0] if self.results else None
-
-    async def active_snapshot(self):
-        return SimpleNamespace(id=uuid.uuid4()) if self.snapshot else None
-
-    async def canonical_location(self, snapshot_id, *, department=None, municipality=None):
-        del snapshot_id
-        return department, municipality
-
-    async def sites_by_ids(self, site_ids):
-        return self.results
-
-
-class FakeToolVectors:
-    def __init__(self):
-        self.kwargs = None
-
-    async def search(self, *args, **kwargs):
-        self.kwargs = kwargs
-        return [SimpleNamespace(site_id="site-1", score=0.91)]
+    monkeypatch.setattr(ips_tools, "_fetch_rows", fetch_rows)
+    return calls
 
 
 @pytest.mark.asyncio
 async def test_structured_and_semantic_tools_return_exact_records(monkeypatch) -> None:
-    site = {"site_id": "site-1", "site_code": "9100100019", "site_name": "Hospital"}
-    monkeypatch.setattr(ips_tools, "repository", FakeToolRepository([site]))
-    monkeypatch.setattr(ips_tools, "vector_store", FakeToolVectors())
+    row = {
+        "c_digo_sede": "9100100019",
+        "nom_sede_ips": "Hospital",
+        "municipio": "LETICIA",
+        "departamento": "Amazonas",
+    }
+    _patch_soda(monkeypatch, [row])
     context = ToolContext("request-test")
 
     structured = await ips_tools.search_ips(ips_tools.SearchIPSArgs(query="Hospital"), context)
@@ -389,22 +374,14 @@ async def test_structured_and_semantic_tools_return_exact_records(monkeypatch) -
 
     assert structured["source"] == "datos.gov.co"
     assert structured["results"][0]["site_code"] == "9100100019"
-    assert semantic["results"][0]["semantic_score"] == 0.91
+    assert semantic["results"][0]["site_code"] == "9100100019"
+    assert "semantic_score" not in semantic["results"][0]
 
 
 @pytest.mark.asyncio
-async def test_semantic_tool_uses_snapshot_canonical_location(monkeypatch) -> None:
-    site = {"site_id": "site-1", "site_code": "2000102330", "site_name": "OD SALUD S.A.S."}
-    repository = FakeToolRepository([site])
-
-    async def canonical_location(snapshot_id, *, department=None, municipality=None):
-        del snapshot_id, department, municipality
-        return "Cesar", "VALLEDUPAR"
-
-    repository.canonical_location = canonical_location
-    vectors = FakeToolVectors()
-    monkeypatch.setattr(ips_tools, "repository", repository)
-    monkeypatch.setattr(ips_tools, "vector_store", vectors)
+async def test_semantic_tool_queries_soda_with_place_filters(monkeypatch) -> None:
+    row = {"c_digo_sede": "2000102330", "nom_sede_ips": "OD SALUD S.A.S."}
+    calls = _patch_soda(monkeypatch, [row])
 
     result = await ips_tools.semantic_search_ips(
         ips_tools.SemanticSearchIPSArgs(
@@ -416,23 +393,23 @@ async def test_semantic_tool_uses_snapshot_canonical_location(monkeypatch) -> No
     )
 
     assert result["status"] == "ok"
-    assert vectors.kwargs["department"] == "Cesar"
-    assert vectors.kwargs["municipality"] == "VALLEDUPAR"
+    assert calls[0]["department"] == "cesar"
+    assert calls[0]["municipality"] == "Valledupar"
+    assert calls[0]["query"] == "algo parecido a OD Salud"
 
 
 @pytest.mark.asyncio
 async def test_ips_tools_report_zero_results_without_fallback(monkeypatch) -> None:
-    monkeypatch.setattr(ips_tools, "repository", FakeToolRepository([], snapshot=True))
+    _patch_soda(monkeypatch, [])
     context = ToolContext("request-test")
 
     structured = await ips_tools.search_ips(ips_tools.SearchIPSArgs(query="No existe"), context)
     details = await ips_tools.get_ips_details(ips_tools.IPSDetailsArgs(site_code="missing"), context)
-    missing = FakeToolRepository([], snapshot=False)
-    monkeypatch.setattr(ips_tools, "repository", missing)
     semantic = await ips_tools.semantic_search_ips(
         ips_tools.SemanticSearchIPSArgs(query="No existe"), context
     )
-    without_snapshot = await ips_tools.search_ips(ips_tools.SearchIPSArgs(query="No existe"), context)
+    _patch_soda(monkeypatch, [], fail=True)
+    unavailable = await ips_tools.search_ips(ips_tools.SearchIPSArgs(query="No existe"), context)
 
     assert structured == {
         "dataset_id": "s2ru-bqt6",
@@ -443,6 +420,6 @@ async def test_ips_tools_report_zero_results_without_fallback(monkeypatch) -> No
         "status": "no_results",
     }
     assert details["status"] == "not_found" and details["site"] is None
-    assert semantic["status"] == "no_active_snapshot"
-    assert without_snapshot["status"] == "no_active_snapshot"
-    assert without_snapshot["total"] == 0
+    assert semantic["status"] == "no_results"
+    assert unavailable["status"] == "soda_unavailable"
+    assert unavailable["total"] == 0

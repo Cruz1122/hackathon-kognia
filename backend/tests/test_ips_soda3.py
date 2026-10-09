@@ -9,7 +9,7 @@ import pytest
 from app.ips_soda3.cache import RedisCache
 from app.ips_soda3.client import SODA3_URL, Soda3Client, Soda3Error
 from app.ips_soda3.config import IPSSettings
-from app.ips_soda3.service import IPSService, literal, where_clause
+from app.ips_soda3.service import IPSService, agent_where, literal, where_clause
 
 
 class FakeRedis:
@@ -232,6 +232,14 @@ async def test_admin_iterator_stops_at_short_page() -> None:
         assert [len(result["data"]) for result in results] == [2, 1]
     finally:
         await http.aclose()
+
+
+def test_agent_where_searches_names_without_vector_filters() -> None:
+    clause = agent_where(query="Hospital", municipality="Leticia", site_code="9100100019")
+    assert "nombre_prestador" in clause
+    assert "nom_sede_ips" in clause
+    assert "c_digo_sede = '9100100019'" in clause
+    assert "chroma" not in clause
 
 
 def test_literal_escaping_and_safe_filters() -> None:

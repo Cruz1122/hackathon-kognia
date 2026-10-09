@@ -15,10 +15,13 @@ async def test_stream_agent_populates_trace_recorder(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("APP_ENV", "test")
     from app.domains.ips import tools as ips_tools
 
-    async def no_snapshot():
-        return None
+    async def soda_down(**kwargs):
+        del kwargs
+        from app.ips_soda3.runtime import IPSConfigurationError
 
-    monkeypatch.setattr(ips_tools.repository, "active_snapshot", no_snapshot)
+        raise IPSConfigurationError("SODA3 no configurado")
+
+    monkeypatch.setattr(ips_tools, "_fetch_rows", soda_down)
 
     async def handler(config, prompt, *, messages=None, tools=None):
         del config, prompt
@@ -55,7 +58,7 @@ async def test_stream_agent_populates_trace_recorder(monkeypatch: pytest.MonkeyP
 
     tool_span = next(span for span in data["spans"] if span["name"] == "tool.search_ips")
     assert tool_span["attributes"]["ok"] is True
-    assert "no_active_snapshot" in tool_span["attributes"]["result"]
+    assert "soda_unavailable" in tool_span["attributes"]["result"]
     assert tool_span["attributes"]["arguments"] == {"query": "Hospital"}
 
 
