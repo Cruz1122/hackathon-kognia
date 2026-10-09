@@ -1,0 +1,3 @@
+# The Docker image runs on CPU. Keep the quality-preserving Torch backend,
+# but prevent pip from selecting CUDA/NVIDIA wheels.
+torch==2.14.0+cpu
