@@ -204,6 +204,10 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
 
   function sendSocketCommand(payload: Record<string, unknown>): boolean {
     if (!connected || !socket || socket.readyState !== WebSocket.OPEN) return false;
+    console.info('[call ws] send', {
+      type: payload.type ?? null,
+      keys: Object.keys(payload),
+    });
     socket.send(JSON.stringify(payload));
     return true;
   }
@@ -539,8 +543,19 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
       try {
         const data: unknown = JSON.parse(event.data);
         if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-        handleEvent(data as Record<string, unknown>);
+        const eventData = data as Record<string, unknown>;
+        const eventType = String(eventData.type ?? '');
+        if (eventType !== 'wave.level') {
+          console.info('[call ws] receive', {
+            type: eventType || null,
+            keys: Object.keys(eventData),
+          });
+        }
+        handleEvent(eventData);
       } catch {
+        console.warn('[call ws] receive invalid JSON', {
+          chars: event.data.length,
+        });
         showTransportError('La llamada recibió un mensaje inválido.');
       }
     });

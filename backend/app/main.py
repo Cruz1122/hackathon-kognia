@@ -763,6 +763,12 @@ async def _send_call_event(
     conversation_id: uuid.UUID,
 ) -> None:
     """Keep the call's direct JSON transport and fan out a structured copy."""
+    logger.info(
+        "call ws send event=%s conversation=%s keys=%s",
+        event_type,
+        conversation_id,
+        sorted(payload),
+    )
     await websocket.send_json({"type": event_type, **payload})
     try:
         await realtime_hub.publish(
@@ -1395,6 +1401,9 @@ async def call_socket(
 ) -> None:
     """Live PCM: authenticate and attach a tenant conversation before media."""
     await websocket.accept()
+    debug_id = uuid.uuid4().hex[:8]
+    binary_frames = 0
+    logger.info("call ws open id=%s client=%s", debug_id, websocket.client)
     call_record: Call | None = None
     heard: CallSession | None = None
     mute_from: list[int | None] = [None]
@@ -1402,6 +1411,12 @@ async def call_socket(
     try:
         auth_payload = await _receive_json_message(websocket)
         token = auth_payload.get("token") if auth_payload is not None else None
+        logger.info(
+            "call ws auth id=%s payload_type=%s keys=%s",
+            debug_id,
+            type(auth_payload).__name__,
+            sorted(auth_payload) if isinstance(auth_payload, dict) else [],
+        )
         if auth_payload is None or auth_payload.get("type") != "auth" or not isinstance(token, str):
             await websocket.close(code=4401)
             return
@@ -1420,6 +1435,12 @@ async def call_socket(
             await websocket.close(code=4403)
             return
         attach_payload = await _receive_json_message(websocket)
+        logger.info(
+            "call ws attach id=%s payload_type=%s keys=%s",
+            debug_id,
+            type(attach_payload).__name__,
+            sorted(attach_payload) if isinstance(attach_payload, dict) else [],
+        )
         conversation_value = (
             attach_payload.get("conversation_id") if attach_payload is not None else None
         )
@@ -1757,6 +1778,15 @@ async def call_socket(
             raw = message.get("bytes")
             text = message.get("text")
             if raw is not None:
+                binary_frames += 1
+                if binary_frames == 1 or binary_frames % 50 == 0:
+                    logger.info(
+                        "call ws recv binary id=%s frame=%d bytes=%d pcm_mode=%s",
+                        debug_id,
+                        binary_frames,
+                        len(raw),
+                        pcm_mode,
+                    )
                 if pcm_mode:
                     level, voiced, rms = pcm_speech_features(raw, sample_rate)
                     await websocket.send_json({"type": "wave.level", "value": level, "source": "customer"})
@@ -1883,6 +1913,7 @@ async def call_socket(
             if ending_call:
                 continue
             if not text:
+                logger.warning("call ws invalid id=%s reason=empty_text", debug_id)
                 await _send_call_event(
                     websocket,
                     "error",
@@ -1894,6 +1925,11 @@ async def call_socket(
             try:
                 payload = json.loads(text)
             except json.JSONDecodeError:
+                logger.warning(
+                    "call ws invalid id=%s reason=invalid_json chars=%d",
+                    debug_id,
+                    len(text),
+                )
                 await _send_call_event(
                     websocket,
                     "error",
@@ -1903,6 +1939,11 @@ async def call_socket(
                 )
                 continue
             if not isinstance(payload, dict):
+                logger.warning(
+                    "call ws invalid id=%s reason=json_not_object payload_type=%s",
+                    debug_id,
+                    type(payload).__name__,
+                )
                 await _send_call_event(
                     websocket,
                     "error",
@@ -1911,6 +1952,12 @@ async def call_socket(
                     conversation_id=conversation_id,
                 )
                 continue
+            logger.info(
+                "call ws recv text id=%s type=%r keys=%s",
+                debug_id,
+                payload.get("type"),
+                sorted(payload),
+            )
             if payload.get("type") == "pcm.start":
                 idle_since = time.monotonic()
                 rate = payload.get("sample_rate")
@@ -1973,6 +2020,12 @@ async def call_socket(
                     audio_mime = mime
                 continue
             if payload.get("type") != "turn":
+                logger.warning(
+                    "call ws invalid id=%s reason=unsupported_type type=%r keys=%s",
+                    debug_id,
+                    payload.get("type"),
+                    sorted(payload),
+                )
                 await _send_call_event(
                     websocket,
                     "error",
