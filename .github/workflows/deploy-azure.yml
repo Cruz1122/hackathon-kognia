@@ -364,7 +364,7 @@ jobs:
       - name: Deploy frontend Container App
         uses: azure/container-apps-deploy-action@v1
         with:
-          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
           registryUrl: docker.io
           registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
           registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
