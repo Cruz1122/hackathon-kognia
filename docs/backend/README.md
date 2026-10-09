@@ -6,6 +6,7 @@
 | --- | --- |
 | [providers.md](providers.md) | Contratos LLM/STT/TTS y cadena de modelos |
 | [agent.md](agent.md) | `stream_agent`, tools, retries |
+| [ips-soda3.md](ips-soda3.md) | Adapter del catálogo IPS de datos.gov.co con caché Redis |
 
 **Lifespan** (`main.py`): check DB → preload Sherpa → preload Piper. Cualquier fallo se registra y el proceso sigue vivo para que `/health/live` distinga proceso vs. ready.
 

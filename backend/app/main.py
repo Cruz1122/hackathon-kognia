@@ -63,6 +63,8 @@ from .features.chat.schemas import (
 )
 from .features.transcription.schemas import TranscriptionResponse
 from .features.synthesis.schemas import SynthesisRequest
+from .ips_soda3.api import create_ips_router
+from .ips_soda3.runtime import start_ips_runtime, stop_ips_runtime
 from .providers import (
     ProviderError,
     llm_provider as default_llm_provider,
@@ -172,6 +174,14 @@ async def lifespan(_app: FastAPI):
         # Keep the API alive so /health/live can distinguish process health from readiness.
         logger.exception("PostgreSQL failed its startup check")
 
+    try:
+        await start_ips_runtime()
+        logger.info("SODA3 IPS adapter is ready")
+    except Exception:
+        # Keep the API alive and expose a controlled 503 from /api/ips if the
+        # external integration is not configured or cannot be constructed.
+        logger.exception("SODA3 IPS adapter failed its startup check")
+
     sherpa_status = "starting"
     try:
         await asyncio.to_thread(stt_provider.preload)
@@ -208,6 +218,10 @@ async def lifespan(_app: FastAPI):
             logger.exception("Telnyx shutdown failed")
         try:
             try:
+                await stop_ips_runtime()
+            except Exception:
+                logger.exception("SODA3 IPS cleanup failed")
+            try:
                 await close_redis()
             except Exception:
                 logger.exception("Redis cleanup failed")
@@ -235,6 +249,7 @@ app.include_router(dev_router)
 app.include_router(telnyx_router)
 app.include_router(whatsapp_router)
 app.include_router(agent_state_router)
+app.include_router(create_ips_router())
 
 
 def _health_status() -> dict[str, str]:
