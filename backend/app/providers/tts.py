@@ -2,26 +2,29 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from ..features.synthesis import service as piper
+from ..features.synthesis import service as voice
 
 
-class PiperTextToSpeech:
-    """Existing Piper voice behind the TTS contract."""
+class ElevenLabsTextToSpeech:
+    """ElevenLabs streaming voice behind the TTS contract."""
 
     def preload(self) -> None:
-        piper.preload_tts()
+        voice.preload_tts()
 
     def sample_rate(self) -> int:
-        return piper.tts_sample_rate()
+        return voice.tts_sample_rate()
+
+    def open_turn(self) -> voice.ElevenLabsTurn:
+        return voice.ElevenLabsTurn()
 
     def stream_audio(self, text: str) -> Iterator[bytes]:
-        return piper.stream_tts_audio(text)
+        return voice.stream_tts_audio(text)
 
     def preload_phrases(self, texts: list[str] | tuple[str, ...]) -> None:
-        piper.preload_tts_phrases(texts)
+        voice.preload_tts_phrases(texts)
 
     def cached_audio(self, text: str) -> tuple[int, bytes] | None:
-        return piper.cached_tts_audio(text)
+        return voice.cached_tts_audio(text)
 
     def synthesize_wav(self, text: str) -> bytes:
-        return piper.synthesize_text(text)
+        return voice.synthesize_text(text)

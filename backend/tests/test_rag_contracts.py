@@ -64,7 +64,7 @@ def test_rewriter_timeout_is_bounded() -> None:
         try:
             store = NoHitStore(); embeddings = HashEmbeddingProvider()
             retriever = ProgressiveRetriever(store, embedding_provider=embeddings, rewriter=SlowRewriter())
-        retriever.set_document_chunks("doc", [RetrievalHit("a", "Cambios de registro.", {"document_id": "doc"})])
+            retriever.set_document_chunks("doc", [RetrievalHit("a", "Cambios de registro.", {"document_id": "doc"})])
             await store.set_active_document("doc")
             result = await retriever.search("¿Y eso?", document_id="doc", conversation=[{"role": "user", "content": "Cancelaciones."}])
             assert result.debug["rewrite_failed"] is True

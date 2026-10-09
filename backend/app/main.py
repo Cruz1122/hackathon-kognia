@@ -3,7 +3,6 @@ import inspect
 import json
 import logging
 import os
-import queue
 import re
 import time
 import uuid
@@ -61,7 +60,9 @@ from .features.chat.schemas import (
     ConversationResponse,
 )
 from .features.transcription.schemas import TranscriptionResponse
+from .features.synthesis.chunk import take_semantic_chunk as _take_semantic_chunk
 from .features.synthesis.schemas import SynthesisRequest
+from .features.synthesis.service import SynthesisNotConfigured, open_speech_turn
 from .ips_soda3.api import create_ips_router
 from .ips_soda3.runtime import start_ips_runtime, stop_ips_runtime
 from .providers import (
@@ -169,7 +170,7 @@ async def lifespan(_app: FastAPI):
         # Keep the API alive so /health/live can distinguish process health from readiness.
         logger.exception("Sherpa-ONNX failed to load during backend startup")
     tts_status = "starting"
-    logger.info("Loading Piper TTS before accepting requests")
+    logger.info("Checking ElevenLabs voice configuration")
     try:
         await asyncio.to_thread(tts_provider.preload)
         from .agent.phrases import BACKCHANNEL
@@ -178,12 +179,12 @@ async def lifespan(_app: FastAPI):
             try:
                 await asyncio.to_thread(preload_phrases, BACKCHANNEL)
             except Exception:
-                logger.exception("Piper backchannel warmup failed")
+                logger.exception("ElevenLabs backchannel warmup failed")
         tts_status = "ready"
-        logger.info("Piper TTS is ready")
+        logger.info("ElevenLabs TTS is ready")
     except Exception:
         tts_status = "error"
-        logger.exception("Piper TTS failed to load during backend startup")
+        logger.exception("ElevenLabs TTS is not configured")
     try:
         await asyncio.to_thread(rag_embeddings.preload)
         logger.info("E5 embeddings are ready")
@@ -523,8 +524,8 @@ async def transcribe(request: Request) -> TranscriptionResponse:
 async def synthesize(request: SynthesisRequest) -> Response:
     try:
         audio = await asyncio.to_thread(tts_provider.synthesize_wav, request.text)
-    except ImportError as exc:
-        raise HTTPException(status_code=503, detail="Piper TTS no está instalado.") from exc
+    except SynthesisNotConfigured as exc:
+        raise HTTPException(status_code=503, detail="La síntesis de voz no está configurada.") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="No se pudo sintetizar el texto.") from exc
     return Response(content=audio, media_type="audio/wav")
@@ -532,13 +533,14 @@ async def synthesize(request: SynthesisRequest) -> Response:
 
 @app.post("/synthesize/stream", response_class=StreamingResponse)
 async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
-    """Stream Piper TTS as mono signed-int16 PCM, using one resident model worker."""
+    """Stream ElevenLabs as mono signed-int16 PCM."""
     try:
-        sample_rate = await asyncio.to_thread(tts_provider.sample_rate)
-    except ImportError as exc:
-        raise HTTPException(status_code=503, detail="Piper TTS no está instalado.") from exc
+        await asyncio.to_thread(tts_provider.preload)
+        sample_rate = tts_provider.sample_rate()
+    except SynthesisNotConfigured as exc:
+        raise HTTPException(status_code=503, detail="La síntesis de voz no está configurada.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="No se pudo cargar Piper TTS.") from exc
+        raise HTTPException(status_code=502, detail="No se pudo iniciar la síntesis de voz.") from exc
     return StreamingResponse(
         tts_provider.stream_audio(request.text),
         media_type=f"audio/L16; rate={sample_rate}; channels=1",
@@ -547,43 +549,6 @@ async def synthesize_stream(request: SynthesisRequest) -> StreamingResponse:
             "X-Audio-Encoding": "signed-int16-le",
         },
     )
-
-
-def _take_semantic_chunk(buffer: str, flush: bool = False) -> tuple[str, str]:
-    if flush:
-        return buffer.strip(), ""
-    sentence = re.search(r"[.!?](?:[\"'»”)]*)?(?=\s|$)", buffer)
-    if sentence and len(buffer[: sentence.end()].split()) >= 2:
-        return buffer[: sentence.end()].strip(), buffer[sentence.end() :].lstrip()
-    return "", buffer
-
-
-async def _stream_tts_chunk(text: str):
-    """Bridge the blocking Piper TTS generator without buffering its audio."""
-    audio_queue: queue.Queue[bytes | BaseException | None] = queue.Queue()
-
-    def generate() -> None:
-        try:
-            for chunk in tts_provider.stream_audio(text):
-                audio_queue.put(chunk)
-        except BaseException as exc:
-            audio_queue.put(exc)
-        finally:
-            audio_queue.put(None)
-
-    worker = asyncio.create_task(asyncio.to_thread(generate))
-    try:
-        while True:
-            chunk = await asyncio.to_thread(audio_queue.get)
-            if chunk is None:
-                break
-            if isinstance(chunk, BaseException):
-                raise chunk
-            yield chunk
-    finally:
-        if not worker.done():
-            worker.cancel()
-        await asyncio.gather(worker, return_exceptions=True)
 
 
 class ErrorResponse(BaseModel):
@@ -820,21 +785,19 @@ async def _send_call_event(
 
 
 def _announce_agent_phrase(heard: CallSession, text: str, *, audio_kind: str = "final") -> None:
+    cleaned = text.strip()
+    if not cleaned or heard.closed:
+        return
     catch_up_customer_clock(heard)
     at = agent_heard_ms(heard)
     timeline.record(
         heard,
         "transcript.final",
-        {"speaker": "agent", "text": text, "audio_kind": audio_kind},
+        {"speaker": "agent", "text": cleaned, "audio_kind": audio_kind},
         at_offset_ms=at,
     )
     heard.agent_state = "speaking"
     timeline.record(heard, "agent.state", {"state": "speaking"}, at_offset_ms=at)
-
-
-def _append_agent_pcm(heard: CallSession, chunk: bytes, sample_rate: int) -> None:
-    canonical = chunk if sample_rate == CANONICAL_RATE else resample_pcm16le(chunk, sample_rate, CANONICAL_RATE)
-    remember_agent_pcm(heard, canonical)
 
 
 def _mark_listening(heard: CallSession | None) -> None:
@@ -844,21 +807,31 @@ def _mark_listening(heard: CallSession | None) -> None:
     timeline.record(heard, "agent.state", {"state": "listening"})
 
 
-def _record_customer_transcript(heard: CallSession | None, text: str, offset_ms: int | None) -> None:
+def _customer_mark(heard: CallSession | None) -> int | None:
     if heard is None:
+        return None
+    if heard.utterance_offset_ms is not None:
+        mark = heard.utterance_offset_ms
+        heard.utterance_offset_ms = None
+        return mark
+    return timeline_ms(heard.recording_offset_ms, len(heard.customer_pcm) // 2)
+
+
+def _record_customer_transcript(heard: CallSession | None, text: str, at_offset_ms: int | None) -> None:
+    cleaned = text.strip()
+    if heard is None or heard.closed or not cleaned:
         return
     timeline.record(
         heard,
         "transcript.final",
-        {"speaker": "customer", "text": text},
-        at_offset_ms=offset_ms,
+        {"speaker": "customer", "text": cleaned},
+        at_offset_ms=at_offset_ms,
     )
 
 
-def _customer_mark(heard: CallSession | None) -> int | None:
-    if heard is None:
-        return None
-    return timeline_ms(heard.recording_offset_ms, len(heard.customer_pcm) // 2)
+def _append_agent_pcm(heard: CallSession, chunk: bytes, sample_rate: int) -> None:
+    canonical = chunk if sample_rate == CANONICAL_RATE else resample_pcm16le(chunk, sample_rate, CANONICAL_RATE)
+    remember_agent_pcm(heard, canonical)
 
 
 def _record_voice_audio_timing(heard: CallSession | None, audio_kind: str) -> None:
@@ -873,14 +846,54 @@ def _record_voice_audio_timing(heard: CallSession | None, audio_kind: str) -> No
         timeline.record(heard, "audio.useful_answer", {"latency_ms": elapsed_ms})
 
 
-async def _persist_recording_origin(call_id: uuid.UUID) -> None:
-    from sqlalchemy import update
-
-    from .db.session import get_session_factory
-
+async def _forward_call_audio(
+    websocket: WebSocket,
+    speech: Any,
+    *,
+    heard: CallSession | None = None,
+    audio_kind: str = "final",
+) -> None:
+    announced = False
     try:
+        async for audio_chunk in speech.audio():
+            if not audio_chunk:
+                continue
+            _record_voice_audio_timing(heard, audio_kind)
+            if not announced:
+                announced = True
+                await websocket.send_json({"type": "tts.format", "sample_rate": int(speech.sample_rate)})
+            if heard is not None and not heard.closed:
+                _append_agent_pcm(heard, audio_chunk, int(speech.sample_rate))
+            await websocket.send_bytes(audio_chunk)
+    finally:
+        if heard is not None:
+            heard.agent_segment_open = False
+
+
+async def _close_call_speech(speech: Any, forward: asyncio.Task[None] | None, *, cancel: bool) -> None:
+    try:
+        if cancel:
+            await speech.cancel()
+        else:
+            await speech.finish()
+    finally:
+        if forward is not None:
+            if cancel:
+                forward.cancel()
+            await asyncio.gather(forward, return_exceptions=True)
+
+
+async def _persist_recording_origin(call_id: uuid.UUID) -> None:
+    """Remember that a browser demo recording starts at offset 0."""
+    try:
+        from sqlalchemy import update
+
+        from .db.session import get_session_factory
+
         async with get_session_factory()() as db:
-            await db.execute(update(Call).where(Call.id == call_id).values(recording_offset_ms=0))
+            await db.execute(
+                update(Call).where(Call.id == call_id).values(recording_offset_ms=0)
+            )
             await db.commit()
     except Exception:
         logger.exception("Could not store recording offset")
@@ -907,17 +920,6 @@ async def _speak_chunk(
         organization_id=organization_id,
         conversation_id=conversation_id,
     )
-    if cached_audio is None:
-        sample_rate = await asyncio.to_thread(tts_provider.sample_rate)
-        audio_stream = _stream_tts_chunk(text)
-    else:
-        sample_rate, pcm = cached_audio
-
-        async def cached_stream():
-            for index in range(0, len(pcm), PCM_CHUNK_BYTES):
-                yield pcm[index:index + PCM_CHUNK_BYTES]
-
-        audio_stream = cached_stream()
     if audio_kind == "backchannel":
         await _send_call_event(
             websocket,
@@ -926,16 +928,48 @@ async def _speak_chunk(
             organization_id=organization_id,
             conversation_id=conversation_id,
         )
-    await websocket.send_json({"type": "tts.format", "sample_rate": sample_rate})
-    try:
-        async for audio_chunk in audio_stream:
-            _record_voice_audio_timing(heard, audio_kind)
-            if heard is not None and not heard.closed:
-                _append_agent_pcm(heard, audio_chunk, sample_rate)
-            await websocket.send_bytes(audio_chunk)
-    finally:
-        if heard is not None:
-            heard.agent_segment_open = False
+    if cached_audio is not None:
+        sample_rate, pcm = cached_audio
+
+        async def cached_stream():
+            for index in range(0, len(pcm), PCM_CHUNK_BYTES):
+                yield pcm[index:index + PCM_CHUNK_BYTES]
+
+        audio_stream = cached_stream()
+        await websocket.send_json({"type": "tts.format", "sample_rate": sample_rate})
+        try:
+            async for audio_chunk in audio_stream:
+                _record_voice_audio_timing(heard, audio_kind)
+                if heard is not None and not heard.closed:
+                    _append_agent_pcm(heard, audio_chunk, sample_rate)
+                await websocket.send_bytes(audio_chunk)
+        finally:
+            if heard is not None:
+                heard.agent_segment_open = False
+    else:
+        speech = open_speech_turn(tts_provider)
+        forward: asyncio.Task[None] | None = None
+        try:
+            await speech.open()
+            forward = asyncio.create_task(
+                _forward_call_audio(websocket, speech, heard=heard, audio_kind=audio_kind)
+            )
+            await speech.say(text)
+            await _close_call_speech(speech, forward, cancel=False)
+        except asyncio.CancelledError:
+            await _close_call_speech(speech, forward, cancel=True)
+            raise
+        except Exception:
+            logger.exception("Call TTS failed")
+            await _close_call_speech(speech, forward, cancel=True)
+            await _send_call_event(
+                websocket,
+                "error",
+                {"message": "No se pudo sintetizar la voz."},
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+            )
+            return
     await _send_call_event(
         websocket,
         "tts.completed",
@@ -1118,6 +1152,10 @@ async def _run_call_turn(
     speaker = asyncio.create_task(speak_worker())
     coordinator.schedule_backchannel(pick(BACKCHANNEL))
 
+    async def speak_sentence(text: str) -> None:
+        if text.strip():
+            await pending.put(text)
+
     async def finalize_trace() -> None:
         nonlocal trace_saved
         if trace_saved:
@@ -1187,9 +1225,9 @@ async def _run_call_turn(
             )
             chunk, buffer = _take_semantic_chunk(buffer)
             if chunk:
-                await pending.put(chunk)
+                await speak_sentence(chunk)
         if buffer.strip():
-            await pending.put(buffer.strip())
+            await speak_sentence(buffer.strip())
         await pending.put(None)
         await speaker
         _mark_listening(heard)
@@ -1232,10 +1270,7 @@ async def _run_call_turn(
     except asyncio.CancelledError:
         failed = True
         speaker.cancel()
-        try:
-            await speaker
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(speaker, return_exceptions=True)
         try:
             await _send_call_event(
                 websocket,
@@ -1250,10 +1285,7 @@ async def _run_call_turn(
     except Exception:
         failed = True
         speaker.cancel()
-        try:
-            await speaker
-        except (asyncio.CancelledError, Exception):
-            pass
+        await asyncio.gather(speaker, return_exceptions=True)
         logger.exception("Call turn failed")
         try:
             await _send_call_event(

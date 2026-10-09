@@ -39,12 +39,6 @@ RUN mkdir -p models/sherpa-nemotron-35-560 \
     && rm -rf "$extracted" /tmp/sherpa-nemotron.tar.bz2 \
     && test -f models/sherpa-nemotron-35-560/tokens.txt
 
-RUN python -m piper.download_voices \
-        --download-dir models/piper-es \
-        es_MX-claude-high \
-    && test -f models/piper-es/es_MX-claude-high.onnx \
-    && test -f models/piper-es/es_MX-claude-high.onnx.json
-
 RUN python scripts/download-e5-model.py models/multilingual-e5-small
 
 FROM python:3.13.15-slim-trixie
@@ -58,8 +52,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     SHERPA_MODEL_DIR=backend/models/sherpa-nemotron-35-560 \
-    PIPER_MODEL_DIR=backend/models/piper-es \
-    PIPER_TTS_VOICE=es_MX-claude-high \
     E5_MODEL_DIR=/app/backend/models/multilingual-e5-small
 
 WORKDIR /app

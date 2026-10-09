@@ -18,7 +18,7 @@ from .live_audio import live_audio_hub
 from .marks import MarkTracker
 from .sessions import CallSession
 from .timeline import timeline
-from .tts import PiperTTSProvider
+from .tts import ElevenLabsTTSProvider
 
 logger = logging.getLogger("hackathon.telnyx.bridge")
 
@@ -29,7 +29,7 @@ PCM_CHUNK_BYTES = 6400
 class AudioPlaybackCoordinator:
     """Keep one voice output active while the agent keeps processing."""
 
-    def __init__(self, session: CallSession, voice: PiperTTSProvider) -> None:
+    def __init__(self, session: CallSession, voice: ElevenLabsTTSProvider) -> None:
         self.session = session
         self.voice = voice
         self._lock = asyncio.Lock()
@@ -90,8 +90,9 @@ class AudioPlaybackCoordinator:
             await asyncio.gather(task, return_exceptions=True)
 
 
-async def _with_holding(generator, session: CallSession, voice):
+async def _with_holding(generator, session: CallSession, voice: object):
     """Relay the stateful generator without blocking it on TTS."""
+    del session, voice
     queue = asyncio.Queue(maxsize=32)
     end = object()
 
@@ -127,10 +128,10 @@ async def run_agent_turn(
     transcript: str,
     *,
     agent: Any = stream_agent,
-    tts: PiperTTSProvider | None = None,
+    tts: ElevenLabsTTSProvider | None = None,
     system_initiated: bool = False,
 ) -> None:
-    voice = tts or PiperTTSProvider()
+    voice = tts or ElevenLabsTTSProvider()
     from ..agent.phrases import BACKCHANNEL, pick
 
     session.voice_turn_started_at = time.monotonic()
@@ -303,7 +304,7 @@ async def _publish_agent_event(
 
 async def _speak_raw(
     session: CallSession,
-    voice: PiperTTSProvider,
+    voice: ElevenLabsTTSProvider,
     text: str,
     *,
     audio_kind: str = "final",
@@ -327,13 +328,12 @@ async def _speak_raw(
                 for chunk in voice.stream_audio(text):
                     asyncio.run_coroutine_threadsafe(chunks.put(chunk), loop).result()
             except Exception:
-                logger.exception("Piper stream failed")
+                logger.exception("Voice stream failed")
             finally:
                 asyncio.run_coroutine_threadsafe(chunks.put(None), loop).result()
 
         producer = asyncio.create_task(asyncio.to_thread(produce))
         cached_chunks = None
-
     announced = False
 
     async def emit_chunk(chunk: bytes) -> None:
@@ -383,7 +383,7 @@ async def _speak_raw(
             producer.cancel()
 
 
-async def _speak(session: CallSession, voice: PiperTTSProvider, text: str) -> None:
+async def _speak(session: CallSession, voice: ElevenLabsTTSProvider, text: str) -> None:
     """Compatibility wrapper for greetings and silence prompts."""
     await _speak_raw(session, voice, text, audio_kind="final")
 

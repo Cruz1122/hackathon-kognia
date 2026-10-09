@@ -9,7 +9,7 @@ python-dotenv==1.2.3
 uvicorn[standard]==0.52.4
 sherpa-onnx==1.13.8
 numpy>=2.0
-piper-tts==1.8.0
+websockets==15.0.1
 chromadb-client==1.1.1
 pypdf==6.1.0
 python-multipart==0.0.20

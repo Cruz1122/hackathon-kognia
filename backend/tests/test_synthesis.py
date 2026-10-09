@@ -1,104 +1,57 @@
-from pathlib import Path
-from types import SimpleNamespace
+import asyncio
+import base64
+import json
+
+import pytest
 
 from app import main
 from app.features.synthesis import service
+from app.features.synthesis.service import ElevenLabsTurn, SynthesisNotConfigured
 
 
-class FakePiperVoice:
-    config = SimpleNamespace(sample_rate=22_050)
-
+class FakeSocket:
     def __init__(self) -> None:
-        self.stream_exhausted = False
-        self.synthesis_config = None
+        self.sent: list[dict[str, object]] = []
+        self.closed = False
+        self._incoming: asyncio.Queue[str | None] = asyncio.Queue()
 
-    def synthesize(self, _text, *, syn_config):
-        self.synthesis_config = syn_config
-        yield SimpleNamespace(audio_int16_bytes=b"pcm-first")
-        self.stream_exhausted = True
-        yield SimpleNamespace(audio_int16_bytes=b"pcm-second")
+    async def send(self, raw: str) -> None:
+        payload = json.loads(raw)
+        self.sent.append(payload)
+        if payload.get("flush"):
+            await self._incoming.put(json.dumps({"audio": base64.b64encode(b"\x01").decode()}))
+            await self._incoming.put(json.dumps({"audio": base64.b64encode(b"\x02\x03\x04").decode()}))
+        if payload.get("text") == "":
+            await self._incoming.put(json.dumps({"isFinal": True}))
 
+    async def close(self) -> None:
+        self.closed = True
+        await self._incoming.put(None)
 
-def test_stream_tts_audio_yields_before_all_audio_is_generated(monkeypatch) -> None:
-    voice = FakePiperVoice()
-    synthesis_config = object()
-    monkeypatch.setattr(service, "_voice", voice)
-    monkeypatch.setattr(service, "_synthesis_config", synthesis_config)
+    def __aiter__(self) -> "FakeSocket":
+        return self
 
-    stream = service.stream_tts_audio("Hola mundo.")
-    try:
-        first_chunk = next(stream)
-    finally:
-        close = getattr(stream, "close", None)
-        if close is not None:
-            close()
-
-    assert first_chunk == b"pcm-first"
-    assert voice.synthesis_config is synthesis_config
-    assert voice.stream_exhausted is False
+    async def __anext__(self) -> str:
+        item = await self._incoming.get()
+        if item is None:
+            raise StopAsyncIteration
+        return item
 
 
-def test_tts_loads_deterministic_mexican_spanish_voice(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-    voice = FakePiperVoice()
-
-    class FakeVoiceLoader:
-        @staticmethod
-        def load(model_path):
-            captured["model_path"] = Path(model_path)
-            return voice
-
-    class FakeSynthesisConfig:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(service, "_voice", None)
-    monkeypatch.setattr(service, "_synthesis_config", None)
-    monkeypatch.delenv("PIPER_MODEL_DIR", raising=False)
-    monkeypatch.delenv("PIPER_TTS_VOICE", raising=False)
-    monkeypatch.setattr(
-        service,
-        "import_module",
-        lambda _name: SimpleNamespace(
-            PiperVoice=FakeVoiceLoader,
-            SynthesisConfig=FakeSynthesisConfig,
-        ),
-    )
-
-    service.preload_tts()
-
-    assert captured["model_path"] == (
-        service.REPOSITORY_ROOT / "backend/models/piper-es/es_MX-claude-high.onnx"
-    )
-    assert captured["noise_scale"] == 0.0
-    assert captured["noise_w_scale"] == 0.0
-    assert service.tts_sample_rate() == 22_050
+def test_even_pcm_keeps_a_split_sample() -> None:
+    ready, pending = service.even_pcm(b"", b"\x01")
+    assert ready == b""
+    assert pending == b"\x01"
+    ready, pending = service.even_pcm(pending, b"\x02\x03")
+    assert ready == b"\x01\x02"
+    assert pending == b"\x03"
 
 
-def test_stream_tts_audio_forwards_every_piper_chunk(monkeypatch) -> None:
-    voice = FakePiperVoice()
-    monkeypatch.setattr(service, "_voice", voice)
-    monkeypatch.setattr(service, "_synthesis_config", object())
-
-    assert list(service.stream_tts_audio("Respuesta completa.")) == [
-        b"pcm-first",
-        b"pcm-second",
-    ]
-
-
-def test_stream_tts_audio_uses_phonetic_wane_cue_without_mutating_text_contract(monkeypatch) -> None:
-    captured: dict[str, str] = {}
-
-    class CapturingVoice(FakePiperVoice):
-        def synthesize(self, text, *, syn_config):
-            captured["text"] = text
-            yield SimpleNamespace(audio_int16_bytes=b"pcm")
-
-    monkeypatch.setattr(service, "_voice", CapturingVoice())
-    monkeypatch.setattr(service, "_synthesis_config", object())
-
-    assert list(service.stream_tts_audio("Soy Wane. WANE sigue aquí.")) == [b"pcm"]
-    assert captured["text"] == "Soy Güein. Güein sigue aquí."
+def test_preload_requires_elevenlabs_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    with pytest.raises(SynthesisNotConfigured):
+        service.preload_tts()
 
 
 def test_semantic_chunker_does_not_cut_an_unfinished_spanish_sentence() -> None:
@@ -107,3 +60,46 @@ def test_semantic_chunker_does_not_cut_an_unfinished_spanish_sentence() -> None:
 
     assert main._take_semantic_chunk(unfinished) == ("", unfinished)
     assert main._take_semantic_chunk(complete) == (complete, "")
+
+
+@pytest.mark.asyncio
+async def test_turn_flushes_each_sentence_and_rejoins_split_pcm() -> None:
+    socket = FakeSocket()
+
+    async def connect() -> FakeSocket:
+        return socket
+
+    turn = ElevenLabsTurn(connect)
+    await turn.open()
+    heard: list[bytes] = []
+
+    async def collect() -> None:
+        async for chunk in turn.audio():
+            heard.append(chunk)
+
+    reader = asyncio.create_task(collect())
+    await turn.say("Soy Wane. Sigo aquí.")
+    await turn.finish()
+    await reader
+
+    assert socket.sent[0] == {"text": " "}
+    assert socket.sent[1] == {"text": "Soy Güein. Sigo aquí. ", "flush": True}
+    assert socket.sent[2] == {"text": ""}
+    assert heard == [b"\x01\x02\x03\x04"]
+    await turn.cancel()
+
+
+@pytest.mark.asyncio
+async def test_turn_cancel_closes_without_flushing_the_buffer() -> None:
+    socket = FakeSocket()
+
+    async def connect() -> FakeSocket:
+        return socket
+
+    turn = ElevenLabsTurn(connect)
+    await turn.open()
+    await turn.say("Hola, ¿cómo te llamas?")
+    await turn.cancel()
+
+    assert socket.closed is True
+    assert all(message.get("text") != "" for message in socket.sent)

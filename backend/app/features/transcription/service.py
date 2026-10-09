@@ -418,7 +418,11 @@ def _audio_with_recovery_trailer(pcm: bytes, sample_rate: int) -> bytes:
 
 def recover_short_transcript(pcm: bytes, sample_rate: int = 16000) -> str:
     """Re-decode a short empty utterance with a helper word the model can latch onto."""
-    audio = _audio_with_recovery_trailer(pcm, sample_rate)
+    try:
+        audio = _audio_with_recovery_trailer(pcm, sample_rate)
+    except Exception:
+        logging.getLogger("hackathon.stt").exception("Recovery trailer synthesis failed")
+        return ""
     if not audio:
         return ""
     stream = create_stream()

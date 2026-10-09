@@ -25,7 +25,7 @@ const { mode = 'call', hangup = false, monitor = 'wave' } = Astro.props;
   </defs>
 </svg>
 
-<div class:list={['call-demo-page', mode === 'dev' && 'call-demo-page--dev']} data-call-mode={mode}>
+<div class:list={['call-demo-page', mode === 'dev' && 'call-demo-page--dev']} data-call-mode={mode} data-tour-scope={mode === 'dev' ? 'replay' : 'call'}>
   <ContentLoader id="callLoading" copy="Preparando la llamada…" class="call-page-loader" />
   <section class="call-page-error" id="callError" role="alert" aria-live="assertive" aria-atomic="true" hidden inert>
     <div class="call-page-error__icon" aria-hidden="true"><i data-lucide="triangle-alert"></i></div>
@@ -35,7 +35,7 @@ const { mode = 'call', hangup = false, monitor = 'wave' } = Astro.props;
   <div class="app-content is-nav-ready" id="appContent" aria-hidden="true" inert hidden>
     <h1 id="screenTitle" class="sr-only">{mode === 'dev' ? 'Repetición técnica de llamada' : 'Llamada en tiempo real'}</h1>
     <div class="player-wrap">
-      <div class="call-connection-status" id="callConnectionStatus" role="status" aria-live="polite" hidden>
+      <div class="call-connection-status" id="callConnectionStatus" data-tour="connection-status" role="status" aria-live="polite" hidden>
         <span class="call-connection-status__dot" aria-hidden="true"></span>
         <span id="callConnectionStatusText">{mode === 'dev' ? 'Cargando replay técnico…' : 'Conectando…'}</span>
       </div>
@@ -46,7 +46,7 @@ const { mode = 'call', hangup = false, monitor = 'wave' } = Astro.props;
             <ol class="call-stages" id="callStages" aria-label="Estado del agente"></ol>
           </div>
         ) : (
-          <div class="monitor at-live-edge" id="waveShell" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+          <div class="monitor at-live-edge" id="waveShell" data-tour="waveform" role="slider" tabindex="0" aria-label="Posición del audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
             <div class="wave-window" aria-hidden="true">
               <canvas class="wave-canvas" id="waveCanvas"></canvas>
             </div>
@@ -60,7 +60,7 @@ const { mode = 'call', hangup = false, monitor = 'wave' } = Astro.props;
               <span class="control-caption">Reiniciar</span>
             </div>
               {mode !== 'dev' && <div class="control-stack">
-              <button class="control primary" type="button" id="startBtn" aria-label="Empezar llamada" title="Empezar llamada"><i data-lucide="phone" aria-hidden="true"></i></button>
+              <button class="control primary" type="button" id="startBtn" data-tour="call-control" aria-label="Empezar llamada" title="Empezar llamada"><i data-lucide="phone" aria-hidden="true"></i></button>
               <span class="control-caption">Llamar</span>
               </div>}
             <div class="control-stack">
@@ -75,7 +75,7 @@ const { mode = 'call', hangup = false, monitor = 'wave' } = Astro.props;
         </div>
       </section>
     </div>
-    {mode === 'dev' && <section class="dev-replay-summary" id="devReplaySummary" aria-label="Resumen técnico" hidden>
+    {mode === 'dev' && <section class="dev-replay-summary" id="devReplaySummary" data-tour="replay-summary" aria-label="Resumen técnico" hidden>
       <div class="dev-replay-summary__head">
         <div>
           <p class="dev-replay-summary__eyebrow">Replay técnico</p>
@@ -85,7 +85,7 @@ const { mode = 'call', hangup = false, monitor = 'wave' } = Astro.props;
       </div>
       <div class="dev-replay-metrics" id="devReplayMetrics"></div>
     </section>}
-    <section class="conversation" id="conversation" aria-label="Transcripción de la llamada">
+    <section class="conversation" id="conversation" data-tour="conversation" aria-label="Transcripción de la llamada">
         <div class="conversation-empty" id="conversationEmpty" role="status">
           <EmptyState icon="message-circle" title="Aún no hay mensajes." />
         </div>

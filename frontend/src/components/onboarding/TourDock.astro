@@ -1,0 +1,19 @@
+---
+import MascotFace from '../mascot/MascotFace.astro';
+import { SIGNAL_EMOTIONS } from '../../lib/agent-signals/fleybo-emotions';
+---
+
+<div class="tour-dock" data-tour-dock hidden transition:persist transition:name="tour-dock">
+  <button type="button" class="tour-dock__button" data-tour-start="dashboard" aria-label="Abrir recorrido: Tablero">
+    <span class="tour-dock__face" aria-hidden="true">
+      <MascotFace
+        emotion="surprised"
+        emotions={SIGNAL_EMOTIONS}
+        mergeDefaultEmotions={false}
+        pointerTracking={false}
+        ariaLabel="Cara del recorrido"
+      />
+    </span>
+    <i class="tour-dock__mark" data-lucide="circle-help" aria-hidden="true"></i>
+  </button>
+</div>

@@ -9,6 +9,7 @@ interface Props {
   role?: string;
   ariaLive?: 'polite' | 'assertive' | 'off';
   tone?: 'empty' | 'error';
+  tour?: string;
 }
 
 const {
@@ -21,12 +22,13 @@ const {
   role,
   ariaLive,
   tone = 'empty',
+  tour,
 } = Astro.props;
 
 const rootClass = ['empty-state', tone === 'error' && 'empty-state--error', className].filter(Boolean).join(' ');
 ---
 
-<div class={rootClass} id={id} role={role} aria-live={ariaLive} hidden={hidden}>
+<div class={rootClass} id={id} role={role} aria-live={ariaLive} hidden={hidden} {...(tour ? { 'data-tour': tour } : {})}>
   <div class="empty-state__icon" aria-hidden="true"><i data-lucide={icon}></i></div>
   <p class="empty-state__title">{title}</p>
   {description && <p class="empty-state__reason">{description}</p>}

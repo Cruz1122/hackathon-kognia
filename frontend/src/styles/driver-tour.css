@@ -1,0 +1,186 @@
+/* The overlay is graphite, the same color as the header, and it paints above
+   the shell. Leave the header's band unpainted so the bar stays visible. */
+body.driver-active .driver-overlay {
+  clip-path: inset(var(--tour-header-offset, 0px) 0 0 0);
+}
+
+.driver-popover.hackakognia-tour {
+  --driver-popover-font-family: "Urbanist", sans-serif;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
+  padding: 28px 28px 22px;
+  border: 1px solid rgb(65 65 65 / 12%);
+  border-radius: var(--radius-ui);
+  background: #ffffff;
+  background-color: #ffffff;
+  color: #414141;
+  box-shadow: 0 12px 36px rgb(65 65 65 / 12%);
+  text-align: center;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-arrow {
+  display: none;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-title {
+  padding-inline: 28px;
+  color: #414141;
+  font-family: "Urbanist", sans-serif;
+  font-weight: 800;
+  font-size: 17px;
+  line-height: 1.2;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.driver-popover.hackakognia-tour.is-user-positioned {
+  position: fixed !important;
+  margin: 0 !important;
+  transform: none !important;
+}
+
+.driver-popover.hackakognia-tour.is-dragging,
+.driver-popover.hackakognia-tour.is-dragging .driver-popover-title {
+  cursor: grabbing;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-description {
+  color: #414141;
+  font-family: "Urbanist", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-navigation-btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-navigation-btns button + button {
+  margin-left: 0;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-progress-text {
+  color: #414141;
+  font-family: "Urbanist", sans-serif;
+  font-weight: 600;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-footer-btn {
+  border: 0;
+  border-radius: var(--radius-full);
+  padding: 8px 14px;
+  background: #414141;
+  color: #f8f8f8;
+  font-family: "Urbanist", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-shadow: none;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-footer-btn:hover,
+.driver-popover.hackakognia-tour .driver-popover-footer-btn:focus {
+  background: #414141;
+  color: #f8f8f8;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-next-btn,
+.driver-popover.hackakognia-tour .driver-popover-next-btn:hover,
+.driver-popover.hackakognia-tour .driver-popover-next-btn:focus {
+  background: #f7c974;
+  color: #414141;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-close-btn {
+  top: 12px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  color: #414141;
+  font-family: "Urbanist", sans-serif;
+}
+
+.driver-popover.hackakognia-tour .driver-popover-close-btn:hover,
+.driver-popover.hackakognia-tour .driver-popover-close-btn:focus {
+  color: #414141;
+}
+
+.driver-popover.hackakognia-tour button:focus-visible,
+.tour-dock__button:focus-visible {
+  outline: 3px solid #f7c974;
+  outline-offset: 3px;
+}
+
+.tour-dock {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 40;
+  width: 86px;
+  height: 86px;
+}
+
+.tour-dock[hidden] {
+  display: none !important;
+}
+
+.tour-dock__button {
+  position: relative;
+  display: block;
+  width: 86px;
+  height: 86px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tour-dock__face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.tour-dock__mark {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+  width: 22px;
+  height: 22px;
+  color: #414141;
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px #f8f8f8);
+}
+
+.tour-dock__button:active {
+  transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-dock__button {
+    transition: none;
+  }
+
+  .driver-popover.hackakognia-tour,
+  .driver-popover.hackakognia-tour .driver-popover-close-btn {
+    transition: none;
+  }
+}

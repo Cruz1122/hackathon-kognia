@@ -113,7 +113,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   let bargeHits = 0;
   let bargeArmedAt = 0;
   let bargePending = false;
-  let listeningAnnounced = false;
   let noiseFloor = 0.08;
   let reconnectTimer = 0;
   let connectionHideTimer = 0;
@@ -222,7 +221,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     pcm.pause();
     unhookTtsWave();
     hookMicWave();
-    announceListening();
   }
 
   function handleLocalBarge(): void {
@@ -529,7 +527,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
         if (!pcmReady) {
           pcm.start(ttsRate);
           pcmReady = true;
-          listeningAnnounced = false;
           bargeArmedAt = performance.now() + 250;
           bargeHits = 0;
         }
@@ -617,7 +614,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     processing = false;
     pcmReady = false;
     bargePending = false;
-    listeningAnnounced = false;
     closing = false;
     reconnectAttempts = 0;
     setConnectionStatus('connecting', 'Conectando llamada…');
@@ -636,6 +632,9 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
     paused = false;
     pcm.resume();
     pcm.prime();
+    processing = false;
+    pcmReady = false;
+    bargePending = false;
     waveApi?.setPlaying?.(true);
     setConnectionStatus('hidden');
     syncControls();

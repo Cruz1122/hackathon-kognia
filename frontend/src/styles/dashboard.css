@@ -1,4 +1,4 @@
-.section-view--dashboard { place-items: start; overflow-x: hidden; overflow-y: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: transparent transparent; overscroll-behavior: contain; overflow-anchor: none; }
+.section-view--dashboard { place-items: start; overflow-x: clip; overflow-y: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: transparent transparent; overscroll-behavior: contain; overflow-anchor: none; }
 .section-view--dashboard:hover, .section-view--dashboard:focus-within { scrollbar-color: rgba(65,65,65,.28) transparent; }
 .section-view--dashboard::-webkit-scrollbar { width: 7px; }
 .section-view--dashboard::-webkit-scrollbar-track { background: transparent; }
@@ -14,7 +14,7 @@
 #dashboardContent.loading-curtain-fallback { animation-duration: 2.4s; animation-timing-function: cubic-bezier(.5, .05, .4, 1); }
 .dashboard-topline { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 26px; }
 .dashboard-topline h2 { margin: 0; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.05em; line-height: 1; }
-.dashboard-heading { min-width: 0; }
+.dashboard-heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
 .dashboard-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: end; }
 .dashboard-filters > input, .dashboard-filters > button, .dashboard-filters > select { height: 40px; border: 1px solid rgba(65,65,65,.14); border-radius: var(--radius-full); background-color: var(--ui-paper); color: var(--ui-graphite); font: inherit; font-size: 12px; font-weight: 700; padding: 0 13px; }
 .dashboard-filters > button { cursor: pointer; background: #414141; color: #f8f8f8; padding-inline: 18px; }

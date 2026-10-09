@@ -29,24 +29,21 @@ node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if
   exit 1
 }
 
-echo "[1/6] Creando entorno virtual backend/.venv con Python 3.13"
+echo "[1/5] Creando entorno virtual backend/.venv con Python 3.13"
 python3.13 -m venv "$ROOT/backend/.venv"
 
-echo "[2/6] Instalando dependencias Python dentro del entorno virtual"
+echo "[2/5] Instalando dependencias Python dentro del entorno virtual"
 "$ROOT/backend/.venv/bin/python" -m pip install --upgrade pip
 "$ROOT/backend/.venv/bin/python" -m pip install -r "$ROOT/backend/requirements-dev.txt"
 
-echo "[3/6] Descargando modelo Sherpa-ONNX español"
+echo "[3/5] Descargando modelo Sherpa-ONNX español"
 "$ROOT/scripts/download-sherpa-model.sh"
 
-echo "[4/6] Descargando voz Piper Claude en español mexicano"
-"$ROOT/scripts/download-piper-model.sh"
-
-echo "[5/6] Descargando modelo E5 multilingüe para RAG"
+echo "[4/5] Descargando modelo E5 multilingüe para RAG"
 "$ROOT/backend/.venv/bin/python" "$ROOT/backend/scripts/download-e5-model.py" \
   "$ROOT/backend/models/multilingual-e5-small"
 
-echo "[6/6] Instalando dependencias del frontend"
+echo "[5/5] Instalando dependencias del frontend"
 cd "$ROOT/frontend"
 pnpm install
 
