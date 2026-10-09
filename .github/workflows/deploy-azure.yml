@@ -44,7 +44,6 @@ jobs:
               - 'backend/**'
             frontend:
               - 'frontend/**'
-              - '.github/workflows/deploy-azure.yml'
 
   deploy-postgres:
     name: Create PostgreSQL if missing
@@ -125,6 +124,40 @@ jobs:
             --min-replicas 1 --max-replicas 1 \
             --ingress internal --target-port 6379 --transport tcp
 
+  deploy-chroma:
+    name: Create Chroma if missing
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_APP_ENVIRONMENT }}
+      APP: ${{ vars.AZURE_CHROMA_APP_NAME }}
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create Chroma only when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_APP_ENVIRONMENT"
+          test -n "$APP"
+
+          if az containerapp show --name "$APP" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            printf '%s\n' "Chroma ($APP) ya existe; no se modifica."
+            exit 0
+          fi
+
+          az containerapp create \
+            --name "$APP" --resource-group "$RESOURCE_GROUP" \
+            --environment "$CONTAINER_APP_ENVIRONMENT" \
+            --image chromadb/chroma:1.1.1 \
+            --min-replicas 1 --max-replicas 1 \
+            --ingress internal --target-port 8000 --transport http \
+            --allow-insecure true --env-vars IS_PERSISTENT=TRUE
   build-backend:
     name: Build backend image
     needs: [detect-changes]
@@ -233,13 +266,14 @@ jobs:
 
   deploy-backend:
     name: Deploy backend
-    needs: [detect-changes, build-backend, deploy-postgres, deploy-redis]
+    needs: [detect-changes, build-backend, deploy-postgres, deploy-redis, deploy-chroma]
     if: >-
       always() && !cancelled() &&
       needs.detect-changes.result == 'success' &&
       (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') &&
       needs.deploy-postgres.result == 'success' &&
-      needs.deploy-redis.result == 'success'
+      needs.deploy-redis.result == 'success' &&
+      needs.deploy-chroma.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
@@ -267,6 +301,8 @@ jobs:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
           DATABASE_APP_NAME: ${{ vars.AZURE_DATABASE_APP_NAME }}
+          CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
+          CHROMA_RAG_COLLECTION: ${{ vars.CHROMA_RAG_COLLECTION }}
           REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
           ANALYTICS_CACHE_TTL_SECONDS: ${{ vars.ANALYTICS_CACHE_TTL_SECONDS }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
@@ -314,6 +350,24 @@ jobs:
           )"
           echo "::add-mask::$database_url"
 
+          chroma_args=()
+          if [[ -n "${CHROMA_APP_NAME:-}" ]] && az containerapp show \
+            --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            chroma_host="$(az containerapp show \
+              --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn -o tsv)"
+            test -n "$chroma_host"
+            az containerapp ingress update \
+              --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --allow-insecure true >/dev/null
+            chroma_args=(
+              "CHROMA_HOST=$chroma_host"
+              "CHROMA_PORT=80"
+              "CHROMA_SSL=false"
+              "CHROMA_RAG_COLLECTION=${CHROMA_RAG_COLLECTION:-rag_documents}"
+            )
+          fi
+
           redis_args=()
           if [[ -n "${REDIS_APP_NAME:-}" ]] && az containerapp show \
             --name "$REDIS_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
@@ -337,11 +391,13 @@ jobs:
             "JWT_SECRET_KEY=secretref:jwt-secret-key"
             "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15"
             "AGENT_TOOL_MODULES=app.domains.ips.tools,app.domains.business_analytics.tools"
+            "IPS_CHROMA_COLLECTION=${IPS_CHROMA_COLLECTION:-ips_facilities}"
             "TELNYX_RECORDINGS_DIR=/var/lib/kognia/recordings"
             "TELNYX_CAPTURE_DIR=/tmp/telnyx-captures"
             "TELNYX_ENABLED=${TELNYX_ENABLED:-false}"
             "TELNYX_WEBHOOK_HOST=${TELNYX_WEBHOOK_HOST:-$backend_fqdn}"
           )
+          env_args+=("${chroma_args[@]}")
           env_args+=("${redis_args[@]}")
 
           if [[ -n "${ANALYTICS_CACHE_TTL_SECONDS:-}" ]]; then
@@ -395,13 +451,14 @@ jobs:
 
   deploy-worker:
     name: Deploy worker
-    needs: [detect-changes, build-backend, deploy-postgres, deploy-redis]
+    needs: [detect-changes, build-backend, deploy-postgres, deploy-redis, deploy-chroma]
     if: >-
       always() && !cancelled() &&
       needs.detect-changes.result == 'success' &&
       (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') &&
       needs.deploy-postgres.result == 'success' &&
-      needs.deploy-redis.result == 'success'
+      needs.deploy-redis.result == 'success' &&
+      needs.deploy-chroma.result == 'success'
     runs-on: ubuntu-latest
     env:
       AZURE_CORE_OUTPUT: none
@@ -410,6 +467,7 @@ jobs:
       WORKER_APP_NAME: ${{ vars.AZURE_WORKER_APP_NAME }}
       DATABASE_APP_NAME: ${{ vars.AZURE_DATABASE_APP_NAME }}
       REDIS_APP_NAME: ${{ vars.AZURE_REDIS_APP_NAME }}
+      CHROMA_APP_NAME: ${{ vars.AZURE_CHROMA_APP_NAME }}
       DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-api:latest
@@ -417,6 +475,7 @@ jobs:
       POSTGRES_USER: ${{ vars.POSTGRES_USER }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       APP_ENV: ${{ vars.APP_ENV || 'test' }}
+      CHROMA_RAG_COLLECTION: ${{ vars.CHROMA_RAG_COLLECTION }}
       ANALYTICS_CACHE_TTL_SECONDS: ${{ vars.ANALYTICS_CACHE_TTL_SECONDS }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -447,6 +506,7 @@ jobs:
           test -n "$CONTAINER_APP_ENVIRONMENT"
           test -n "$DATABASE_APP_NAME"
           test -n "$REDIS_APP_NAME"
+          test -n "$CHROMA_APP_NAME"
           test -n "$POSTGRES_PASSWORD"
           test -n "$DOCKERHUB_USERNAME"
           test -n "$DOCKERHUB_TOKEN"
@@ -463,8 +523,13 @@ jobs:
           )"
           echo "::add-mask::$database_url"
 
+          chroma_host="$(az containerapp show \
+            --name "$CHROMA_APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+
           echo "DATABASE_URL=$database_url" >> "$GITHUB_ENV"
           echo "REDIS_URL=redis://${REDIS_APP_NAME}:6379/0" >> "$GITHUB_ENV"
+          echo "CHROMA_HOST=$chroma_host" >> "$GITHUB_ENV"
 
       - name: Create or update worker Container App
         shell: bash
@@ -478,7 +543,12 @@ jobs:
             "APP_ENV=${APP_ENV:-test}"
             "DATABASE_URL=secretref:database-url"
             "REDIS_URL=$REDIS_URL"
+            "CHROMA_HOST=$CHROMA_HOST"
+            "CHROMA_PORT=80"
+            "CHROMA_SSL=false"
+            "CHROMA_RAG_COLLECTION=${CHROMA_RAG_COLLECTION:-rag_documents}"
             "AGENT_TOOL_MODULES=app.domains.ips.tools,app.domains.business_analytics.tools"
+            "IPS_CHROMA_COLLECTION=${IPS_CHROMA_COLLECTION:-ips_facilities}"
             # Los turnos de WhatsApp corren en el worker y `call_customer` marca
             # por Telnyx, así que aquí también hace falta la API key y la conexión.
             "TELNYX_ENABLED=${TELNYX_ENABLED:-false}"
@@ -561,7 +631,7 @@ jobs:
       - name: Deploy frontend Container App
         uses: azure/container-apps-deploy-action@v1
         with:
-          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:${{ github.sha }}
+          imageToDeploy: docker.io/${{ vars.DOCKERHUB_USERNAME }}/hackathon-kognia-web:latest
           registryUrl: docker.io
           registryUsername: ${{ vars.DOCKERHUB_USERNAME }}
           registryPassword: ${{ secrets.DOCKERHUB_TOKEN }}
