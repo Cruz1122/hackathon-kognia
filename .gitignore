@@ -1,0 +1,29 @@
+# Models
+backend/models/
+
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.astro/
+.pnpm-store/
+
+# Env
+.env
+backend/.env
+frontend/.env
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+artifacts/stt-eval/
+var/recordings/
+
+# Astro
+.astro/
