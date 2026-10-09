@@ -1,5 +1,6 @@
 ---
 import { ClientRouter } from 'astro:transitions';
+import { appRouteFromPath } from '../features/navigation/active-route';
 import AppHeader from '../components/navigation/AppHeader.astro';
 import AgentSignalsPanel from '../components/agent-signals/AgentSignalsPanel.astro';
 import '../styles/app-shell.css';
@@ -17,11 +18,7 @@ interface Props {
 const { title = 'Kognia — Analíticas' } = Astro.props;
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:18474';
 const path = Astro.url.pathname;
-const activeRoute = path === '/dev' || path.startsWith('/dev/')
-  ? 'dev'
-  : path === '/calls' || path.startsWith('/calls/')
-    ? 'calls'
-    : 'analytics';
+const activeRoute = appRouteFromPath(path);
 const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/calls/saved') || path.startsWith('/dev/replay');
 ---
 
@@ -67,6 +64,7 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
     <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
     <script>
       import { installAuthFetch, installSessionGuard } from '../features/auth/session-guard';
+      import { appRouteFromPath } from '../features/navigation/active-route';
       import { fillCallNav, stopCallNav } from '../features/voice-call/application/fill-call-nav';
 
       const header = document.querySelector<HTMLElement>('.app-header');
@@ -122,14 +120,10 @@ const showDetailPanel = path.startsWith('/calls/demo') || path.startsWith('/call
       });
 
       function syncNavActive(path = window.location.pathname): void {
-        const route = path === '/dev' || path.startsWith('/dev/')
-          ? 'dev'
-          : path === '/calls' || path.startsWith('/calls/')
-            ? 'calls'
-            : 'analytics';
+        const route = appRouteFromPath(path);
         document.querySelectorAll<HTMLElement>('#appNav [data-route], #appNav [data-view="dashboard"]').forEach((item) => {
-          const itemRoute = item.dataset.route === 'calls' ? 'calls' : item.dataset.route === 'dev' ? 'dev' : 'analytics';
-          const active = itemRoute === route;
+          const itemRoute = item.dataset.route ?? (item.dataset.view === 'dashboard' ? 'analytics' : '');
+          const active = route !== null && itemRoute === route;
           item.classList.toggle('is-active', active);
           if (active) item.setAttribute('aria-current', 'page');
           else item.removeAttribute('aria-current');

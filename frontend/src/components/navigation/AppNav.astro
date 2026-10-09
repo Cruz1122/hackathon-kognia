@@ -1,13 +1,20 @@
 ---
+import type { AppRoute } from '../../features/navigation/active-route';
+
 interface Props {
-  active?: 'analytics' | 'calls' | 'dev';
+  active?: AppRoute | null;
   initiallyHidden?: boolean;
 }
 
-const { active = 'analytics', initiallyHidden = false } = Astro.props;
+const { active = null, initiallyHidden = false } = Astro.props;
 ---
 
 <nav class="app-nav" id="appNav" aria-label="Navegación" aria-hidden={initiallyHidden ? 'true' : undefined} inert={initiallyHidden ? true : undefined}>
+  <a class:list={['app-nav__item', active === 'instructions' && 'is-active']} href="/instructions" data-route="instructions" aria-current={active === 'instructions' ? 'page' : undefined}>
+    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="book-open"></i></span>
+    <span>Instrucciones</span>
+  </a>
+
   <a class:list={['app-nav__item', active === 'analytics' && 'is-active']} href="/analytics" data-route="analytics" aria-current={active === 'analytics' ? 'page' : undefined}>
     <span class="app-nav__icon" aria-hidden="true"><i data-lucide="layout-dashboard"></i></span>
     <span>Dashboard</span>
@@ -23,12 +30,8 @@ const { active = 'analytics', initiallyHidden = false } = Astro.props;
     <span>Modo dev</span>
   </a>
 
-  <span class="app-nav__item app-nav__item--disabled" aria-disabled="true">
-    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="shopping-bag"></i></span>
-    <span>Ventas</span>
-  </span>
-  <span class="app-nav__item app-nav__item--disabled" aria-disabled="true">
-    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="settings"></i></span>
-    <span>Ajustes</span>
-  </span>
+  <a class:list={['app-nav__item', active === 'specifications' && 'is-active']} href="/specifications" data-route="specifications" aria-current={active === 'specifications' ? 'page' : undefined}>
+    <span class="app-nav__icon" aria-hidden="true"><i data-lucide="cpu"></i></span>
+    <span>Especificaciones técnicas</span>
+  </a>
 </nav>

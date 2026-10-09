@@ -1,15 +1,16 @@
 ---
+import type { AppRoute } from '../../features/navigation/active-route';
 import InteractiveMascotFace from '../mascot/InteractiveMascotFace.astro';
 import AppNav from './AppNav.astro';
 
 interface Props {
-  active?: 'analytics' | 'calls' | 'dev';
+  active?: AppRoute | null;
   initiallyHidden?: boolean;
   mascotPasswordInputId?: string;
 }
 
 const {
-  active = 'analytics',
+  active = null,
   initiallyHidden = false,
   mascotPasswordInputId,
 } = Astro.props;

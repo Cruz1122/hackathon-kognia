@@ -81,12 +81,18 @@ import '../styles/phone.css';
 
     .auth-panel.is-app {
       --right-rail: var(--rail-share);
+      --app-header-resting-height: 96px;
       grid-template-columns: minmax(0, 1fr) minmax(0, var(--right-rail));
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: 0px minmax(0, 1fr);
       grid-template-areas:
         "header header"
         "main detail";
       min-height: 100dvh;
+      transition: grid-template-rows .72s cubic-bezier(.32, .04, .18, 1);
+    }
+
+    .auth-panel.is-app.is-header-ready {
+      grid-template-rows: var(--app-header-resting-height) minmax(0, 1fr);
     }
 
     .auth-panel.is-app.is-empty-view {
@@ -99,8 +105,31 @@ import '../styles/phone.css';
     }
 
     .auth-panel:not(.is-app) > .app-header { display: none; }
-    .auth-panel.is-app:not(.is-header-ready) > .app-header { visibility: hidden; opacity: 0; pointer-events: none; }
-    .auth-panel.is-app.is-header-ready > .app-header { visibility: visible; opacity: 1; pointer-events: auto; }
+    .auth-panel.is-app > .app-header {
+      overflow: hidden;
+      transition:
+        height .72s cubic-bezier(.32, .04, .18, 1),
+        min-height .72s cubic-bezier(.32, .04, .18, 1),
+        padding-block .72s cubic-bezier(.32, .04, .18, 1),
+        opacity .32s .12s cubic-bezier(.32, .04, .18, 1);
+    }
+    .auth-panel.is-app:not(.is-header-ready) > .app-header {
+      height: 0;
+      min-height: 0;
+      padding-block: 0;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .auth-panel.is-app.is-header-ready > .app-header {
+      height: var(--app-header-resting-height);
+      min-height: var(--app-header-resting-height);
+      padding-block: 16px;
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .auth-panel.is-app.is-header-revealed > .app-header { overflow: visible; }
 
     .login-visual {
       grid-column: 1;
@@ -1190,9 +1219,12 @@ import '../styles/phone.css';
       .demo-switcher { right: 10px; bottom: 10px; }
       .auth-panel.is-app {
         grid-template-columns: minmax(0, 1fr) minmax(0, var(--right-rail));
-        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-rows: 0px minmax(0, 1fr);
         grid-template-areas: "header header" "main detail";
         min-height: 100dvh;
+      }
+      .auth-panel.is-app.is-header-ready {
+        grid-template-rows: var(--app-header-resting-height) minmax(0, 1fr);
       }
       .auth-panel:not(.is-app) {
         --mobile-login-top-height: clamp(211px, 34svh, 292px);
@@ -1276,7 +1308,10 @@ import '../styles/phone.css';
       .auth-panel.is-app {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(0, var(--right-rail));
-        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-rows: 0px minmax(0, 1fr);
+      }
+      .auth-panel.is-app.is-header-ready {
+        grid-template-rows: var(--app-header-resting-height) minmax(0, 1fr);
       }
       .auth-panel.is-app > .login-right { min-height: 0; }
       .auth-panel.is-app .app-content { padding: 0 clamp(16px, 3vw, 40px) clamp(144px, 18vh, 220px); }
@@ -1285,11 +1320,17 @@ import '../styles/phone.css';
 
     @media (max-width: 767px) {
       .auth-panel.is-app {
+        --app-header-resting-height: 56px;
         grid-template-columns: 1fr;
-        grid-template-rows: auto minmax(0, 1fr) auto;
+        grid-template-rows: 0px minmax(0, 1fr) auto;
         grid-template-areas: "header" "main" "detail";
       }
-      .auth-panel.is-app.is-empty-view { grid-template-rows: auto minmax(0, 1fr); }
+      .auth-panel.is-app.is-header-ready {
+        grid-template-rows: var(--app-header-resting-height) minmax(0, 1fr) auto;
+      }
+      .auth-panel.is-app.is-header-ready > .app-header { padding-block: 18px 12px; }
+      .auth-panel.is-app.is-empty-view { grid-template-rows: 0px minmax(0, 1fr); }
+      .auth-panel.is-app.is-empty-view.is-header-ready { grid-template-rows: var(--app-header-resting-height) minmax(0, 1fr); }
       .auth-panel.is-app > .login-right { min-height: 0; height: auto; }
       .auth-panel.is-app > .detail-panel { min-height: 36dvh; height: auto; }
     }
@@ -1431,12 +1472,6 @@ import '../styles/phone.css';
     </section>
     <section class="section-view" data-section="call-2" aria-label="Llamada 2" aria-hidden="true">
       <EmptyState icon="phone" title="Esta llamada aún no está disponible." />
-    </section>
-    <section class="section-view" data-section="sales" aria-label="Ventas" aria-hidden="true">
-      <EmptyState icon="shopping-bag" title="Aún no hay ventas para mostrar." />
-    </section>
-    <section class="section-view" data-section="settings" aria-label="Ajustes" aria-hidden="true">
-      <EmptyState icon="settings" title="Los ajustes estarán disponibles pronto." />
     </section>
       </section>
     <aside class="detail-panel" id="detailPanel" aria-label="Cliente">
@@ -2404,7 +2439,9 @@ import '../styles/phone.css';
        const sectionViews = Array.from(document.querySelectorAll<HTMLElement>('.section-view'));
        const detailPanel = document.getElementById('detailPanel');
         const headerReadyMs = 1590;
+        const headerRevealMs = 720;
         let navReadyTimer = 0;
+        let headerRevealTimer = 0;
          let dashboardStarted = false;
          let dashboardCleanup: (() => void) | null = null;
          let dashboardStartPending = false;
@@ -2419,6 +2456,7 @@ import '../styles/phone.css';
 
          function clearNavReadyWait(): void {
          window.clearTimeout(navReadyTimer);
+         window.clearTimeout(headerRevealTimer);
         }
 
         function startDashboard(token: string): void {
@@ -2434,6 +2472,17 @@ import '../styles/phone.css';
            clearNavReadyWait();
            authPanel.classList.add('is-nav-ready', 'is-header-ready');
             appHeader?.classList.remove('app-header--pending');
+            appHeader?.classList.remove('is-header-revealed');
+            if (appHeader) {
+              const revealImmediately = authPanel.classList.contains('no-wipe') || matchMedia('(prefers-reduced-motion: reduce)').matches;
+              if (revealImmediately) {
+                appHeader.classList.add('is-header-revealed');
+              } else {
+                headerRevealTimer = window.setTimeout(() => {
+                  appHeader.classList.add('is-header-revealed');
+                }, headerRevealMs + 40);
+              }
+            }
             appNav?.removeAttribute('aria-hidden');
             appNav?.removeAttribute('inert');
             syncMobileNavToggle();
@@ -2546,6 +2595,7 @@ import '../styles/phone.css';
            dashboardPendingToken = '';
            authPanel?.classList.remove('is-app', 'no-wipe', 'is-wipe-proxy', 'is-wipe-source-hidden', 'is-nav-ready', 'is-header-ready', 'is-empty-view', 'is-nav-collapsed');
           appHeader?.classList.remove('is-nav-expanded');
+          appHeader?.classList.remove('is-header-revealed');
           appHeader?.setAttribute('hidden', '');
           mobileNavToggle?.setAttribute('hidden', '');
           mobileNavToggle?.setAttribute('aria-expanded', 'false');
@@ -2804,6 +2854,7 @@ import '../styles/phone.css';
           authPanel.classList.add('is-app');
           authPanel.classList.toggle('is-nav-collapsed', isCompactShell());
           appHeader?.removeAttribute('hidden');
+          appHeader?.classList.remove('is-header-revealed');
           appHeader?.classList.remove('is-nav-expanded');
           authPanel.setAttribute('aria-labelledby', 'screenTitle');
          setFormInert(true);

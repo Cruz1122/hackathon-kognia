@@ -138,7 +138,7 @@ button, input { font: inherit; }
   flex-direction: row;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 2px;
   margin: 0;
   opacity: 1;
   visibility: visible;
@@ -157,7 +157,7 @@ button, input { font: inherit; }
   max-width: 100%;
   min-width: 0;
   margin: 0;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 0;
   border-radius: var(--radius-full);
   background: transparent;
@@ -180,13 +180,12 @@ button, input { font: inherit; }
 .app-header .app-nav__label { opacity: .78; }
 .app-header .app-nav__item svg,
 .app-header .app-nav__label svg { width: 24px; height: 24px; flex-shrink: 0; stroke-width: 2.3; }
-.app-header .app-nav__item:not(.app-nav__item--disabled):hover,
+.app-header .app-nav__item:hover,
 .app-header .app-nav__label:hover { background: transparent; color: var(--ui-accent); transform: translateY(-2px); }
 .app-header .app-nav__item:focus-visible,
 .app-header .app-nav__label:focus-visible { outline: 3px solid var(--ui-accent); outline-offset: 2px; }
 .app-header .app-nav__item.is-active,
 .app-header .app-nav__label.is-active { color: var(--ui-accent); }
-.app-header .app-nav__item--disabled { cursor: not-allowed; opacity: .42; }
 .app-header .app-nav__group { display: flex; width: auto; flex-direction: column; gap: 4px; }
 .app-header .app-nav__children { display: grid; grid-template-rows: 0fr; width: fit-content; max-width: 100%; min-width: 0; margin-inline: auto; padding-left: 40px; transition: grid-template-rows .45s cubic-bezier(.32, .04, .18, 1); }
 .app-header .app-nav__group.is-open .app-nav__children { grid-template-rows: 1fr; }
@@ -209,6 +208,7 @@ button, input { font: inherit; }
 }
 
 .app-main > .section-view { display: block; height: 100%; min-height: 0; opacity: 1; visibility: visible; pointer-events: auto; transform: none; }
+.app-main > .section-view.section-view--empty { display: grid; place-items: center; }
 .analytics-dashboard { height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; }
 .app-detail-panel { grid-column: 2; grid-row: 2; min-width: 0; height: 100%; }
 .app-shell.is-call-loading .app-detail-panel { display: none; visibility: hidden; opacity: 0; clip-path: inset(0 0 100% 0); pointer-events: none; }
@@ -287,6 +287,7 @@ button, input { font: inherit; }
   .app-header .app-nav__children { width: 100%; margin-inline: 0; }
   .app-main { grid-column: 1; grid-row: 2; height: auto; min-height: 0; overflow: visible; }
   .app-main > .section-view, .analytics-dashboard { height: auto; min-height: 0; overflow: visible; }
+  .app-main > .section-view.section-view--empty { min-height: calc(100dvh - 120px); }
   .app-detail-panel { grid-column: 1; grid-row: 3; min-height: 36dvh; height: auto; }
 }
 
