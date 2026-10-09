@@ -95,7 +95,7 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   setControl(pauseBtn, 'pause', 'Pausa', 'Pausar llamada');
   lucideRefresh();
 
-  const capture = new AudioCaptureAdapter(`${apiUrl}/transcribe`);
+  const capture = new AudioCaptureAdapter();
   const pcm = new PcmAudioQueue();
   const socketUrl = `${apiUrl.replace(/^http/, 'ws')}/ws/call`;
   const initialAuthToken = typeof token === 'string' ? token.trim() : '';
@@ -391,11 +391,6 @@ export function bootLiveMonitor(apiUrl: string, token?: string, conversationId?:
   async function listen(): Promise<void> {
     if (!live || paused || !connected) return;
     capture.primeContext();
-    capture.onLevel((level) => {
-      if (!live || paused) return;
-      waveApi?.setPlaying?.(true);
-      waveApi?.setLevels(level, pcm.voiceLevel());
-    });
     const started = await capture.startPcmStream((frame) => {
       if (!live || paused || !connected || !socket || socket.readyState !== WebSocket.OPEN) return;
       const now = performance.now();

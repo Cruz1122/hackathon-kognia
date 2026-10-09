@@ -65,7 +65,6 @@ También están disponibles los scripts equivalentes `scripts/dev-api.sh` y `scr
 | `POST` | `/conversations` | Crea una conversación del tenant autenticado |
 | `GET` | `/conversations/{id}` | Recupera una conversación solo dentro del tenant autenticado |
 | `POST` | `/ask` | Stream SSE de tokens generado por el provider configurado |
-| `POST` | `/voice` | Recibe audio y devuelve únicamente audio PCM generado por el agente |
 | `POST` | `/transcribe` | Transcripción local de audio con Sherpa-ONNX |
 | `POST` | `/synthesize` | Audio WAV local con Piper TTS |
 | `POST` | `/synthesize/stream` | Audio PCM de Piper TTS por chunks |
@@ -199,7 +198,7 @@ backend/
   requirements.txt  Dependencias Python
 frontend/
   src/pages/index.astro  Pantalla de llamada
-  src/features/voice-call/  STT, streaming, chunking, TTS y cancelación
+  src/features/voice-call/  captura PCM, playback y toasts de la llamada
   package.json           Scripts y dependencias Astro
 assets/
   kognia-logo.svg        Logo del proyecto
