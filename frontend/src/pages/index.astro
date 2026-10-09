@@ -77,7 +77,7 @@ import '../styles/phone.css';
       margin: 0;
       padding: 0;
       background: var(--ui-paper);
-      overflow: hidden;
+      overflow: clip;
     }
 
     .auth-panel.is-app {
@@ -333,12 +333,17 @@ import '../styles/phone.css';
       grid-area: main;
       min-height: 0;
       height: 100%;
+      overflow: clip;
     }
 
     .auth-panel.is-app > .detail-panel {
       grid-area: detail;
       min-width: 0;
+      min-height: 0;
       height: 100%;
+      max-height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
     }
 
     .login-form-content {

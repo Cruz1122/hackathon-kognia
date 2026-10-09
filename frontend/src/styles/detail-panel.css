@@ -85,7 +85,10 @@ body.detail-open .demo-switcher {
 }
 
 .detail-panel__session,
-.detail-panel__body {
+.detail-panel__body,
+.detail-panel__signals,
+.detail-panel__close {
+  flex-shrink: 0;
   min-width: 0;
 }
 
@@ -435,6 +438,20 @@ body.detail-open .demo-switcher {
   .detail-panel__session.is-entering,
   .detail-panel__body.is-entering {
     animation: none;
+  }
+}
+
+/* The aside sits in the row under the header. A 100dvh box (or height:auto
+   that grows with the signals) is clipped by the shell, so the last scale —
+   the face and hallucination metric — never reaches the scrollport. */
+@media (min-width: 768px) {
+  .app-shell > .detail-panel.app-detail-panel {
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    align-self: stretch;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 }
 

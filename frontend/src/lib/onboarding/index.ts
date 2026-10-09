@@ -34,6 +34,21 @@ function setDockEmotion(emotion: string): void {
   document.querySelector<MascotFaceElement>('[data-tour-dock] [data-mascot-face]')?.setEmotion?.(emotion);
 }
 
+function syncTourHeaderOffset(): void {
+  const header = document.getElementById('appHeader');
+  if (!(header instanceof HTMLElement) || header.hidden) {
+    document.documentElement.style.removeProperty('--tour-header-offset');
+    return;
+  }
+  const height = Math.ceil(header.getBoundingClientRect().height);
+  document.documentElement.style.setProperty('--tour-header-offset', `${Math.max(0, height)}px`);
+}
+
+function clearTourHeaderOffset(): void {
+  document.documentElement.style.removeProperty('--tour-header-offset');
+  window.removeEventListener('resize', syncTourHeaderOffset);
+}
+
 const TOUR_VERSION = '3';
 
 function completionKey(id: TourId): string {
@@ -82,6 +97,7 @@ export function stopTour(): void {
   currentTour = null;
   activeTourId = null;
   suppressDismiss = false;
+  clearTourHeaderOffset();
   setDockEmotion(IDLE_EMOTION);
 }
 
@@ -182,6 +198,12 @@ export function startTour(id: TourId, source: 'auto' | 'manual' = 'manual'): voi
     stageRadius: 32,
     skipMissingElement: true,
     waitForElement: 400,
+    onHighlightStarted: () => {
+      syncTourHeaderOffset();
+    },
+    onHighlighted: () => {
+      syncTourHeaderOffset();
+    },
     onDoneClick: (_element, _step, { driver: active }) => {
       markCompleted(id);
       active.destroy();
@@ -191,6 +213,7 @@ export function startTour(id: TourId, source: 'auto' | 'manual' = 'manual'): voi
         currentTour = null;
         activeTourId = null;
       }
+      clearTourHeaderOffset();
       if (suppressDismiss) return;
       setDockEmotion(IDLE_EMOTION);
       if (!wasCompleted(id)) markDismissed(id);
@@ -199,6 +222,8 @@ export function startTour(id: TourId, source: 'auto' | 'manual' = 'manual'): voi
 
   currentTour = instance;
   activeTourId = id;
+  syncTourHeaderOffset();
+  window.addEventListener('resize', syncTourHeaderOffset);
   instance.drive();
 }
 

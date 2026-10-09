@@ -1,4 +1,4 @@
-.section-view--dashboard { place-items: start; overflow-x: hidden; overflow-y: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: transparent transparent; overscroll-behavior: contain; overflow-anchor: none; }
+.section-view--dashboard { place-items: start; overflow-x: clip; overflow-y: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: transparent transparent; overscroll-behavior: contain; overflow-anchor: none; }
 .section-view--dashboard:hover, .section-view--dashboard:focus-within { scrollbar-color: rgba(65,65,65,.28) transparent; }
 .section-view--dashboard::-webkit-scrollbar { width: 7px; }
 .section-view--dashboard::-webkit-scrollbar-track { background: transparent; }
