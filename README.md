@@ -65,7 +65,6 @@ También están disponibles los scripts equivalentes `scripts/dev-api.sh` y `scr
 | `POST` | `/conversations` | Crea una conversación del tenant autenticado |
 | `GET` | `/conversations/{id}` | Recupera una conversación solo dentro del tenant autenticado |
 | `POST` | `/ask` | Stream SSE de tokens generado por el provider configurado |
-| `POST` | `/voice` | Recibe audio y devuelve únicamente audio PCM generado por el agente |
 | `POST` | `/transcribe` | Transcripción local de audio con Sherpa-ONNX |
 | `POST` | `/synthesize` | Audio WAV local con Piper TTS |
 | `POST` | `/synthesize/stream` | Audio PCM de Piper TTS por chunks |
@@ -105,6 +104,9 @@ El backend carga automáticamente el archivo `.env` ubicado en la raíz del repo
 - `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`: duración del access token, entre 1 y 60 minutos. Por defecto, `15`.
 - `SUPERADMIN_EMAIL`, `SUPERADMIN_PASSWORD`: credenciales usadas únicamente por el bootstrap explícito inicial; no se crean usuarios automáticamente al arrancar.
 - `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`: credenciales de providers; no se versionan.
+- `API_KEY_SODA3`: token de aplicación enviado únicamente desde el backend como `X-App-Token` a la API SODA3 del catálogo de IPS.
+- `SECRET_SODA3`: identificador de la aplicación SODA3; se conserva en el entorno, pero no se envía porque el contrato SODA3 solo requiere el token de aplicación.
+- `IPS_CACHE_TTL_SECONDS`, `IPS_CACHE_EMPTY_TTL_SECONDS`, `IPS_CACHE_STALE_TTL_SECONDS`, `IPS_HTTP_TIMEOUT_SECONDS`, `IPS_HTTP_MAX_ATTEMPTS`: política de caché, timeout y reintentos del adapter IPS.
 - `PIPER_MODEL_DIR`: carpeta que contiene la voz Piper. Por defecto, `backend/models/piper-es`.
 - `PIPER_TTS_VOICE`: nombre de la voz local. Por defecto, `es_MX-claude-high`.
 
@@ -196,7 +198,7 @@ backend/
   requirements.txt  Dependencias Python
 frontend/
   src/pages/index.astro  Pantalla de llamada
-  src/features/voice-call/  STT, streaming, chunking, TTS y cancelación
+  src/features/voice-call/  captura PCM, playback y toasts de la llamada
   package.json           Scripts y dependencias Astro
 assets/
   kognia-logo.svg        Logo del proyecto

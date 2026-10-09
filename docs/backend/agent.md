@@ -31,4 +31,4 @@ Para conversaciones persistidas se usa ahora `AgentState` + Jev y autorización 
 
 ## Chunking semántico (servidor)
 
-`_take_semantic_chunk` en `main.py`: corta en `.!?` cuando hay al menos 2 palabras. Cada chunk dispara Piper en la llamada y en `/voice`. El frontend tiene un `SemanticChunker` equivalente para caminos HTTP.
+`_take_semantic_chunk` en `main.py`: corta en `.!?` cuando hay al menos 2 palabras. Cada chunk dispara Piper en la llamada `/ws/call`.

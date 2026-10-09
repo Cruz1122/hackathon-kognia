@@ -19,8 +19,12 @@
 
 | Archivo | Cubre |
 | --- | --- |
-| `sse-parser.test.ts` | parseo SSE |
-| `semantic-chunker.test.ts` | cortes de frase |
-| `cancellation-controller.test.ts` | abort de turno |
+| `backend-error.test.ts` | mensajes de error de la API |
+| `detail-panel.test.ts` | panel de detalle de la llamada |
+| `retrieval-card.test.ts` | tarjeta de retrieval |
+| `session-guard.test.ts` | sesión y redirección |
+| `phone-display.test.ts` | formato de teléfono |
+| `app-shell.test.ts` | shell de la app |
+| `model.test.ts` | señales del agente |
 
 No hay e2e de WebSocket en el árbol actual.

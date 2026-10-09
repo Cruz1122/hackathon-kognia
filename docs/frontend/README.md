@@ -27,4 +27,4 @@ Skill obligatorio: `.agents/skills/gooey-ui-system/SKILL.md`.
 cd frontend && pnpm test
 ```
 
-Cubre `sse-parser`, `semantic-chunker`, `cancellation-controller` (`node --test` + strip-types).
+Cubre los `*.test.ts` del frontend (`node --test` + strip-types), entre ellos errores de API, panel de detalle y tarjeta de retrieval.

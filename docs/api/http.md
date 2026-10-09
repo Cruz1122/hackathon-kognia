@@ -95,11 +95,10 @@ Ver [contrato y configuración del backend stateful omnichannel](../backend/stat
 | POST | `/transcribe` | body binario, `Content-Type` | `{ text }` |
 | POST | `/synthesize` | `{ text }` 1–2000 | `audio/wav` |
 | POST | `/synthesize/stream` | `{ text }` | PCM `audio/L16` + headers rate/encoding |
-| POST | `/voice` | audio + header `X-Chat-History` JSON | PCM L16; **sin auth** en el código actual |
 
 Límites de audio: vacío → 422; > 10 MiB → 413.
 
-`/voice` y `/transcribe` no usan JWT (*verificado* en `main.py`). La demo principal de llamada usa `/ws/call`, que sí autentica.
+`/transcribe` no usa JWT (*verificado* en `main.py`). La demo principal de llamada usa `/ws/call`, que sí autentica.
 
 Headers PCM:
 

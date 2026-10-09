@@ -30,6 +30,22 @@ Plantilla: `backend/.env.example`. No versionar `.env` ni keys.
 | `PRICING_CACHE_TTL_SECONDS` | `21600` (6 h) | TTL de la caché Redis del catálogo |
 | `PRICING_SOURCE_URL` | `https://openrouter.ai/api/v1/models` | catálogo de precios público |
 
+## IPS SODA3 + Redis
+
+| Variable | Default | Uso |
+| --- | --- | --- |
+| `API_KEY_SODA3` | vacío | token de aplicación enviado como `X-App-Token` |
+| `SECRET_SODA3` | vacío | identificador de la aplicación; no se envía al proveedor |
+| `SODA_APP_TOKEN` | vacío | alias compatible con la skill cuando no existe `API_KEY_SODA3` |
+| `IPS_CACHE_TTL_SECONDS` | `3600` | TTL de respuestas con filas |
+| `IPS_CACHE_EMPTY_TTL_SECONDS` | `300` | TTL de respuestas vacías |
+| `IPS_CACHE_STALE_TTL_SECONDS` | `86400` | TTL de fallback stale ante errores transitorios |
+| `IPS_HTTP_TIMEOUT_SECONDS` | `10` | timeout por solicitud a SODA3 |
+| `IPS_HTTP_MAX_ATTEMPTS` | `3` | máximo de intentos para 429/5xx/transporte |
+
+El dataset se consulta por `POST` a la URL fija de SODA3 para `s2ru-bqt6`; no
+se expone el token al frontend.
+
 ## STT / TTS
 
 | Variable | Default |
